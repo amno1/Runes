@@ -3,7 +3,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(in-package #:xcb-truetype)
+(in-package #:truetype)
 
 (declaim (ftype (function (t) t)
                 font-string-bboxes
@@ -27,7 +27,7 @@
    the cache.")
 
 (defvar *font-loader-lock*
-  (bt:make-recursive-lock "xcb-truetype font loaders")
+  (bt:make-recursive-lock "truetype font loaders")
   "Guards *FONT-LOADER-CACHE* and every use of a loader in it.  A
    ZPB-TTF loader reads glyphs from its open file as they are needed, so
    two threads using one loader at once would interleave their reads.
@@ -59,17 +59,14 @@
 (defun font-cache-fetch (cache dpi string)
   (cacle:cache-fetch (cacle:cache-fetch cache dpi) string))
 
-(defun target-dpi (target)
-  "Return (VALUES DPI-X DPI-Y) for TARGET.
+(defgeneric target-dpi (target)
+  (:documentation "Return (VALUES DPI-X DPI-Y) for TARGET.
 
-   TARGET can be a DRAWABLE, a SCREEN, an integer DPI,
-   or a cons (DPI-X . DPI-Y)."
-  (typecase target
-    (cons (values (car target) (cdr target)))
-    (integer (values target target))
-    (xcb:screen (screen-dpi target))
-    (drawable (screen-dpi (drawable-screen target)))
-    (t (values 96 96))))
+   TARGET can be an integer DPI or a cons (DPI-X . DPI-Y); a backend adds
+   methods for its own drawables and screens.  Anything else is 96 DPI.")
+  (:method ((target cons)) (values (car target) (cdr target)))
+  (:method ((target integer)) (values target target))
+  (:method ((target t)) (values 96 96)))
 
 ;;; Font metrics
 (defun %font-units/em (font)

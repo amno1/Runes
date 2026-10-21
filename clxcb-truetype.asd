@@ -17,11 +17,8 @@
   :bug-tracker "https://github.com/amno1/clxcb-truetype/issues"
   :version "0.9.0"
   :depends-on ("clxcb" "clxcb/render"
+               #:cl-truetype
                #:zpb-ttf
-               #:cl-vectors
-               #:cl-paths-ttf
-               #:cl-aa
-               #:cacle
                #:trivial-garbage
                #:bordeaux-threads
                #:uiop)
@@ -29,9 +26,6 @@
   :serial t
   :components ((:file "package")
                (:file "drawable")
-               (:file "font-cache")
-               (:file "metrics")
-               (:file "raster")
                (:file "cache")
                (:file "glyphs")
                (:file "render")))

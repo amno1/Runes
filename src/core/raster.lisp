@@ -3,7 +3,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(in-package #:xcb-truetype)
+(in-package #:truetype)
 
 (defclass font ()
   ((family    :type string
@@ -330,8 +330,7 @@
 (defun text-pixarray-for-drawable (drawable font string)
   "Render a text string in FONT for DRAWABLE, returning an alpha mask and dimensions.
    Returns 5 values: alpha mask, min-x, max-y, width, height."
-  ;; One SCREEN-DPI call for both axes; DPI-X and DPI-Y would each do it.
-  (multiple-value-bind (dpi-x dpi-y) (screen-dpi (drawable-screen drawable))
+  (multiple-value-bind (dpi-x dpi-y) (target-dpi drawable)
     (text-pixarray-for-dpi dpi-x dpi-y font string)))
 
 (defun text-pixarray (drawable-or-dpi-x font-or-dpi-y &optional string-or-font (maybe-string nil m-p))
@@ -360,7 +359,7 @@
 (defun text-line-pixarray-for-drawable (drawable font string)
   "Render a text line in FONT for DRAWABLE, returning an alpha mask and dimensions.
    Returns 5 values: alpha mask, min-x, max-y, width, height."
-  (multiple-value-bind (dpi-x dpi-y) (screen-dpi (drawable-screen drawable))
+  (multiple-value-bind (dpi-x dpi-y) (target-dpi drawable)
     (text-line-pixarray-for-dpi dpi-x dpi-y font string)))
 
 (defun text-line-pixarray (drawable-or-dpi-x font-or-dpi-y &optional string-or-font (maybe-string nil m-p))

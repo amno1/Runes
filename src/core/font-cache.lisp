@@ -3,7 +3,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(in-package #:xcb-truetype)
+(in-package #:truetype)
 
 (defvar *font-dirs*
   #+(or unix netbsd openbsd freebsd)
@@ -24,7 +24,7 @@
   "Hashmap for caching font families, subfamilies and files.  Guarded by
    *FONT-CACHE-LOCK*.")
 
-(defvar *font-cache-lock* (bt:make-recursive-lock "xcb-truetype font cache")
+(defvar *font-cache-lock* (bt:make-recursive-lock "truetype font cache")
   "Guards *FONT-CACHE*, so that CACHE-FONTS in one thread does not run
    into another thread scanning or reading it.")
 

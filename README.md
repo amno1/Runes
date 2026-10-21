@@ -18,6 +18,16 @@ unchanged; the X-specific code was rewritten against clxcb-truetype's
 own drawable wrappers, and the CLX cache layers were replaced with
 hash tables keyed on the connection.
 
+The backend-neutral part -- font discovery, the FONT class, metrics,
+and rasterizing strings and single glyphs to alpha maps -- is its own
+system, `cl-truetype` (package `TRUETYPE`, in `src/core/`), which
+depends on nothing X.  clxcb-truetype `:USE`s it and re-exports its
+API, so code written against `XCB-TRUETYPE` is unchanged.  A backend
+that draws on the client side (a Wayland one, say) uses `cl-truetype`
+alone: it lays a string out with `TRUETYPE:LAYOUT-GLYPHS` and blends
+each `GLYPH-IMAGE` into its own pixels, and adds `TRUETYPE:TARGET-DPI`
+methods for its drawables.
+
 [clx-truetype]: https://github.com/stumpwm/clx-truetype
 
 ## Requirements

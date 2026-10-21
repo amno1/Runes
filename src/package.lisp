@@ -5,7 +5,7 @@
 
 (defpackage #:xcb-truetype
   (:nicknames #:xft)
-  (:use #:cl)
+  (:use #:cl #:truetype)
   (:import-from #:xcb-render
                 #:create-picture
                 #:free-picture
@@ -107,7 +107,9 @@
    #:put-image-chunked)
 
   (:documentation "Pure Common Lisp TrueType font rendering for XCB,
-   ported from clx-truetype.  Its drawables are XCB-TRUETYPE:WINDOW and
+   ported from clx-truetype.  Fonts, metrics and rasterization come from
+   the TRUETYPE package (system cl-truetype), whose API this package
+   re-exports; this one draws through RENDER.  Its drawables are XCB-TRUETYPE:WINDOW and
    XCB-TRUETYPE:PIXMAP: a package that :USEs this one together with CLX or
    CLIM, which have a WINDOW and a PIXMAP of their own, should shadow them
    or write them qualified."))

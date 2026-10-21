@@ -312,3 +312,9 @@
                      (%defer-free conn :picture (car box)))
                    (when kind
                      (%defer-free conn kind id)))))))
+
+(defmethod target-dpi ((target xcb:screen))
+  (screen-dpi target))
+
+(defmethod target-dpi ((target drawable))
+  (screen-dpi (drawable-screen target)))
