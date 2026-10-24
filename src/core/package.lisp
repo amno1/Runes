@@ -3,7 +3,8 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(defpackage #:truetype
+(defpackage #:runes
+  (:nicknames #:truetype #:cl-truetype)
   (:use #:cl)
   (:export
    ;; Font class and accessors

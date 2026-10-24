@@ -1,6 +1,12 @@
-# clxcb-truetype
+# Runes
 
-Pure Common Lisp TrueType font rendering for XCB.
+Pure Common Lisp TrueType and OpenType font engine, metrics, discovery, and rasterization (formerly *clxcb-truetype*).
+
+## Systems & Packages
+
+- **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`): Backend-neutral font discovery, metrics, layout, and antialiased glyph rasterization. Completely independent of X11/XCB, used by Wayland (Wayflan), Vulkan (Antron), and CPU renderers.
+- **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`): XCB RENDER drawing backend.
+- Backward compatibility: `cl-truetype.asd` and `clxcb-truetype.asd` are provided as aliases.
 
 ## Overview
 

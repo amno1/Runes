@@ -3,8 +3,8 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(defpackage #:xcb-truetype
-  (:nicknames #:xft)
+(defpackage #:runes/xcb
+  (:nicknames #:runes-xcb #:xcb-truetype #:xft)
   (:use #:cl #:truetype)
   (:import-from #:xcb-render
                 #:create-picture
