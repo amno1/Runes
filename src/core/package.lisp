@@ -50,6 +50,8 @@
    #:text-line-width
    #:text-line-height
    #:font-lines-height
+   #:line-box
+   #:kern-offset
    #:xmin
    #:ymin
    #:xmax
@@ -74,6 +76,7 @@
    #:glyph-image-advance
    #:glyph-image-data
    #:layout-glyphs
+   #:layout-styled-glyphs
    #:*glyph-images*
    #:*max-glyph-faces*
 

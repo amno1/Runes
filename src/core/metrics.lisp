@@ -347,3 +347,50 @@
          (line-h  (- ascent descent)))
     (values (round (- box-width  tw)     2)
             (+ (round (- box-height line-h) 2) ascent))))
+
+
+(defun line-box (font dpi &key (multiplier 1.0) explicit-height)
+  "Return (VALUES ASCENT DESCENT HEIGHT LEADING) in pixels for FONT at DPI.
+   ASCENT and DESCENT are positive pixel values. HEIGHT applies MULTIPLIER
+   or EXPLICIT-HEIGHT."
+  (multiple-value-bind (dpi-x dpi-y) (target-dpi dpi)
+    (declare (ignore dpi-x))
+    (let* ((ascent (coerce (font-ascent-for-dpi dpi-y font) 'single-float))
+           (descent (abs (coerce (font-descent-for-dpi dpi-y font) 'single-float)))
+           (gap (coerce (or (ignore-errors (font-line-gap dpi font)) 0) 'single-float))
+           (natural-height (+ ascent descent))
+           (lh (if explicit-height
+                   (coerce explicit-height 'single-float)
+                   (* natural-height (coerce multiplier 'single-float)))))
+      (values ascent descent lh gap))))
+
+(defun lookup-custom-kerning (table char1 char2)
+  "Lookup kerning offset between CHAR1 and CHAR2 in custom kerning TABLE."
+  (when table
+    (cond
+      ((hash-table-p table)
+       (or (gethash (cons char1 char2) table)
+           (gethash (coerce (vector char1 char2) 'string) table)))
+      ((consp table)
+       (let ((pair (cons char1 char2))
+             (str (coerce (vector char1 char2) 'string)))
+         (or (cdr (assoc pair table :test #'equal))
+             (cdr (assoc str table :test #'string=))))))))
+
+(defun kern-offset (font char1 char2 &key custom-table (dpi-x 96))
+  "Calculate kerning offset in fractional pixels between CHAR1 and CHAR2 for FONT.
+   Consults CUSTOM-TABLE if present; otherwise queries the font loader's kern table via zpb-ttf."
+  (when custom-table
+    (let ((val (lookup-custom-kerning custom-table char1 char2)))
+      (when val
+        (return-from kern-offset (coerce val 'single-float)))))
+  (with-font-loader (loader font)
+    (let ((g1 (zpb-ttf:find-glyph char1 loader))
+          (g2 (zpb-ttf:find-glyph char2 loader)))
+      (if (and g1 g2)
+          (let ((offset (zpb-ttf:kerning-offset g1 g2 loader)))
+            (if (and offset (not (zerop offset)))
+                (* (coerce offset 'single-float)
+                   (coerce (font-units->pixels-x dpi-x font) 'single-float))
+                0.0f0))
+          0.0f0))))

@@ -73,10 +73,14 @@
                        :advance (* sx (zpb-ttf:advance-width glyph))
                        :data data)))
 
-(defun layout-glyphs (font string dpi-x dpi-y)
-  "Lay out STRING in FONT: return a vector of (GLYPH-INDEX PEN-X IMAGE),
-   PEN-X the exact pen position relative to the start, and the face key.
-   Rasterizes the glyphs not yet rasterized for this face."
+(defun layout-styled-glyphs (font string &key (dpi-x 96) (dpi-y 96)
+                                              (letter-spacing 0.0)
+                                              (word-spacing 0.0)
+                                              kerning-table)
+  "Lay out STRING in FONT, applying LETTER-SPACING, WORD-SPACING, and
+   KERNING-TABLE (or the font's kerning table).
+   Returns (VALUES LAYOUT TOTAL-ADVANCE KEY)
+   where LAYOUT is a vector of (GLYPH-INDEX PEN-X IMAGE)."
   (with-font-loader (loader font)
     (let* ((key (face-key font dpi-x dpi-y))
            (images (or (gethash key *glyph-images*)
@@ -86,25 +90,56 @@
                          (setf (gethash key *glyph-images*) (make-hash-table)))))
            (sx (font-units->pixels-x dpi-x font))
            (sy (font-units->pixels-y dpi-y font))
-           (layout (make-array (length string)))
-           (pen 0)
-           (previous nil))
-      ;; As PATHS-TTF:PATHS-FROM-STRING lays out a string, so a line is as
-      ;; wide as TEXT-LINE-WIDTH says.
-      (loop for char across string
-            for i from 0
+           (len (length string))
+           (layout (make-array len))
+           (pen 0.0f0)
+           (lsp (coerce letter-spacing 'single-float))
+           (wsp (coerce word-spacing 'single-float))
+           (previous-glyph nil)
+           (previous-char nil))
+      (loop for i from 0 below len
+            for char = (char string i)
             for glyph = (zpb-ttf:find-glyph char loader)
             for index = (zpb-ttf:font-index glyph)
-            do (when previous
-                 (incf pen (* sx (+ (zpb-ttf:advance-width previous)
-                                    (zpb-ttf:kerning-offset previous glyph loader)))))
+            do (when previous-glyph
+                 (let ((kern (if kerning-table
+                                 (kern-offset font previous-char char
+                                              :custom-table kerning-table
+                                              :dpi-x dpi-x)
+                                 (let ((ko (zpb-ttf:kerning-offset previous-glyph glyph loader)))
+                                   (if (and ko (not (zerop ko)))
+                                       (* sx (coerce ko 'single-float))
+                                       0.0f0))))
+                       (word-extra (if (and (not (zerop wsp)) (char= previous-char #\Space))
+                                       wsp
+                                       0.0f0)))
+                   (incf pen (+ (* sx (coerce (zpb-ttf:advance-width previous-glyph) 'single-float))
+                                (coerce kern 'single-float)
+                                lsp
+                                word-extra))))
                (setf (aref layout i)
                      (list index pen
                            (or (gethash index images)
                                (setf (gethash index images)
                                      (rasterize-glyph font glyph sx sy)))))
-               (setf previous glyph))
-      (values layout key))))
+               (setf previous-glyph glyph
+                     previous-char char))
+      (let ((total-advance (if (and previous-glyph (plusp len))
+                               (+ pen (* sx (coerce (zpb-ttf:advance-width previous-glyph) 'single-float))
+                                  (if (and (not (zerop wsp)) (char= previous-char #\Space))
+                                      wsp
+                                      0.0f0))
+                               0.0f0)))
+        (values layout (coerce total-advance 'single-float) key)))))
+
+(defun layout-glyphs (font string dpi-x dpi-y)
+  "Lay out STRING in FONT: return a vector of (GLYPH-INDEX PEN-X IMAGE),
+   PEN-X the exact pen position relative to the start, and the face key.
+   Rasterizes the glyphs not yet rasterized for this face."
+  (multiple-value-bind (layout advance key)
+      (layout-styled-glyphs font string :dpi-x dpi-x :dpi-y dpi-y)
+    (declare (ignore advance))
+    (values layout key)))
 
 
 (defun font-decorations (font string x y dpi-x dpi-y line-p)
