@@ -5,12 +5,13 @@
 ;;; A loader can be set to an instance of a variable font. User axis values
 ;;; are normalized through 'fvar' and 'avar' as Fontations does
 ;;; (Fvar::user_to_normalized, SegmentMaps::apply). CFF2 outlines are then
-;;; drawn at that instance and advance widths follow 'HVAR'.
+;;; drawn at that instance, advance widths follow 'HVAR', and the font-wide
+;;; metrics follow 'MVAR'.
 ;;;
 ;;; Only CFF2 fonts can be set to an instance: zpb-ttf does not apply 'gvar',
 ;;; so TrueType outlines would stay at the default while their advances
-;;; changed. 'avar' 2.0 mappings beyond the segment maps, 'MVAR' and side
-;;; bearing variations are not applied.
+;;; changed. 'avar' 2.0 mappings beyond the segment maps and side bearing
+;;; variations are not applied.
 
 (in-package #:zpb-ttf)
 
@@ -199,3 +200,51 @@ the change keep their old outlines; find them again.")
                           (setf v (logior (ash v 8) (zpb-otf:font-data-read-u8 fd (+ entry-pos i))))))))
           (values (ldb (byte 16 0) (ash entry (- bit-count)))
                   (ldb (byte bit-count 0) entry))))))
+
+;;; Font-wide metrics ('MVAR')
+
+(defgeneric variation-metric-delta (loader tag)
+  (:documentation "Change of the font-wide metric TAG (an MVAR tag string such
+as \"xhgt\" or \"cpht\") at LOADER's instance, in font units; 0 at the
+default instance or when the font does not vary the metric.")
+  (:method ((loader font-loader) tag)
+    (let ((coords (normalized-coordinates loader))
+          (info (table-info "MVAR" loader)))
+      (if (or (null coords) (null info))
+          0
+          (let* ((mvar (zpb-otf:read-mvar (font-data loader) (offset info) (size info)))
+                 (store (zpb-otf:mvar-item-variation-store-offset mvar))
+                 (record (when store
+                           (loop for i below (zpb-otf:mvar-value-record-count mvar)
+                                 for r = (zpb-otf:mvar-value-record-ref mvar i)
+                                 when (string= (zpb-otf:mvar-value-record-value-tag r) tag)
+                                   return r))))
+            (if record
+                ;; Rounded to an integer as FreeType does.
+                (ash (+ (zpb-otf/charstring:item-variation-delta
+                         store
+                         (zpb-otf:mvar-value-record-delta-set-outer-index record)
+                         (zpb-otf:mvar-value-record-delta-set-inner-index record)
+                         coords)
+                        #x8000)
+                     -16)
+                0))))))
+
+;;; The metrics zpb-ttf reports follow the instance, with the tags skrifa
+;;; applies to them.
+
+(defmacro define-varied-metric (reader tag &optional condition)
+  `(defmethod ,reader :around ((loader font-loader))
+     (let ((value (call-next-method)))
+       (if (and (normalized-coordinates loader) ,@(when condition (list condition)))
+           (+ value (variation-metric-delta loader ,tag))
+           value))))
+
+(define-varied-metric ascender "hasc")
+(define-varied-metric descender "hdsc")
+(define-varied-metric line-gap "hlgp")
+(define-varied-metric underline-position "undo")
+(define-varied-metric underline-thickness "unds")
+;; Without 'vhea' these are made up from the horizontal metrics.
+(define-varied-metric vascender "vasc" (not (vhea-missing-p loader)))
+(define-varied-metric vdescender "vdsc" (not (vhea-missing-p loader)))

@@ -78,6 +78,7 @@
    #:cubic-contours
    #:variation-axes
    #:variation-coordinates
+   #:variation-metric-delta
    #:do-contours
    #:explicit-contour-points
    #:do-contour-segments

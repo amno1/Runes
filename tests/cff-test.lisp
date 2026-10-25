@@ -346,6 +346,36 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
                (zpb-ttf:with-font-loader (loader (merge-pathnames "LiberationSans-Regular.ttf" *test-fonts-dir*))
                  (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 700))))))
 
+;;; Font-wide metrics
+
+(defclass hasc-loader (zpb-ttf::font-loader) ()
+  (:documentation "A loader whose font varies only hasc, by 10 units."))
+
+(defmethod zpb-ttf:variation-metric-delta ((loader hasc-loader) tag)
+  (if (string= tag "hasc") 10 0))
+
+(defun test-metrics ()
+  (format t "~%--- Font-wide metrics (MVAR) ---~%")
+  (zpb-ttf:with-font-loader (loader (merge-pathnames "Cantarell-VF.otf" *test-fonts-dir*))
+    (flet ((deltas () (mapcar (lambda (tag) (zpb-ttf:variation-metric-delta loader tag))
+                              '("xhgt" "stro" "sbyo" "spyo" "hasc"))))
+      (check "MVAR deltas are zero at the default instance" (equal (deltas) '(0 0 0 0 0)))
+      (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 800)))
+      (check "ExtraBold raises the x-height and the strikeout"
+             (destructuring-bind (xhgt stro sbyo spyo hasc) (deltas)
+               (and (plusp xhgt) (plusp stro) (/= 0 sbyo) (/= 0 spyo) (zerop hasc))))
+      (check "metrics the font does not vary stay the same"
+             (= (zpb-ttf:ascender loader) 983)))
+    (let ((default (zpb-ttf:ascender loader)))
+      (change-class loader 'hasc-loader)
+      (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 800)))
+      (check "ascender follows hasc at an instance"
+             (and (= (zpb-ttf:ascender loader) (+ default 10))
+                  (= (zpb-ttf:descender loader) (progn (setf (zpb-ttf:variation-coordinates loader) nil)
+                                                       (zpb-ttf:descender loader)))))
+      (check "and returns at the default instance"
+             (= (zpb-ttf:ascender loader) default)))))
+
 (defun run-cff-tests ()
   (let ((zpb-otf/charstring-test::*failures* 0)
         (zpb-otf/charstring-test::*count* 0))
@@ -358,6 +388,7 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
     (test-fonts)
     (test-outlines)
     (test-instances)
+    (test-metrics)
     (format t "~%Results: ~D tests run, ~D failures.~%"
             zpb-otf/charstring-test::*count* zpb-otf/charstring-test::*failures*)
     (unless (zerop zpb-otf/charstring-test::*failures*)

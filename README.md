@@ -16,7 +16,7 @@ A typical use looks like this:
             (zpb-ttf:bounding-box glyph))))
 ```
 
-Fonts with PostScript outlines, in a `CFF ` or `CFF2` table, are drawn by the `zpb-otf/charstring` system, a port of Fontations' charstring interpreter together with its CFF DICT parser and font structures. Their curves are cubic, while zpb-ttf contours describe quadratic curves, so `contours` approximates each cubic with quadratic pieces within a quarter of a font unit; existing programs draw these fonts without changes. `cubic-contours` gives the exact outline of any glyph, TrueType or CFF, as move, line and cubic curve commands. A variable CFF2 font can be set to an instance by axis tag and user value, and `variation-axes` lists the axes it has; outlines and advance widths then follow that instance:
+Fonts with PostScript outlines, in a `CFF ` or `CFF2` table, are drawn by the `zpb-otf/charstring` system, a port of Fontations' charstring interpreter together with its CFF DICT parser and font structures. Their curves are cubic, while zpb-ttf contours describe quadratic curves, so `contours` approximates each cubic with quadratic pieces within a quarter of a font unit; existing programs draw these fonts without changes. `cubic-contours` gives the exact outline of any glyph, TrueType or CFF, as move, line and cubic curve commands. A variable CFF2 font can be set to an instance by axis tag and user value, and `variation-axes` lists the axes it has; outlines, advance widths and font-wide metrics then follow that instance:
 
 ```lisp
 (zpb-ttf:with-font-loader (font "Cantarell-VF.otf")
