@@ -33,6 +33,13 @@
    #:blend-region-count #:blend-scalars #:blend-set-store-index
    #:constant-blend-state
    #:item-variation-blend-state #:make-blend-state #:blend-coords #:blend-store-index
+   ;; DICTs
+   #:dict-entries #:dict-entry #:scaled-font-matrix #:font-matrix-elements #:font-matrix-scale
+   ;; CFF and CFF2 fonts
+   #:open-cff-font #:cff-font #:cff-font-cff2-p #:cff-font-upem #:cff-font-kind
+   #:cff-num-glyphs #:cff-num-subfonts #:cff-subfont-index #:cff-subfont
+   #:cff-subfont-default-width #:cff-subfont-nominal-width #:cff-subfont-vs-index
+   #:cff-draw-glyph #:cff-charstring-context
    ;; Fixed point
    #:fixed-from-int #:fixed->float #:float->fixed
    ;; Conditions

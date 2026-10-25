@@ -111,4 +111,6 @@
                 :components ((:module "charstring"
                               :serial t
                               :components ((:file "charstring")
-                                           (:file "blend")))))))
+                                           (:file "blend")
+                                           (:file "dict")
+                                           (:file "cff")))))))
