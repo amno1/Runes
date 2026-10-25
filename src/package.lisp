@@ -76,6 +76,8 @@
    #:contour
    #:contours
    #:cubic-contours
+   #:variation-axes
+   #:variation-coordinates
    #:do-contours
    #:explicit-contour-points
    #:do-contour-segments

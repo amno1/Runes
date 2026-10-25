@@ -23,4 +23,5 @@
                              (:file "font-loader")
                              (:file "glyph")
                              (:file "cff-outlines")
+                             (:file "variations")
                              (:file "font-loader-interface")))))

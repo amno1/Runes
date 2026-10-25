@@ -181,8 +181,11 @@ to the control point of the curve, otherwise set P1 to NIL."
 
 (defgeneric advance-width (object)
   (:method ((glyph glyph))
-    (bounded-aref (advance-widths (font-loader glyph))
-                  (font-index glyph))))
+    (let ((loader (font-loader glyph)))
+      (+ (bounded-aref (advance-widths loader) (font-index glyph))
+         (if (normalized-coordinates loader)
+             (advance-width-delta loader (font-index glyph))
+             0)))))
 
 (defgeneric top-side-bearing (object)
   (:method ((glyph glyph))

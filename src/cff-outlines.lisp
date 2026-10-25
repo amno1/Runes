@@ -31,11 +31,14 @@ quadratic curves CONTOURS approximates it with.")
                (zpb-otf:font-data-slice (font-data loader) (offset info) (size info))
                :upem (units/em loader))))))
 
+(defun loader-coords (loader)
+  (or (normalized-coordinates loader) #()))
+
 (defun loader-cff-subfont (loader index)
-  "Subfont INDEX at the default instance, parsed once per loader."
+  "Subfont INDEX at the loader's instance, parsed once per instance."
   (or (gethash index (cff-subfonts loader))
       (setf (gethash index (cff-subfonts loader))
-            (zpb-otf/charstring:cff-subfont (loader-cff-font loader) index))))
+            (zpb-otf/charstring:cff-subfont (loader-cff-font loader) index (loader-coords loader)))))
 
 ;;; Collecting the exact outline
 
@@ -68,13 +71,14 @@ and (:curve cx0 cy0 cx1 cy1 x y) commands in font units."))
 (defmethod zpb-otf/charstring:sink-close ((s outline-sink)))
 
 (defun cff-glyph-outline (loader gid)
-  "The exact outline of glyph GID of LOADER's CFF font, at the default instance."
+  "The exact outline of glyph GID of LOADER's CFF font, at the loader's instance."
   (let* ((font (loader-cff-font loader))
          (index (or (zpb-otf/charstring:cff-subfont-index font gid)
                     (error 'unsupported-value :description "Glyph not covered by FDSelect"
                                               :actual-value gid :expected-values '("a covered glyph"))))
          (sink (make-instance 'outline-sink)))
-    (zpb-otf/charstring:cff-draw-glyph font (loader-cff-subfont loader index) gid sink)
+    (zpb-otf/charstring:cff-draw-glyph font (loader-cff-subfont loader index) gid sink
+                                       (loader-coords loader))
     (map 'vector #'copy-seq (reverse (outline-contours sink)))))
 
 ;;; Quadratic approximation

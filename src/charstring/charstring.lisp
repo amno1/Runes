@@ -32,7 +32,7 @@
    ;; CFF2 blending
    #:blend-region-count #:blend-scalars #:blend-set-store-index
    #:constant-blend-state
-   #:item-variation-blend-state #:make-blend-state #:blend-coords #:blend-store-index
+   #:item-variation-blend-state #:make-blend-state #:blend-coords #:blend-store-index #:item-variation-delta
    ;; DICTs
    #:dict-entries #:dict-entry #:scaled-font-matrix #:font-matrix-elements #:font-matrix-scale
    ;; CFF and CFF2 fonts

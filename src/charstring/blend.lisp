@@ -102,3 +102,33 @@ vsindex of its subfont's Private DICT, or 0 if that has none."
          b)
         (%set-store-index index b))))
   b)
+
+(defun item-variation-delta (store outer inner coords)
+  "Delta of item (OUTER, INNER) of the ZPB-OTF:ITEM-VARIATION-STORE STORE at
+COORDS (normalized reals, one per axis), in 16.16 units without rounding,
+like Fontations' ItemVariationStore::compute_delta. 0 for an item the store
+does not have."
+  (let ((coords (map 'vector #'f2dot14-from-real coords)))
+    (if (or (zerop (length coords))
+            (and (= outer #xFFFF) (= inner #xFFFF))
+            (>= outer (zpb-otf:item-variation-store-item-variation-data-count store)))
+        0
+        (let* ((data (zpb-otf:item-variation-store-item-variation-data-offsets-ref store outer))
+               (regions (zpb-otf:item-variation-store-variation-region-list-offset store)))
+          (if (or (null data) (null regions)
+                  (>= inner (zpb-otf:item-variation-data-item-count data)))
+              0
+              (let ((fd (zpb-otf::table-ref-font-data regions))
+                    (axis-count (zpb-otf:variation-region-list-axis-count regions))
+                    (region-count (zpb-otf:variation-region-list-region-count regions))
+                    (first-region (zpb-otf:variation-region-list-variation-regions-start regions))
+                    (sum 0))
+                (dotimes (i (zpb-otf:item-variation-data-region-index-count data) sum)
+                  (let ((delta (zpb-otf:item-variation-data-delta-set-ref data inner i))
+                        (region-index (zpb-otf:item-variation-data-region-indexes-ref data i)))
+                    (unless (< region-index region-count)
+                      (fail 'charstring-malformed (format nil "region ~D out of range" region-index)))
+                    ;; A zero delta contributes nothing at any location.
+                    (unless (zerop delta)
+                      (incf sum (* delta (region-scalar fd (+ first-region (* region-index axis-count 6))
+                                                        axis-count coords))))))))))))

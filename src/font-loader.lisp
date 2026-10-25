@@ -54,6 +54,9 @@
    ;; from 'CFF ' or 'CFF2': the font, opened on first use, and its subfonts
    (cff-font :accessor %cff-font :initform nil)
    (cff-subfonts :accessor cff-subfonts :initform (make-hash-table))
+   ;; Instance of a variable font: as set, and normalized (NIL for the default)
+   (user-coordinates :accessor user-coordinates :initform nil)
+   (normalized-coordinates :accessor normalized-coordinates :initform nil)
    ;; TTC info
    (collection-font-count :reader collection-font-count :initform nil :initarg :collection-font-count)
    (collection-font-index :reader collection-font-index :initform nil :initarg :collection-font-index)))

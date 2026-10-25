@@ -287,6 +287,65 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
              (and (= (length outline) (zpb-ttf:contour-count glyph))
                   (every (lambda (contour) (eq :move (first (aref contour 0)))) outline))))))
 
+;;; Variable instances
+
+(defun segment-map (&rest from-to)
+  "Segment map from (from to ...) normalized single floats, as 2.14 values in 16.16."
+  (coerce (loop for (from to) on from-to by #'cddr
+                collect (cons (ash (zpb-otf/charstring::f2dot14-from-real from) 2)
+                              (ash (zpb-otf/charstring::f2dot14-from-real to) 2)))
+          'vector))
+
+(defun test-instances ()
+  (format t "~%--- Variable instances ---~%")
+  (check "normalize (fvar.rs, Vazirmatn's 100/400/900 axis)"
+         (equal (mapcar (lambda (v) (zpb-ttf::normalize-axis-value (f v) (f 100) (f 400) (f 900)))
+                        '(100 220 250 400 650 900))
+                (mapcar #'f '(-1.0d0 -0.60001d0 -0.5d0 0 0.5d0 1.0d0))))
+  (check "normalize_overflow"
+         (= (zpb-ttf::normalize-axis-value 0 (f -26335.87451171875d0) (f 8224.12548828125d0)
+                                           (f 8224.12548828125d0))
+            (f -0.2509765625d0)))
+  (let ((vazirmatn (segment-map -1.0 -1.0 -0.6667 -0.5 -0.3333 -0.25 0.0 0.0 0.2 0.3674
+                                0.4 0.52246 0.6 0.67755 0.8 0.83875 1.0 1.0)))
+    (check "piecewise_linear (avar.rs, Vazirmatn's segment map)"
+           (equal (mapcar (lambda (c) (zpb-ttf::apply-segment-map vazirmatn (f c))) '(-1 -0.5 0 0.5 1))
+                  (mapcar #'f '(-1 -0.375 0 0.600006103515625d0 1)))))
+  (check "piecewise_linear_zero_tie_break_matches_harfbuzz"
+         (= (zpb-ttf::apply-segment-map (segment-map -1.0 -1.0 0.0 -0.25 0.0 0.25 1.0 1.0) 0)
+            (f 0.25)))
+  (check "piecewise_linear_before_start_after_leading_duplicate_cap"
+         (= (zpb-ttf::apply-segment-map (segment-map -1.0 -1.0 -1.0 -1.0 -0.5 -0.5 0.0 0.0 1.0 1.0) (f -2))
+            (f -2)))
+  (zpb-ttf:with-font-loader (loader (merge-pathnames "Cantarell-VF.otf" *test-fonts-dir*))
+    (flet ((o () (zpb-ttf:find-glyph #\o loader)))
+      (let ((default-outline (zpb-ttf:cubic-contours (o)))
+            (default-width (zpb-ttf:advance-width (o))))
+        (check "variation-axes lists the weight axis"
+               (equal (zpb-ttf:variation-axes loader) '(("wght" 100 400 800))))
+        (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 400)))
+        (check "the default weight draws the default outline and width"
+               (and (equalp (zpb-ttf:cubic-contours (o)) default-outline)
+                    (= (zpb-ttf:advance-width (o)) default-width)))
+        (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 800)))
+        (check "ExtraBold changes the outline and widens the glyph"
+               (and (not (equalp (zpb-ttf:cubic-contours (o)) default-outline))
+                    (> (zpb-ttf:advance-width (o)) default-width)
+                    (> (- (aref (zpb-ttf:bounding-box (o)) 2) (aref (zpb-ttf:bounding-box (o)) 0))
+                       (progn (setf (zpb-ttf:variation-coordinates loader) nil)
+                              (- (aref (zpb-ttf:bounding-box (o)) 2) (aref (zpb-ttf:bounding-box (o)) 0))))))
+        (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 100)))
+        (check "Thin narrows it"
+               (< (zpb-ttf:advance-width (o)) default-width))
+        (setf (zpb-ttf:variation-coordinates loader) nil)
+        (check "nil returns to the default instance"
+               (and (null (zpb-ttf:variation-coordinates loader))
+                    (equalp (zpb-ttf:cubic-contours (o)) default-outline)
+                    (= (zpb-ttf:advance-width (o)) default-width))))))
+  (check-error "a TrueType font cannot be set to an instance" error
+               (zpb-ttf:with-font-loader (loader (merge-pathnames "LiberationSans-Regular.ttf" *test-fonts-dir*))
+                 (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 700))))))
+
 (defun run-cff-tests ()
   (let ((zpb-otf/charstring-test::*failures* 0)
         (zpb-otf/charstring-test::*count* 0))
@@ -298,6 +357,7 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
     (test-dicts)
     (test-fonts)
     (test-outlines)
+    (test-instances)
     (format t "~%Results: ~D tests run, ~D failures.~%"
             zpb-otf/charstring-test::*count* zpb-otf/charstring-test::*failures*)
     (unless (zerop zpb-otf/charstring-test::*failures*)
