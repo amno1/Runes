@@ -20,6 +20,12 @@
     (load (merge-pathnames "tables-test.lisp" this-dir))
     (uiop:symbol-call :zpb-otf-test :run-table-tests)
 
+    ;; 3. Charstring evaluator
+    (format t "~%--- 3. Running Charstring Evaluator Tests (charstring-test.lisp) ---~%")
+    (asdf:load-system :zpb-otf/charstring)
+    (load (merge-pathnames "charstring-test.lisp" this-dir))
+    (uiop:symbol-call :zpb-otf/charstring-test :run-charstring-tests)
+
     (format t "~%========================================================~%")
     (format t "ALL TEST SUITES PASSED CLEANLY!~%")
     (format t "========================================================~%")
