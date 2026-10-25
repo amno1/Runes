@@ -61,11 +61,11 @@
   (:documentation "Blend state for CFF2 charstrings and DICTs at a location in
 the font's variation space."))
 
-(defun make-blend-state (store coords &key (store-index 0))
+(defun make-blend-state (store coords store-index)
   "Blend state for the ZPB-OTF:ITEM-VARIATION-STORE STORE at COORDS, a
 sequence of normalized axis coordinates (reals in [-1, 1], one per axis in
-'fvar' order). STORE-INDEX is the initial vsindex, normally the Private
-DICT's."
+'fvar' order). STORE-INDEX is the initial vsindex: for a charstring, the
+vsindex of its subfont's Private DICT, or 0 if that has none."
   (let ((state (make-instance 'item-variation-blend-state
                               :store store
                               :coords (map 'vector #'f2dot14-from-real coords))))

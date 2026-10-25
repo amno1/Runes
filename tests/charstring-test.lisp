@@ -357,7 +357,7 @@ for big-endian words."
 (defun example-blend (&rest coords)
   (make-blend-state (zpb-otf:read-item-variation-store
                      (zpb-otf:make-font-data *cff2-example*) 18)
-                    coords))
+                    coords 0))
 
 (defun test-blend ()
   (format t "~%--- CFF2 blend state ---~%")
@@ -378,7 +378,7 @@ for big-endian words."
                               '(:u16 0) '(:u16 0) '(:u16 1) '(:u16 0)
                               '(:u16 0) '(:u16 0) '(:u16 2) '(:u16 1) '(:u16 0)))
          (store (zpb-otf:read-item-variation-store (zpb-otf:make-font-data store-bytes) 0))
-         (state (make-blend-state store '(-0.5))))
+         (state (make-blend-state store '(-0.5) 0)))
     (check "store index 0 at -0.5" (equalp (blend-scalars state) (vector 0)))
     (blend-set-store-index state 1)
     (check "vsindex 1 recomputes the scalars"
@@ -390,7 +390,7 @@ for big-endian words."
            (and (= 0 (blend-store-index state))
                 (equalp (blend-scalars state) (vector 0))))
     (check "the store index can be chosen up front"
-           (equalp (blend-scalars (make-blend-state store '(0.5) :store-index 1))
+           (equalp (blend-scalars (make-blend-state store '(0.5) 1))
                    (vector 0 (f 0.5)))))
   (check "example charstring at -0.5 (scalars 1, 0)"
          ;; 50 + 1 * 50 rmoveto, 500 + 1 * -100 hlineto, 500 vlineto, -500 + 1 * 100 hlineto
