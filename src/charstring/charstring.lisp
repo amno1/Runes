@@ -32,6 +32,7 @@
    ;; CFF2 blending
    #:blend-region-count #:blend-scalars #:blend-set-store-index
    #:constant-blend-state
+   #:item-variation-blend-state #:make-blend-state #:blend-coords #:blend-store-index
    ;; Fixed point
    #:fixed-from-int #:fixed->float #:float->fixed
    ;; Conditions
