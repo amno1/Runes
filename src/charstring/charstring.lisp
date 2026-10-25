@@ -108,8 +108,12 @@ divisor gives the largest magnitude."
 (defun fixed->float (f)
   (/ f 65536.0d0))
 
+(defun round-half-away (x)
+  "X rounded to an integer, halves away from zero, as font-types' from_f64 does."
+  (if (minusp x) (- (floor (+ (- x) 1/2))) (floor (+ x 1/2))))
+
 (defun float->fixed (x)
-  (s32 (round (* x 65536))))
+  (s32 (round-half-away (* (rational x) 65536))))
 
 (defun fixed-sqrt (value)
   "Square root by the Babylonian method FreeType uses; zero for anything

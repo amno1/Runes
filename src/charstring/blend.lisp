@@ -15,7 +15,7 @@
 
 (defun f2dot14-from-real (x)
   "Raw 2.14 bits of the normalized coordinate X, clamped to [-2, 2)."
-  (max -32768 (min 32767 (round (* x 16384)))))
+  (max -32768 (min 32767 (round-half-away (* (rational x) 16384)))))
 
 (defun fixed-mul-div (a b c)
   "A * B / C, rounded, like font-types' Fixed::mul_div (FreeType's FT_MulDiv)."
