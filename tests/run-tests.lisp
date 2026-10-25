@@ -26,6 +26,11 @@
     (load (merge-pathnames "charstring-test.lisp" this-dir))
     (uiop:symbol-call :zpb-otf/charstring-test :run-charstring-tests)
 
+    ;; 4. CFF DICTs, font matrices and fonts
+    (format t "~%--- 4. Running CFF Tests (cff-test.lisp) ---~%")
+    (load (merge-pathnames "cff-test.lisp" this-dir))
+    (uiop:symbol-call :zpb-otf/cff-test :run-cff-tests)
+
     (format t "~%========================================================~%")
     (format t "ALL TEST SUITES PASSED CLEANLY!~%")
     (format t "========================================================~%")
