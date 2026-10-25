@@ -56,8 +56,9 @@
           :documentation "A ZPB-OTF:ITEM-VARIATION-STORE.")
    (coords :initarg :coords :reader blend-coords
            :documentation "Normalized coordinates as raw 2.14 values.")
-   (store-index :initform nil :reader blend-store-index)
-   (scalars :initform #() :reader blend-scalars))
+   ;; Set only by BLEND-SET-STORE-INDEX, through the internal writers.
+   (store-index :initform nil :reader blend-store-index :writer %set-store-index)
+   (scalars :initform #() :reader blend-scalars :writer %set-scalars))
   (:documentation "Blend state for CFF2 charstrings and DICTs at a location in
 the font's variation space."))
 
@@ -88,15 +89,16 @@ vsindex of its subfont's Private DICT, or 0 if that has none."
              (region-count (zpb-otf:variation-region-list-region-count regions))
              (first-region (zpb-otf:variation-region-list-variation-regions-start regions))
              (coords (blend-coords b)))
-        (setf (slot-value b 'scalars)
-              (map 'vector
-                   (lambda (i)
-                     (let ((region-index (zpb-otf:item-variation-data-region-indexes-ref data i)))
-                       (unless (< region-index region-count)
-                         (fail 'charstring-malformed
-                               (format nil "region ~D out of range" region-index)))
-                       (region-scalar fd (+ first-region (* region-index axis-count 6))
-                                      axis-count coords)))
-                   (alexandria:iota (zpb-otf:item-variation-data-region-index-count data))))
-        (setf (slot-value b 'store-index) index))))
+        (%set-scalars
+         (map 'vector
+              (lambda (i)
+                (let ((region-index (zpb-otf:item-variation-data-region-indexes-ref data i)))
+                  (unless (< region-index region-count)
+                    (fail 'charstring-malformed
+                          (format nil "region ~D out of range" region-index)))
+                  (region-scalar fd (+ first-region (* region-index axis-count 6))
+                                 axis-count coords)))
+              (alexandria:iota (zpb-otf:item-variation-data-region-index-count data)))
+         b)
+        (%set-store-index index b))))
   b)
