@@ -75,6 +75,7 @@
    #:contour-count
    #:contour
    #:contours
+   #:cubic-contours
    #:do-contours
    #:explicit-contour-points
    #:do-contour-segments

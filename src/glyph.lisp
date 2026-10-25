@@ -158,6 +158,10 @@ to the control point of the curve, otherwise set P1 to NIL."
    (contours
     :initarg :contours
     :accessor contours)
+   ;; Exact outline of a CFF glyph, from which CONTOURS are approximated.
+   (cubic-contours
+    :initarg :cubic-contours
+    :accessor %cubic-contours)
    (bounding-box
     :initarg :bounding-box
     :accessor bounding-box)))
@@ -280,6 +284,8 @@ to the control point of the curve, otherwise set P1 to NIL."
                 (values off1 (- off2 off1))))))))
 
 (defmethod initialize-bounding-box ((glyph glyph))
+  (when (cff-outlines-p (font-loader glyph))
+    (return-from initialize-bounding-box (initialize-cff-glyph glyph)))
   (let ((loader (font-loader glyph))
         (gid (font-index glyph)))
     (multiple-value-bind (g-off len) (glyph-loca-info loader gid)
@@ -294,6 +300,8 @@ to the control point of the curve, otherwise set P1 to NIL."
             (setf (bounding-box glyph) (vector xmin ymin xmax ymax)))))))
 
 (defmethod initialize-contours ((glyph glyph))
+  (when (cff-outlines-p (font-loader glyph))
+    (return-from initialize-contours (initialize-cff-glyph glyph)))
   (let ((loader (font-loader glyph))
         (gid (font-index glyph)))
     (multiple-value-bind (g-off len) (glyph-loca-info loader gid)

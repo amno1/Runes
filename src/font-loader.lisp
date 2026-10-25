@@ -51,6 +51,9 @@
    (postscript-glyph-names :accessor postscript-glyph-names :initform nil)
    ;; glyph cache
    (glyph-cache :accessor glyph-cache :initform nil)
+   ;; from 'CFF ' or 'CFF2': the font, opened on first use, and its subfonts
+   (cff-font :accessor %cff-font :initform nil)
+   (cff-subfonts :accessor cff-subfonts :initform (make-hash-table))
    ;; TTC info
    (collection-font-count :reader collection-font-count :initform nil :initarg :collection-font-count)
    (collection-font-index :reader collection-font-index :initform nil :initarg :collection-font-index)))

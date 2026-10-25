@@ -12,7 +12,7 @@
   :author "Zachary Beane <xach@xach.com>, Arthur Miller and contributors"
   :description "Access TrueType and OpenType font metrics and outlines from Common Lisp"
   :license "BSD-2-Clause"
-  :depends-on (#:zpb-otf)
+  :depends-on (#:zpb-otf #:zpb-otf/charstring)
   :serial t
   :components ((:module "src"
                 :serial t
@@ -22,4 +22,5 @@
                              (:file "bounding-box")
                              (:file "font-loader")
                              (:file "glyph")
+                             (:file "cff-outlines")
                              (:file "font-loader-interface")))))
