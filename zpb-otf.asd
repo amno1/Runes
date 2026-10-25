@@ -18,6 +18,16 @@
                                            (:file "font-data")
                                            (:file "table-ref")))))))
 
+(asdf:defsystem #:zpb-otf/charstring
+  :version "0.1.0"
+  :author "Arthur Miller and contributors"
+  :description "Type 1 and Type 2 (CFF/CFF2) charstring evaluator, ported from Fontations"
+  :license "MIT"
+  :depends-on (#:zpb-otf/runtime)
+  :components ((:module "src"
+                :components ((:module "charstring"
+                              :components ((:file "charstring")))))))
+
 (asdf:defsystem #:zpb-otf/codegen
   :version "0.1.0"
   :author "Arthur Miller and contributors"
