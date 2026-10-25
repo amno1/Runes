@@ -202,7 +202,9 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
                   (and (cff-font-cff2-p font) (= 1307 (cff-num-glyphs font))))
            (loop for coord in '(-1 0 1)
                  do (check (format nil "Cantarell-VF: every glyph draws at wght ~D" coord)
-                           (= 22656 (draw-all loader font (list coord))))))
+                           ;; 22656 commands, less 2 degenerate ones the
+                           ;; NopFilterSink port drops.
+                           (= 22654 (draw-all loader font (list coord))))))
       (zpb-ttf:close-font-loader loader))))
 
 ;;; Outlines through zpb-ttf
@@ -227,8 +229,29 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
              (setf start end))
     worst))
 
+(defun filtered (&rest commands)
+  "Commands reaching a capture sink through a nop-filter-sink."
+  (let* ((capture (make-instance 'zpb-otf/charstring-test::capture-sink))
+         (filter (make-instance 'nop-filter-sink :inner capture)))
+    (dolist (c commands)
+      (ecase (first c)
+        (:move (apply #'sink-move-to filter (rest c)))
+        (:line (apply #'sink-line-to filter (rest c)))
+        (:curve (apply #'sink-curve-to filter (rest c)))
+        (:close (sink-close filter))))
+    (sink-finish filter)
+    (zpb-otf/charstring-test::result capture)))
+
 (defun test-outlines ()
   (format t "~%--- CFF outlines through zpb-ttf ---~%")
+  (check "nop-filter-sink drops lines to the current point and the closing line"
+         ;; The capture sink records a close as a line back to the last move.
+         (equal (filtered '(:move 0 0) '(:line 0 0) '(:line 5 0) '(:line 5 0) '(:line 5 5)
+                          '(:line 0 0) '(:close))
+                '((:move 0 0) (:line 5 0) (:line 5 5) (:line 0 0))))
+  (check "nop-filter-sink drops a move with nothing drawn after it"
+         (equal (filtered '(:move 1 1) '(:move 2 2) '(:line 3 3) '(:close) '(:move 9 9))
+                '((:move 2 2) (:line 3 3) (:line 2 2))))
   (zpb-ttf:with-font-loader (loader (merge-pathnames "Cantarell-VF.otf" *test-fonts-dir*))
     (let* ((glyph (zpb-ttf:find-glyph #\O loader))
            (outline (zpb-ttf:cubic-contours glyph))

@@ -295,17 +295,20 @@ it needs the charset and Standard Encoding."))
 
 (defun cff-draw-glyph (font subfont gid sink &optional (coords #()))
   "Evaluate glyph GID of SUBFONT, sending its outline in font units (fixed
-point) to SINK. Return the charstring's advance width in charstring units:
-the stated width plus nominalWidthX, or defaultWidthX."
+point) to SINK, without degenerate commands. Return the charstring's
+advance width in charstring units: the stated width plus nominalWidthX,
+or defaultWidthX. COORDS are normalized coordinates of a CFF2 instance."
   (let* ((context (make-instance 'cff-charstring-context
                                  :global-subrs (cff-font-global-subrs font)
                                  :local-subrs (cff-subfont-subrs subfont)))
          (charstring (cff-index-ref (cff-font-charstrings font) gid))
          (blend (cff-blend-state font (cff-subfont-vs-index subfont) coords))
          (width (multiple-value-bind (matrix scale) (cff-transform font subfont)
+                  ;; As in Fontations' draw: transform, then filter.
                   (evaluate-charstring context charstring
-                                       (make-instance 'transform-sink :inner sink
-                                                                      :matrix matrix :scale scale)
+                                       (make-instance 'transform-sink
+                                                      :inner (make-instance 'nop-filter-sink :inner sink)
+                                                      :matrix matrix :scale scale)
                                        :blend-state blend))))
     (if width
         (fixed+ width (cff-subfont-nominal-width subfont))

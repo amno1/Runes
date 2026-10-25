@@ -28,7 +28,7 @@
    ;; Sinks
    #:sink-move-to #:sink-line-to #:sink-curve-to #:sink-close
    #:sink-hstem #:sink-vstem #:sink-hint-mask #:sink-counter-mask
-   #:sink-clear-hints #:sink-finish #:null-sink
+   #:sink-clear-hints #:sink-finish #:null-sink #:nop-filter-sink
    ;; CFF2 blending
    #:blend-region-count #:blend-scalars #:blend-set-store-index
    #:constant-blend-state
@@ -399,6 +399,66 @@ the CFF subroutine bias. A NIL sequence means the font has none."))
 (defmethod sink-close ((s null-sink)))
 
 (defvar *null-sink* (make-instance 'null-sink))
+
+;;; Filtering degenerate commands (NopFilterSink in charstring.rs): moves
+;;; with nothing drawn after them, lines to the current point and a closing
+;;; line back to the start of the contour are dropped, as FreeType does.
+;;; Each command is held back until the next one shows whether it counts.
+
+(defclass nop-filter-sink ()
+  ((inner :initarg :inner)
+   (open-p :initform nil)
+   (start :initform nil)
+   ;; (:move x y), (:line x y), (:curve cx0 cy0 cx1 cy1 x y) or NIL
+   (pending :initform nil))
+  (:documentation "Sink dropping degenerate commands before passing the rest on."))
+
+(defun pending-target (pending)
+  (last pending 2))
+
+(defun flush-pending (s for-close)
+  (with-slots (inner open-p start pending) s
+    (when pending
+      (destructuring-bind (kind &rest args) pending
+        (setf pending nil)
+        (ecase kind
+          (:move (unless for-close
+                   (setf open-p t start args)
+                   (apply #'sink-move-to inner args)))
+          (:line (unless (and for-close (equal start args))
+                   (apply #'sink-line-to inner args)))
+          (:curve (apply #'sink-curve-to inner args)))))))
+
+(defmethod sink-move-to ((s nop-filter-sink) x y)
+  (setf (slot-value s 'pending) (list :move x y)))
+
+(defmethod sink-line-to ((s nop-filter-sink) x y)
+  (with-slots (pending) s
+    ;; A line to where we already are draws nothing.
+    (unless (and pending (equal (pending-target pending) (list x y)))
+      (flush-pending s nil)
+      (setf pending (list :line x y)))))
+
+(defmethod sink-curve-to ((s nop-filter-sink) cx0 cy0 cx1 cy1 x y)
+  (flush-pending s nil)
+  (setf (slot-value s 'pending) (list :curve cx0 cy0 cx1 cy1 x y)))
+
+(defmethod sink-close ((s nop-filter-sink))
+  (flush-pending s t)
+  (with-slots (inner open-p) s
+    (when open-p
+      (sink-close inner)
+      (setf open-p nil))))
+
+(defmethod sink-finish ((s nop-filter-sink))
+  (sink-close s)
+  (sink-finish (slot-value s 'inner)))
+
+(defmethod sink-hstem ((s nop-filter-sink) y dy) (sink-hstem (slot-value s 'inner) y dy))
+(defmethod sink-vstem ((s nop-filter-sink) x dx) (sink-vstem (slot-value s 'inner) x dx))
+(defmethod sink-hint-mask ((s nop-filter-sink) mask) (sink-hint-mask (slot-value s 'inner) mask))
+(defmethod sink-counter-mask ((s nop-filter-sink) mask) (sink-counter-mask (slot-value s 'inner) mask))
+(defmethod sink-clear-hints ((s nop-filter-sink)) (sink-clear-hints (slot-value s 'inner)))
 
 ;;; Reading charstring bytes
 
