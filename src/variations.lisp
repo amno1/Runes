@@ -4,14 +4,12 @@
 
 ;;; A loader can be set to an instance of a variable font. User axis values
 ;;; are normalized through 'fvar' and 'avar' as Fontations does
-;;; (Fvar::user_to_normalized, SegmentMaps::apply). CFF2 outlines are then
-;;; drawn at that instance, advance widths follow 'HVAR', and the font-wide
-;;; metrics follow 'MVAR'.
-;;;
-;;; Only CFF2 fonts can be set to an instance: zpb-ttf does not apply 'gvar',
-;;; so TrueType outlines would stay at the default while their advances
-;;; changed. 'avar' 2.0 mappings beyond the segment maps and side bearing
-;;; variations are not applied.
+;;; (Fvar::user_to_normalized, SegmentMaps::apply). CFF2 outlines and
+;;; TrueType outlines (with 'gvar', see gvar.lisp and glyf-outlines.lisp) are
+;;; then drawn at that instance, advance widths follow 'HVAR' or, without it,
+;;; the phantom points, and the font-wide metrics follow 'MVAR'. 'avar' 2.0
+;;; mappings beyond the segment maps and side bearing variations are not
+;;; applied.
 
 (in-package #:zpb-ttf)
 
@@ -149,18 +147,19 @@ the change keep their old outlines; find them again.")
     (when coordinates
       (unless (table-info "fvar" loader)
         (error 'unsupported-value :description "Font is not variable"
-                                  :actual-value coordinates :expected-values '(nil)))
-      (unless (and (cff-outlines-p loader) (table-info "CFF2" loader))
-        (error 'unsupported-value :description "Only CFF2 variable fonts can be set to an instance"
                                   :actual-value coordinates :expected-values '(nil))))
-    (setf (user-coordinates loader) (copy-alist coordinates)
-          (normalized-coordinates loader) (when coordinates
-                                            (normalize-coordinates loader coordinates)))
-    ;; Outlines, bounding boxes and subfonts depend on the instance.
-    (when (glyph-cache loader)
-      (fill (glyph-cache loader) nil))
-    (clrhash (cff-subfonts loader))
+    (set-instance loader (copy-alist coordinates)
+                  (when coordinates (normalize-coordinates loader coordinates)))
     coordinates))
+
+(defun set-instance (loader user-coordinates normalized-coordinates)
+  "Set LOADER's instance and drop everything that depends on it."
+  (setf (user-coordinates loader) user-coordinates
+        (normalized-coordinates loader) normalized-coordinates)
+  ;; Outlines, bounding boxes and subfonts depend on the instance.
+  (when (glyph-cache loader)
+    (fill (glyph-cache loader) nil))
+  (clrhash (cff-subfonts loader)))
 
 (defun advance-width-delta (loader gid)
   "Change of GID's advance width at the loader's instance, in font units, from 'HVAR'."

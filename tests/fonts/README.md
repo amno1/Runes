@@ -12,6 +12,14 @@ license. Full license texts are in `licenses/`.
 | `DejaVuMathTeXGyre.ttf` | © 2003 Bitstream, Inc.; DejaVu changes and TeX Gyre math extensions are public domain | Bitstream Vera license (`licenses/DejaVu.txt`) | https://dejavu-fonts.github.io/ |
 | `TTC.ttc` | © 2015 FontTools, "No rights reserved" | MIT (`licenses/FontTools.txt`) | https://github.com/fonttools/fonttools |
 | `chromacheck-cbdt.ttf`, `chromacheck-colr.ttf`, `chromacheck-sbix.ttf`, `chromacheck-svg.ttf` | © 2018 Roel Nieskens; © 2018 Google LLC | MIT (`licenses/ChromaCheck.txt`) | https://github.com/RoelN/ChromaCheck |
+| `vazirmatn_var_trimmed.ttf` | The Vazirmatn project (Saber Rastikerdar); subset by the Fontations authors | SIL OFL 1.1 (`licenses/OFL.txt`) | https://github.com/rastikerdar/vazirmatn, via Fontations' `font-test-data` |
+| `material_symbols_subset.ttf` | © 2020-2022 Google LLC; subset by the Fontations authors | Apache 2.0 (`licenses/Apache-2.0.txt`) | Google Material Symbols, via Fontations' `font-test-data` |
+| `hvar_with_truncated_adv_index_map.ttf`, `glyf_components.ttf` | © 2019 Fontations Developers (test fonts made for Fontations) | MIT (`licenses/Fontations-MIT.txt`) | https://github.com/googlefonts/fontations (`font-test-data`) |
+
+`reference/` holds the outlines FreeType 2.13 produces for the last four fonts,
+from Fontations' `font-test-data/test_data/extracted` (generated there by
+`extract_glyphs.py`, under Fontations' MIT license); the tests compare against
+them.
 
 The OFL and Bitstream Vera licenses forbid selling the fonts by themselves and
 require modified versions to be renamed. Don't modify these files in place;

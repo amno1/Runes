@@ -31,6 +31,11 @@
     (load (merge-pathnames "cff-test.lisp" this-dir))
     (uiop:symbol-call :zpb-otf/cff-test :run-cff-tests)
 
+    ;; 5. TrueType outlines and gvar against FreeType
+    (format t "~%--- 5. Running TrueType Outline Tests (gvar-test.lisp) ---~%")
+    (load (merge-pathnames "gvar-test.lisp" this-dir))
+    (uiop:symbol-call :zpb-ttf/gvar-test :run-gvar-tests)
+
     (format t "~%========================================================~%")
     (format t "ALL TEST SUITES PASSED CLEANLY!~%")
     (format t "========================================================~%")
