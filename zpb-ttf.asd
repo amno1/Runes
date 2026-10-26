@@ -22,6 +22,8 @@
                              (:file "bounding-box")
                              (:file "font-loader")
                              (:file "glyph")
+                             (:file "gvar")
+                             (:file "glyf-outlines")
                              (:file "cff-outlines")
                              (:file "variations")
                              (:file "font-loader-interface")))))
