@@ -6,10 +6,9 @@
 ;;; are normalized through 'fvar' and 'avar' as Fontations does
 ;;; (Fvar::user_to_normalized, SegmentMaps::apply). CFF2 outlines and
 ;;; TrueType outlines (with 'gvar', see gvar.lisp and glyf-outlines.lisp) are
-;;; then drawn at that instance, advance widths follow 'HVAR' or, without it,
-;;; the phantom points, and the font-wide metrics follow 'MVAR'. 'avar' 2.0
-;;; mappings beyond the segment maps and side bearing variations are not
-;;; applied.
+;;; then drawn at that instance, advances and side bearings follow 'HVAR' and
+;;; 'VVAR' or, without them, the phantom points, and the font-wide metrics
+;;; follow 'MVAR'. 'avar' 2.0 mappings beyond the segment maps are not applied.
 
 (in-package #:zpb-ttf)
 
@@ -161,24 +160,59 @@ the change keep their old outlines; find them again.")
     (fill (glyph-cache loader) nil))
   (clrhash (cff-subfonts loader)))
 
-(defun advance-width-delta (loader gid)
-  "Change of GID's advance width at the loader's instance, in font units, from 'HVAR'."
+(defun metrics-delta (loader tag reader store-reader map-reader gid &key direct)
+  "Change at the loader's instance, in font units, of a metric of GID from
+the HVAR or VVAR table TAG, read with READER. MAP-READER gives the offset of
+the metric's DeltaSetIndexMap. Without a map, GID indexes the store directly
+when DIRECT is true, as for advances; otherwise the result is NIL, since the
+font does not vary that metric through this table."
   (let ((coords (normalized-coordinates loader))
-        (info (table-info "HVAR" loader)))
+        (info (table-info tag loader)))
     (if (or (null coords) (null info))
-        0
+        (and direct 0)
         (let* ((fd (font-data loader))
-               (hvar (zpb-otf:read-hvar fd (offset info) (size info)))
-               (store (zpb-otf:hvar-item-variation-store-offset hvar))
-               (map-offset (zpb-otf:hvar-advance-width-mapping-offset-offset hvar)))
-          (multiple-value-bind (outer inner)
-              (if (and map-offset (plusp map-offset))
+               (table (funcall reader fd (offset info) (size info)))
+               (store (funcall store-reader table))
+               (map-offset (funcall map-reader table)))
+          (if (or (null map-offset) (zerop map-offset))
+              (if direct (store-delta store 0 gid coords) nil)
+              (multiple-value-bind (outer inner)
                   (delta-set-index (+ (offset info) map-offset) fd gid)
-                  (values 0 gid))
-            (if (or (null store) (> inner #xFFFF))
-                0
-                ;; Round the 16.16 delta to an integer as FreeType does.
-                (ash (+ (zpb-otf/charstring:item-variation-delta store outer inner coords) #x8000) -16)))))))
+                (store-delta store outer inner coords)))))))
+
+(defun store-delta (store outer inner coords)
+  (if (or (null store) (> inner #xFFFF))
+      0
+      ;; Round the 16.16 delta to an integer as FreeType does.
+      (ash (+ (zpb-otf/charstring:item-variation-delta store outer inner coords) #x8000) -16)))
+
+(defun advance-width-delta (loader gid)
+  "Change of GID's advance width at the loader's instance, from 'HVAR'."
+  (metrics-delta loader "HVAR" #'zpb-otf:read-hvar
+                 #'zpb-otf:hvar-item-variation-store-offset
+                 #'zpb-otf:hvar-advance-width-mapping-offset-offset
+                 gid :direct t))
+
+(defun lsb-delta (loader gid)
+  "Change of GID's left side bearing from the 'HVAR' LSB mapping, or NIL."
+  (metrics-delta loader "HVAR" #'zpb-otf:read-hvar
+                 #'zpb-otf:hvar-item-variation-store-offset
+                 #'zpb-otf:hvar-lsb-mapping-offset-offset
+                 gid))
+
+(defun advance-height-delta (loader gid)
+  "Change of GID's advance height at the loader's instance, from 'VVAR'."
+  (metrics-delta loader "VVAR" #'zpb-otf:read-vvar
+                 #'zpb-otf:vvar-item-variation-store-offset
+                 #'zpb-otf:vvar-advance-height-mapping-offset-offset
+                 gid :direct t))
+
+(defun tsb-delta (loader gid)
+  "Change of GID's top side bearing from the 'VVAR' TSB mapping, or NIL."
+  (metrics-delta loader "VVAR" #'zpb-otf:read-vvar
+                 #'zpb-otf:vvar-item-variation-store-offset
+                 #'zpb-otf:vvar-tsb-mapping-offset-offset
+                 gid))
 
 (defun delta-set-index (pos fd index)
   "Outer and inner delta-set index for INDEX from the DeltaSetIndexMap at POS."

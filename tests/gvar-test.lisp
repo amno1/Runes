@@ -74,6 +74,30 @@ entries and the number that differ, printing the first REPORT differences."
                       (if (eq ends :error) points (subseq points 0 (min 6 (length points))))))))))
     (values (length entries) bad)))
 
+(defun glyph-metrics (loader)
+  (loop for i below (zpb-ttf:glyph-count loader)
+        for g = (zpb-ttf:index-glyph i loader)
+        collect (list (zpb-ttf:left-side-bearing g) (zpb-ttf:advance-width g)
+                      (zpb-ttf:top-side-bearing g) (zpb-ttf:advance-height g))))
+
+(defun check-side-bearings (name)
+  "At the default instance the varied metrics equal hmtx; at the first axis'
+maximum each left side bearing is the varied left edge less the first
+phantom point."
+  (zpb-ttf:with-font-loader (loader (merge-pathnames name *test-fonts-dir*))
+    (let ((base (glyph-metrics loader))
+          (axis (first (zpb-ttf:variation-axes loader))))
+      (setf (zpb-ttf:variation-coordinates loader) (list (cons (first axis) (third axis))))
+      (check (format nil "~A: default instance keeps hmtx metrics" name)
+             (equal base (glyph-metrics loader)))
+      (setf (zpb-ttf:variation-coordinates loader) (list (cons (first axis) (fourth axis))))
+      (check (format nil "~A: side bearings follow the varied outlines" name)
+             (loop for i below (zpb-ttf:glyph-count loader)
+                   for g = (zpb-ttf:index-glyph i loader)
+                   always (or (zerop (length (zpb-ttf:contours g)))
+                              (= (zpb-ttf:left-side-bearing g)
+                                 (- (zpb-ttf:xmin g) (car (aref (zpb-ttf::%phantom-points g) 0))))))))))
+
 (defun run-gvar-tests ()
   (let ((zpb-otf/charstring-test::*failures* 0)
         (zpb-otf/charstring-test::*count* 0))
@@ -84,6 +108,8 @@ entries and the number that differ, printing the first REPORT differences."
                     "hvar_with_truncated_adv_index_map"))
       (multiple-value-bind (count bad) (compare-font name)
         (check (format nil "~A: ~D outlines match FreeType" name count) (zerop bad))))
+    (dolist (name '("vazirmatn_var_trimmed.ttf" "hvar_with_truncated_adv_index_map.ttf"))
+      (check-side-bearings name))
     (format t "~%Results: ~D tests run, ~D failures.~%"
             zpb-otf/charstring-test::*count* zpb-otf/charstring-test::*failures*)
     (unless (zerop zpb-otf/charstring-test::*failures*)

@@ -178,10 +178,28 @@ to the control point of the curve, otherwise set P1 to NIL."
 
 ;;; Glyph metrics
 
+(defun varied-phantom-points (glyph)
+  "GLYPH's phantom points at its loader's instance, or NIL when the font has
+no TrueType glyph variations."
+  (when (table-info "gvar" (font-loader glyph))
+    (contours glyph)
+    (%phantom-points glyph)))
+
 (defgeneric left-side-bearing (object)
   (:method ((glyph glyph))
-    (bounded-aref (left-side-bearings (font-loader glyph))
-                  (font-index glyph))))
+    (let* ((loader (font-loader glyph))
+           (gid (font-index glyph))
+           (lsb (bounded-aref (left-side-bearings loader) gid)))
+      (if (null (normalized-coordinates loader))
+          lsb
+          (let ((delta (lsb-delta loader gid))
+                (phantom (varied-phantom-points glyph)))
+            (cond (delta (+ lsb delta))
+                  ;; The varied outline's left edge from the first phantom point.
+                  (phantom (- (xmin glyph) (car (aref phantom 0))))
+                  ;; A CFF2 glyph's side bearing is its left edge.
+                  ((table-info "CFF2" loader) (xmin glyph))
+                  (t lsb)))))))
 
 (defgeneric advance-width (object)
   (:method ((glyph glyph))
@@ -192,8 +210,7 @@ to the control point of the curve, otherwise set P1 to NIL."
         ;; Without HVAR, a TrueType instance takes its advance from the
         ;; varied phantom points.
         ((and (table-info "gvar" loader) (not (table-info "HVAR" loader)))
-         (contours glyph)
-         (let ((phantom (%phantom-points glyph)))
+         (let ((phantom (varied-phantom-points glyph)))
            (- (car (aref phantom 1)) (car (aref phantom 0)))))
         (t
          (+ (bounded-aref (advance-widths loader) (font-index glyph))
@@ -201,16 +218,32 @@ to the control point of the curve, otherwise set P1 to NIL."
 
 (defgeneric top-side-bearing (object)
   (:method ((glyph glyph))
-    (let ((loader (font-loader glyph)))
+    (let ((loader (font-loader glyph))
+          (gid (font-index glyph)))
       (if (vmtx-missing-p loader)
           (- (ascender loader) (ymax glyph))
-          (bounded-aref (top-side-bearings loader)
-                        (font-index glyph))))))
+          (let ((tsb (bounded-aref (top-side-bearings loader) gid)))
+            (if (null (normalized-coordinates loader))
+                tsb
+                (let ((delta (tsb-delta loader gid))
+                      (phantom (varied-phantom-points glyph)))
+                  (cond (delta (+ tsb delta))
+                        (phantom (- (cdr (aref phantom 2)) (ymax glyph)))
+                        (t tsb)))))))))
 
 (defgeneric advance-height (object)
   (:method ((glyph glyph))
-    (bounded-aref (advance-heights (font-loader glyph))
-                  (font-index glyph))))
+    (let* ((loader (font-loader glyph))
+           (gid (font-index glyph))
+           (advance (bounded-aref (advance-heights loader) gid)))
+      (cond
+        ((or (null (normalized-coordinates loader)) (vmtx-missing-p loader))
+         advance)
+        ((and (table-info "gvar" loader) (not (table-info "VVAR" loader)))
+         (let ((phantom (varied-phantom-points glyph)))
+           (- (cdr (aref phantom 2)) (cdr (aref phantom 3)))))
+        (t
+         (+ advance (advance-height-delta loader gid)))))))
 
 (defgeneric right-side-bearing (object)
   (:method ((glyph glyph))
