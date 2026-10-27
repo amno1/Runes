@@ -2,12 +2,19 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
+;;; The Brotli and zlib decoders that WOFF2 and WOFF 1.0 need live in
+;;; src/decompress as their own system, decompress, which can also be used
+;;; on its own.  ASDF does not search subdirectories, so load its definition
+;;; from here.
+(asdf:load-asd (merge-pathnames "src/decompress/decompress.asd"
+                                (or *load-truename* *compile-file-truename*)))
+
 (asdf:defsystem #:zpb-otf/runtime
   :version "0.1.0"
   :author "Arthur Miller and contributors"
-  :description "Runtime structures, buffer reading, and base condition classes for zpb-otf"
+  :description "Runtime structures, buffer reading, base condition classes and WOFF/WOFF2 decoding for zpb-otf"
   :license "MIT"
-  :depends-on (#:alexandria)
+  :depends-on (#:alexandria #:decompress)
   :serial t
   :components ((:module "src"
                 :serial t
@@ -17,6 +24,8 @@
                   :components ((:file "package")
                                (:file "conditions")
                                (:file "font-data")
+                               (:file "woff1")
+                               (:file "woff2")
                                (:file "table-ref")))))))
 
 (asdf:defsystem #:zpb-otf/codegen

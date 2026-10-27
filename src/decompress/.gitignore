@@ -1,0 +1,3 @@
+*.fasl
+.cache/
+tests/bench/data/

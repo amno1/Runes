@@ -24,6 +24,12 @@
    #:font-error-actual
    #:font-error-format-id
 
+   ;; WOFF and WOFF2
+   #:decode-woff1
+   #:decode-woff1-metadata
+   #:woff1-private-data
+   #:decode-woff2
+
    ;; Font data & slices
    #:font-data
    #:font-data-p

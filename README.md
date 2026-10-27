@@ -26,8 +26,17 @@ Fonts with PostScript outlines, in a `CFF ` or `CFF2` table, are drawn by the `z
             (zpb-ttf:cubic-contours glyph))))
 ```
 
+WOFF and WOFF2 web fonts are unpacked to a plain sfnt in memory by `zpb-otf:decode-woff1` and `zpb-otf:decode-woff2`, and the result opens like any other font. WOFF2's glyf, loca and hmtx transforms are undone, and WOFF2 collections become a TTC. `decode-woff1-metadata` and `woff1-private-data` return a WOFF 1.0 file's extended metadata and private data blocks:
+
+```lisp
+(zpb-ttf:with-font-loader (font (zpb-otf:decode-woff2 "Inter-Regular.woff2"))
+  (zpb-ttf:family-name font))
+```
+
+The Brotli and zlib decoders they need are in `src/decompress`, a pure Lisp system named `decompress` that has no FFI and can also be used on its own (see its README). `zpb-otf.asd` loads its definition, so nothing has to be installed separately.
+
 TrueType outlines, with their glyph variations (`gvar`), are checked point by point against FreeType's at several instances. `doc/font-loader-details.md` describes what the new loader reads, how it differs from the original zpb-ttf, and what is not supported.
 
-Both systems load with ASDF, and `zpb-ttf` pulls in `zpb-otf` automatically. The Makefile has targets for the everyday tasks: `make test` runs the test suite against the fonts in `tests/fonts/`, `make bench` runs the benchmarks, and `make codegen` regenerates the table code from the schemas. The original zpb-ttf reference manual is in `doc/index.html`.
+Both systems load with ASDF, and `zpb-ttf` pulls in `zpb-otf` automatically. The Makefile has targets for the everyday tasks: `make test` runs the test suite against the fonts in `tests/fonts/`, `make test-decompress` runs the Brotli and zlib decoder tests, `make bench` runs the benchmarks, and `make codegen` regenerates the table code from the schemas. The original zpb-ttf reference manual is in `doc/index.html`.
 
-The zpb-ttf part is distributed under the BSD 2-Clause license and the zpb-otf part under the MIT license; `LICENSE` has both notices. The test fonts come with their own licenses, described in `tests/fonts/README.md`.
+The zpb-ttf part is distributed under the BSD 2-Clause license and the zpb-otf part under the MIT license; `LICENSE` has both notices. `src/decompress` is MIT licensed, with its own `LICENSE`. The test fonts come with their own licenses, described in `tests/fonts/README.md`.

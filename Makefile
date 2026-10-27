@@ -7,7 +7,7 @@ SBCL_FLAGS ?= --noinform --eval '(ignore-errors (load "~/quicklisp/setup.lisp"))
 QL_LOCAL_PROJECTS ?= $(HOME)/quicklisp/local-projects
 LINK_NAME ?= zpb-otf
 
-.PHONY: all codegen generate compile build install test tests bench benchmark benchmarks clean help
+.PHONY: all codegen generate compile build install test tests test-decompress bench benchmark benchmarks clean help
 
 all: compile
 
@@ -17,6 +17,7 @@ help:
 	@echo "  make compile       - Compile :zpb-otf and :zpb-ttf systems"
 	@echo "  make install       - Install symlink into ~/quicklisp/local-projects/"
 	@echo "  make test          - Run all test suites (contour + comprehensive table readers)"
+	@echo "  make test-decompress - Run the decompress tests (needs libbrotli and libz)"
 	@echo "  make bench         - Run performance benchmarks"
 	@echo "  make clean         - Clean ASDF FASL cache and temporary files"
 
@@ -53,6 +54,14 @@ test tests:
 	$(SBCL) $(SBCL_FLAGS) \
 		--eval '(asdf:load-system :zpb-ttf :force t)' \
 		--load "$(CURDIR)/tests/run-tests.lisp"
+
+## Run the Brotli/zlib decoder tests against libbrotli and libz
+test-decompress:
+	@echo "==> Running decompress test suite..."
+	$(SBCL) $(SBCL_FLAGS) \
+		--eval '(asdf:load-asd #p"$(CURDIR)/src/decompress/decompress.asd")' \
+		--eval '(asdf:test-system :decompress)' \
+		--eval '(sb-ext:exit :code 0)'
 
 ## Run performance benchmarks
 bench benchmark benchmarks:

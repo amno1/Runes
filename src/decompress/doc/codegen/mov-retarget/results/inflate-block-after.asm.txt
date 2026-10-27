@@ -1,0 +1,628 @@
+; disassembly for DECOMPRESS::INFLATE-BLOCK
+; Size: 2348 bytes. Origin: #xB80148C0A1                      ; DECOMPRESS::INFLATE-BLOCK
+; 0A1:       488B45F8         MOV RAX, [RBP-8]
+; 0A5:       488B7805         MOV RDI, [RAX+5]
+; 0A9:       48897DD8         MOV [RBP-40], RDI
+; 0AD:       488B45F8         MOV RAX, [RBP-8]
+; 0B1:       488B500D         MOV RDX, [RAX+13]
+; 0B5:       488BC2           MOV RAX, RDX
+; 0B8:       48D1F8           SAR RAX, 1
+; 0BB:       488945D0         MOV [RBP-48], RAX
+; 0BF:       488B45F8         MOV RAX, [RBP-8]
+; 0C3:       4C8B4815         MOV R9, [RAX+21]
+; 0C7:       488B45F8         MOV RAX, [RBP-8]
+; 0CB:       488B401D         MOV RAX, [RAX+29]
+; 0CF:       4C8BD0           MOV R10, RAX
+; 0D2:       49D1FA           SAR R10, 1
+; 0D5:       488B45F8         MOV RAX, [RBP-8]
+; 0D9:       488B4025         MOV RAX, [RAX+37]
+; 0DD:       4C8BF0           MOV R14, RAX
+; 0E0:       49D1FE           SAR R14, 1
+; 0E3:       488B43F9         MOV RAX, [RBX-7]
+; 0E7:       488D88FCFCFFFF   LEA RCX, [RAX-772]
+; 0EE:       48894DC8         MOV [RBP-56], RCX
+; 0F2:       48C745E05FD70150 MOV QWORD PTR [RBP-32], #x5001D75F  ; ':END
+; 0FA:       4C8965C0         MOV [RBP-64], R12               ; NIL
+; 0FE:       488BC3           MOV RAX, RBX
+; 101:       488945B8         MOV [RBP-72], RAX
+; 105:       488D7301         LEA RSI, [RBX+1]
+; 109:       488975B0         MOV [RBP-80], RSI
+; 10D:       498BC2           MOV RAX, R10
+; 110:       41B83F000000     MOV R8D, 63
+; 116:       4929C0           SUB R8, RAX
+; 119:       498BC0           MOV RAX, R8
+; 11C:       488BF0           MOV RSI, RAX
+; 11F:       48C1EE03         SHR RSI, 3
+; 123:       498BC6           MOV RAX, R14
+; 126:       4883C008         ADD RAX, 8
+; 12A:       488BCA           MOV RCX, RDX
+; 12D:       48D1F9           SAR RCX, 1
+; 130:       4839C8           CMP RAX, RCX
+; 133:       0F874D080000     JA L44
+; 139:       488D4701         LEA RAX, [RDI+1]
+; 13D:       498BCE           MOV RCX, R14
+; 140:       488B0408         MOV RAX, [RAX+RCX]
+; 144: L0:   498BCA           MOV RCX, R10
+; 147:       4883E13F         AND RCX, 63
+; 14B:       48D3E0           SHL RAX, CL
+; 14E:       4909C1           OR R9, RAX
+; 151:       498BC6           MOV RAX, R14
+; 154:       4C8D3430         LEA R14, [RAX+RSI]
+; 158:       498BC2           MOV RAX, R10
+; 15B:       4983CA38         OR R10, 56
+; 15F:       E9A2040000       JMP L18
+; 164:       660F1F440000     NOP
+; 16A:       660F1F440000     NOP
+; 170: L1:   498BC1           MOV RAX, R9
+; 173:       4825FF030000     AND RAX, 1023
+; 179:       488B4DF0         MOV RCX, [RBP-16]
+; 17D:       8B748101         MOV ESI, [RCX+RAX*4+1]
+; 181:       BF3F000000       MOV EDI, 63
+; 186:       4C29D7           SUB RDI, R10
+; 189:       48C1EF03         SHR RDI, 3
+; 18D:       498BC6           MOV RAX, R14
+; 190:       4883C008         ADD RAX, 8
+; 194:       488B4DD0         MOV RCX, [RBP-48]
+; 198:       4839C8           CMP RAX, RCX
+; 19B:       0F87A0070000     JA L42
+; 1A1:       488B45D8         MOV RAX, [RBP-40]
+; 1A5:       48FFC0           INC RAX
+; 1A8:       498BCE           MOV RCX, R14
+; 1AB:       488B0408         MOV RAX, [RAX+RCX]
+; 1AF: L2:   498BCA           MOV RCX, R10
+; 1B2:       4883E13F         AND RCX, 63
+; 1B6:       48D3E0           SHL RAX, CL
+; 1B9:       4909C1           OR R9, RAX
+; 1BC:       498BC6           MOV RAX, R14
+; 1BF:       4C8D3438         LEA R14, [RAX+RDI]
+; 1C3:       4983CA38         OR R10, 56
+; 1C7:       488BD6           MOV RDX, RSI
+; 1CA:       4883E21F         AND RDX, 31
+; 1CE:       488BC2           MOV RAX, RDX
+; 1D1:       83F810           CMP EAX, 16
+; 1D4:       0F830E070000     JAE L41
+; 1DA:       488BCA           MOV RCX, RDX
+; 1DD:       49D3E9           SHR R9, CL
+; 1E0:       4929D2           SUB R10, RDX
+; 1E3:       488BC6           MOV RAX, RSI
+; 1E6:       48C1E805         SHR RAX, 5
+; 1EA: L3:   488BF0           MOV RSI, RAX
+; 1ED:       3D00010000       CMP EAX, 256
+; 1F2:       0F82AB020000     JB L15
+; 1F8: L4:   488BC6           MOV RAX, RSI
+; 1FB:       483D00010000     CMP RAX, 256
+; 201:       0F841D040000     JE L19
+; 207:       4983FA2B         CMP R10, 43
+; 20B:       7348             JAE L6
+; 20D:       498BC2           MOV RAX, R10
+; 210:       BF3F000000       MOV EDI, 63
+; 215:       4829C7           SUB RDI, RAX
+; 218:       48C1EF03         SHR RDI, 3
+; 21C:       498BC6           MOV RAX, R14
+; 21F:       4883C008         ADD RAX, 8
+; 223:       488B4DD0         MOV RCX, [RBP-48]
+; 227:       4839C8           CMP RAX, RCX
+; 22A:       0F8773060000     JA L39
+; 230:       488B45D8         MOV RAX, [RBP-40]
+; 234:       48FFC0           INC RAX
+; 237:       498BCE           MOV RCX, R14
+; 23A:       488B0408         MOV RAX, [RAX+RCX]
+; 23E: L5:   498BCA           MOV RCX, R10
+; 241:       48D3E0           SHL RAX, CL
+; 244:       4909C1           OR R9, RAX
+; 247:       498BC6           MOV RAX, R14
+; 24A:       4C8D3438         LEA R14, [RAX+RDI]
+; 24E:       498BC2           MOV RAX, R10
+; 251:       4983CA38         OR R10, 56
+; 255: L6:   488BC6           MOV RAX, RSI
+; 258:       3D00001000       CMP EAX, 1048576
+; 25D:       0F8230060000     JB L38
+; 263:       488BFE           MOV RDI, RSI
+; 266:       48C1EF04         SHR RDI, 4
+; 26A:       4881E7FF010000   AND RDI, 511
+; 271:       D1E7             SHL EDI, 1
+; 273:       488BCE           MOV RCX, RSI
+; 276:       4883E10F         AND RCX, 15
+; 27A:       48C7C2FEFFFFFF   MOV RDX, -2
+; 281:       48D3E2           SHL RDX, CL
+; 284:       4883F2FE         XOR RDX, -2
+; 288:       4B8D0409         LEA RAX, [R9+R9]
+; 28C:       4821D0           AND RAX, RDX
+; 28F:       4C8D0407         LEA R8, [RDI+RAX]
+; 293:       4C8945A8         MOV [RBP-88], R8
+; 297:       4C8B7DA8         MOV R15, [RBP-88]
+; 29B:       488BCE           MOV RCX, RSI
+; 29E:       488BC1           MOV RAX, RCX
+; 2A1:       4883E00F         AND RAX, 15
+; 2A5:       488BC8           MOV RCX, RAX
+; 2A8:       49D3E9           SHR R9, CL
+; 2AB:       4929C2           SUB R10, RAX
+; 2AE:       410FB6C1         MOVZX EAX, R9B
+; 2B2:       488B4DE8         MOV RCX, [RBP-24]
+; 2B6:       8B748101         MOV ESI, [RCX+RAX*4+1]
+; 2BA:       488BD6           MOV RDX, RSI
+; 2BD:       4883E21F         AND RDX, 31
+; 2C1:       488BC2           MOV RAX, RDX
+; 2C4:       83F810           CMP EAX, 16
+; 2C7:       0F82AE050000     JB L37
+; 2CD:       49C1E908         SHR R9, 8
+; 2D1:       4983C2F8         ADD R10, -8
+; 2D5:       48C1FE05         SAR RSI, 5
+; 2D9:       48D1E6           SHL RSI, 1
+; 2DC:       488BC2           MOV RAX, RDX
+; 2DF:       488D48F0         LEA RCX, [RAX-16]
+; 2E3:       4B8D1409         LEA RDX, [R9+R9]
+; 2E7:       48C7C0FEFFFFFF   MOV RAX, -2
+; 2EE:       48D3E0           SHL RAX, CL
+; 2F1:       4883F0FE         XOR RAX, -2
+; 2F5:       4821C2           AND RDX, RAX
+; 2F8:       488D0416         LEA RAX, [RSI+RDX]
+; 2FC:       488B4DE8         MOV RCX, [RBP-24]
+; 300:       8B544101         MOV EDX, [RCX+RAX*2+1]
+; 304:       488BF2           MOV RSI, RDX
+; 307:       4883E61F         AND RSI, 31
+; 30B:       498BC1           MOV RAX, R9
+; 30E:       488BCE           MOV RCX, RSI
+; 311:       4C8BC8           MOV R9, RAX
+; 314:       49D3E9           SHR R9, CL
+; 317:       4929F2           SUB R10, RSI
+; 31A:       488BC2           MOV RAX, RDX
+; 31D:       48C1E805         SHR RAX, 5
+; 321:       8D3C00           LEA EDI, [RAX+RAX]
+; 324: L7:   81FF00002000     CMP EDI, 2097152
+; 32A:       0F8C3B050000     JL L36
+; 330:       488BC7           MOV RAX, RDI
+; 333:       48C1F804         SAR RAX, 4
+; 337:       4883E0FE         AND RAX, -2
+; 33B:       0FB7F0           MOVZX ESI, AX
+; 33E:       8BCF             MOV ECX, EDI
+; 340:       83E11E           AND ECX, 30
+; 343:       48D1F9           SAR RCX, 1
+; 346:       48C7C2FEFFFFFF   MOV RDX, -2
+; 34D:       48D3E2           SHL RDX, CL
+; 350:       4883F2FE         XOR RDX, -2
+; 354:       4B8D0409         LEA RAX, [R9+R9]
+; 358:       4821D0           AND RAX, RDX
+; 35B:       4801C6           ADD RSI, RAX
+; 35E:       8BCF             MOV ECX, EDI
+; 360:       83E11E           AND ECX, 30
+; 363:       488BC1           MOV RAX, RCX
+; 366:       48D1F8           SAR RAX, 1
+; 369:       488BC8           MOV RCX, RAX
+; 36C:       49D3E9           SHR R9, CL
+; 36F:       4929C2           SUB R10, RAX
+; 372:       488BC6           MOV RAX, RSI
+; 375:       48D1F8           SAR RAX, 1
+; 378:       498BCB           MOV RCX, R11
+; 37B:       48D1F9           SAR RCX, 1
+; 37E:       4839C8           CMP RAX, RCX
+; 381:       0F87D4040000     JA L35
+; 387:       498BD3           MOV RDX, R11
+; 38A:       48D1FA           SAR RDX, 1
+; 38D:       488BCE           MOV RCX, RSI
+; 390:       48D1F9           SAR RCX, 1
+; 393:       4829CA           SUB RDX, RCX
+; 396:       488D3C12         LEA RDI, [RDX+RDX]
+; 39A:       488BC6           MOV RAX, RSI
+; 39D:       48D1F8           SAR RAX, 1
+; 3A0:       83F810           CMP EAX, 16
+; 3A3:       0F836C040000     JAE L34
+; 3A9: L8:   483B75A8         CMP RSI, [RBP-88]
+; 3AD:       0F8D97030000     JGE L28
+; 3B3:       488BC6           MOV RAX, RSI
+; 3B6:       48D1F8           SAR RAX, 1
+; 3B9:       83F808           CMP EAX, 8
+; 3BC:       0F8311030000     JAE L25
+; 3C2:       488B056FFCFFFF   MOV RAX, [RIP-913]              ; 'DECOMPRESS::+COPY-PERIOD+
+; 3C9:       488B4001         MOV RAX, [RAX+1]
+; 3CD:       488BCE           MOV RCX, RSI
+; 3D0:       48D1F9           SAR RCX, 1
+; 3D3:       0FB6440801       MOVZX EAX, BYTE PTR [RAX+RCX+1]
+; 3D8:       488BF0           MOV RSI, RAX
+; 3DB:       488BC8           MOV RCX, RAX
+; 3DE:       488B55A8         MOV RDX, [RBP-88]
+; 3E2:       48D1FA           SAR RDX, 1
+; 3E5:       4839D1           CMP RCX, RDX
+; 3E8:       0F83DC020000     JAE L24
+; 3EE:       8D1400           LEA EDX, [RAX+RAX]
+; 3F1: L9:   31C9             XOR ECX, ECX
+; 3F3:       EB38             JMP L11
+; 3F5:       660F1F440000     NOP
+; 3FB:       0F1F440000       NOP
+; 400: L10:  498BC3           MOV RAX, R11
+; 403:       48D1F8           SAR RAX, 1
+; 406:       4C8BC1           MOV R8, RCX
+; 409:       49D1F8           SAR R8, 1
+; 40C:       4C8945A8         MOV [RBP-88], R8
+; 410:       480145A8         ADD [RBP-88], RAX
+; 414:       488D040F         LEA RAX, [RDI+RCX]
+; 418:       48D1F8           SAR RAX, 1
+; 41B:       0FB6440301       MOVZX EAX, BYTE PTR [RBX+RAX+1]
+; 420:       4C8B45A8         MOV R8, [RBP-88]
+; 424:       4288440301       MOV [RBX+R8+1], AL
+; 429:       4883C102         ADD RCX, 2
+; 42D: L11:  4839D1           CMP RCX, RDX
+; 430:       7CCE             JL L10
+; 432:       488BD6           MOV RDX, RSI
+; 435:       EB49             JMP L13
+; 437:       660F1F840000000000 NOP
+; 440: L12:  488D7B01         LEA RDI, [RBX+1]
+; 444:       498BC3           MOV RAX, R11
+; 447:       48D1F8           SAR RAX, 1
+; 44A:       4C8D0410         LEA R8, [RAX+RDX]
+; 44E:       4C8945A8         MOV [RBP-88], R8
+; 452:       488D4B01         LEA RCX, [RBX+1]
+; 456:       488BC6           MOV RAX, RSI
+; 459:       4C8BC2           MOV R8, RDX
+; 45C:       4929C0           SUB R8, RAX
+; 45F:       498BC0           MOV RAX, R8
+; 462:       4D8BC3           MOV R8, R11
+; 465:       49D1F8           SAR R8, 1
+; 468:       4C8945A0         MOV [RBP-96], R8
+; 46C:       480345A0         ADD RAX, [RBP-96]
+; 470:       488B0401         MOV RAX, [RCX+RAX]
+; 474:       488B4DA8         MOV RCX, [RBP-88]
+; 478:       4889040F         MOV [RDI+RCX], RAX
+; 47C:       4883C208         ADD RDX, 8
+; 480: L13:  498BC7           MOV RAX, R15
+; 483:       48D1F8           SAR RAX, 1
+; 486:       4839C2           CMP RDX, RAX
+; 489:       72B5             JB L12
+; 48B: L14:  498BC7           MOV RAX, R15
+; 48E:       48D1F8           SAR RAX, 1
+; 491:       498BCB           MOV RCX, R11
+; 494:       48D1F9           SAR RCX, 1
+; 497:       4801C8           ADD RAX, RCX
+; 49A:       4C8D1C00         LEA R11, [RAX+RAX]
+; 49E:       E963010000       JMP L18
+; 4A3: L15:  488BC6           MOV RAX, RSI
+; 4A6:       498BCB           MOV RCX, R11
+; 4A9:       48D1F9           SAR RCX, 1
+; 4AC:       488B55B0         MOV RDX, [RBP-80]
+; 4B0:       88040A           MOV [RDX+RCX], AL
+; 4B3:       498BC3           MOV RAX, R11
+; 4B6:       48D1F8           SAR RAX, 1
+; 4B9:       48FFC0           INC RAX
+; 4BC:       4C8D1C00         LEA R11, [RAX+RAX]
+; 4C0:       498BC1           MOV RAX, R9
+; 4C3:       4825FF030000     AND RAX, 1023
+; 4C9:       488B4DF0         MOV RCX, [RBP-16]
+; 4CD:       8B748101         MOV ESI, [RCX+RAX*4+1]
+; 4D1:       488BD6           MOV RDX, RSI
+; 4D4:       4883E21F         AND RDX, 31
+; 4D8:       488BC2           MOV RAX, RDX
+; 4DB:       83F810           CMP EAX, 16
+; 4DE:       0F82D1010000     JB L23
+; 4E4:       49C1E90A         SHR R9, 10
+; 4E8:       4983C2F6         ADD R10, -10
+; 4EC:       48C1FE05         SAR RSI, 5
+; 4F0:       48D1E6           SHL RSI, 1
+; 4F3:       488BC2           MOV RAX, RDX
+; 4F6:       488D48F0         LEA RCX, [RAX-16]
+; 4FA:       4B8D1409         LEA RDX, [R9+R9]
+; 4FE:       48C7C0FEFFFFFF   MOV RAX, -2
+; 505:       48D3E0           SHL RAX, CL
+; 508:       4883F0FE         XOR RAX, -2
+; 50C:       4821C2           AND RDX, RAX
+; 50F:       488D0416         LEA RAX, [RSI+RDX]
+; 513:       488B4DF0         MOV RCX, [RBP-16]
+; 517:       8B544101         MOV EDX, [RCX+RAX*2+1]
+; 51B:       488BF2           MOV RSI, RDX
+; 51E:       4883E61F         AND RSI, 31
+; 522:       498BC1           MOV RAX, R9
+; 525:       488BCE           MOV RCX, RSI
+; 528:       4C8BC8           MOV R9, RAX
+; 52B:       49D3E9           SHR R9, CL
+; 52E:       4929F2           SUB R10, RSI
+; 531:       488BC2           MOV RAX, RDX
+; 534:       48C1E805         SHR RAX, 5
+; 538: L16:  488BF0           MOV RSI, RAX
+; 53B:       3D00010000       CMP EAX, 256
+; 540:       0F83B2FCFFFF     JAE L4
+; 546:       488BC6           MOV RAX, RSI
+; 549:       498BCB           MOV RCX, R11
+; 54C:       48D1F9           SAR RCX, 1
+; 54F:       488B55B0         MOV RDX, [RBP-80]
+; 553:       88040A           MOV [RDX+RCX], AL
+; 556:       498BC3           MOV RAX, R11
+; 559:       48D1F8           SAR RAX, 1
+; 55C:       48FFC0           INC RAX
+; 55F:       4C8D1C00         LEA R11, [RAX+RAX]
+; 563:       498BC1           MOV RAX, R9
+; 566:       4825FF030000     AND RAX, 1023
+; 56C:       488B4DF0         MOV RCX, [RBP-16]
+; 570:       8B748101         MOV ESI, [RCX+RAX*4+1]
+; 574:       488BD6           MOV RDX, RSI
+; 577:       4883E21F         AND RDX, 31
+; 57B:       488BC2           MOV RAX, RDX
+; 57E:       83F810           CMP EAX, 16
+; 581:       0F8219010000     JB L22
+; 587:       49C1E90A         SHR R9, 10
+; 58B:       4983C2F6         ADD R10, -10
+; 58F:       48C1FE05         SAR RSI, 5
+; 593:       48D1E6           SHL RSI, 1
+; 596:       488BC2           MOV RAX, RDX
+; 599:       488D48F0         LEA RCX, [RAX-16]
+; 59D:       4B8D1409         LEA RDX, [R9+R9]
+; 5A1:       48C7C0FEFFFFFF   MOV RAX, -2
+; 5A8:       48D3E0           SHL RAX, CL
+; 5AB:       4883F0FE         XOR RAX, -2
+; 5AF:       4821C2           AND RDX, RAX
+; 5B2:       488D0416         LEA RAX, [RSI+RDX]
+; 5B6:       488B4DF0         MOV RCX, [RBP-16]
+; 5BA:       8B544101         MOV EDX, [RCX+RAX*2+1]
+; 5BE:       488BF2           MOV RSI, RDX
+; 5C1:       4883E61F         AND RSI, 31
+; 5C5:       498BC1           MOV RAX, R9
+; 5C8:       488BCE           MOV RCX, RSI
+; 5CB:       4C8BC8           MOV R9, RAX
+; 5CE:       49D3E9           SHR R9, CL
+; 5D1:       4929F2           SUB R10, RSI
+; 5D4:       488BC2           MOV RAX, RDX
+; 5D7:       48C1E805         SHR RAX, 5
+; 5DB: L17:  488BF0           MOV RSI, RAX
+; 5DE:       3D00010000       CMP EAX, 256
+; 5E3:       0F830FFCFFFF     JAE L4
+; 5E9:       488BC6           MOV RAX, RSI
+; 5EC:       498BCB           MOV RCX, R11
+; 5EF:       48D1F9           SAR RCX, 1
+; 5F2:       488B55B0         MOV RDX, [RBP-80]
+; 5F6:       88040A           MOV [RDX+RCX], AL
+; 5F9:       498BC3           MOV RAX, R11
+; 5FC:       48D1F8           SAR RAX, 1
+; 5FF:       48FFC0           INC RAX
+; 602:       4C8D1C00         LEA R11, [RAX+RAX]
+; 606: L18:  498BC3           MOV RAX, R11
+; 609:       48D1F8           SAR RAX, 1
+; 60C:       488B4DC8         MOV RCX, [RBP-56]
+; 610:       48D1F9           SAR RCX, 1
+; 613:       4839C8           CMP RAX, RCX
+; 616:       0F8654FBFFFF     JBE L1
+; 61C:       48C745E02F0C0250 MOV QWORD PTR [RBP-32], #x50020C2F  ; ':FULL
+; 624: L19:  443865C0         CMP [RBP-64], R12B              ; NIL
+; 628:       7536             JNE L21
+; 62A: L20:  488B45F8         MOV RAX, [RBP-8]
+; 62E:       4C894815         MOV [RAX+21], R9
+; 632:       438D0412         LEA EAX, [R10+R10]
+; 636:       488B4DF8         MOV RCX, [RBP-8]
+; 63A:       4889411D         MOV [RCX+29], RAX
+; 63E:       4B8D0436         LEA RAX, [R14+R14]
+; 642:       488B4DF8         MOV RCX, [RBP-8]
+; 646:       48894125         MOV [RCX+37], RAX
+; 64A:       498BFB           MOV RDI, R11
+; 64D:       488B75E0         MOV RSI, [RBP-32]
+; 651:       488D5D10         LEA RBX, [RBP+16]
+; 655:       498BD4           MOV RDX, R12                    ; NIL
+; 658:       B904000000       MOV ECX, 4
+; 65D:       F9               STC
+; 65E:       C9               LEAVE
+; 65F:       C3               RET
+; 660: L21:  4C895D98         MOV [RBP-104], R11
+; 664:       4C894D90         MOV [RBP-112], R9
+; 668:       4C895588         MOV [RBP-120], R10
+; 66C:       4C897580         MOV [RBP-128], R14
+; 670:       488B7DC0         MOV RDI, [RBP-64]
+; 674:       4883EC10         SUB RSP, 16
+; 678:       B902000000       MOV ECX, 2
+; 67D:       48892C24         MOV [RSP], RBP
+; 681:       488BEC           MOV RBP, RSP
+; 684:       FF154E2468FE     CALL [RIP-26729394]             ; DECOMPRESS::BERR
+; 68A:       480F42E3         CMOVB RSP, RBX
+; 68E:       4C8B7580         MOV R14, [RBP-128]
+; 692:       4C8B5588         MOV R10, [RBP-120]
+; 696:       4C8B4D90         MOV R9, [RBP-112]
+; 69A:       4C8B5D98         MOV R11, [RBP-104]
+; 69E:       EB8A             JMP L20
+; 6A0: L22:  488BCA           MOV RCX, RDX
+; 6A3:       49D3E9           SHR R9, CL
+; 6A6:       4929D2           SUB R10, RDX
+; 6A9:       488BC6           MOV RAX, RSI
+; 6AC:       48C1E805         SHR RAX, 5
+; 6B0:       E926FFFFFF       JMP L17
+; 6B5: L23:  488BCA           MOV RCX, RDX
+; 6B8:       49D3E9           SHR R9, CL
+; 6BB:       4929D2           SUB R10, RDX
+; 6BE:       488BC6           MOV RAX, RSI
+; 6C1:       48C1E805         SHR RAX, 5
+; 6C5:       E96EFEFFFF       JMP L16
+; 6CA: L24:  488B55A8         MOV RDX, [RBP-88]
+; 6CE:       E91EFDFFFF       JMP L9
+; 6D3: L25:  31D2             XOR EDX, EDX
+; 6D5:       EB69             JMP L27
+; 6D7:       660F1F840000000000 NOP
+; 6E0: L26:  488D4301         LEA RAX, [RBX+1]
+; 6E4:       488945A8         MOV [RBP-88], RAX
+; 6E8:       498BC3           MOV RAX, R11
+; 6EB:       48D1F8           SAR RAX, 1
+; 6EE:       488BCA           MOV RCX, RDX
+; 6F1:       48D1F9           SAR RCX, 1
+; 6F4:       4801C1           ADD RCX, RAX
+; 6F7:       488D7301         LEA RSI, [RBX+1]
+; 6FB:       488D0417         LEA RAX, [RDI+RDX]
+; 6FF:       48D1F8           SAR RAX, 1
+; 702:       488B0406         MOV RAX, [RSI+RAX]
+; 706:       488B75A8         MOV RSI, [RBP-88]
+; 70A:       4889040E         MOV [RSI+RCX], RAX
+; 70E:       488D4301         LEA RAX, [RBX+1]
+; 712:       488945A8         MOV [RBP-88], RAX
+; 716:       498D0413         LEA RAX, [R11+RDX]
+; 71A:       488D4810         LEA RCX, [RAX+16]
+; 71E:       488D7301         LEA RSI, [RBX+1]
+; 722:       488D0417         LEA RAX, [RDI+RDX]
+; 726:       4883C010         ADD RAX, 16
+; 72A:       48D1F8           SAR RAX, 1
+; 72D:       488B0406         MOV RAX, [RSI+RAX]
+; 731:       48D1F9           SAR RCX, 1
+; 734:       488B75A8         MOV RSI, [RBP-88]
+; 738:       4889040E         MOV [RSI+RCX], RAX
+; 73C:       4883C220         ADD RDX, 32
+; 740: L27:  4C39FA           CMP RDX, R15
+; 743:       7C9B             JL L26
+; 745:       E941FDFFFF       JMP L14
+; 74A: L28:  488BC6           MOV RAX, RSI
+; 74D:       48D1F8           SAR RAX, 1
+; 750:       83F840           CMP EAX, 64
+; 753:       0F8371000000     JAE L31
+; 759:       31D2             XOR EDX, EDX
+; 75B:       EB63             JMP L30
+; 75D:       0F1F00           NOP
+; 760: L29:  488D4301         LEA RAX, [RBX+1]
+; 764:       488945A8         MOV [RBP-88], RAX
+; 768:       498BC3           MOV RAX, R11
+; 76B:       48D1F8           SAR RAX, 1
+; 76E:       488BCA           MOV RCX, RDX
+; 771:       48D1F9           SAR RCX, 1
+; 774:       4801C1           ADD RCX, RAX
+; 777:       488D7301         LEA RSI, [RBX+1]
+; 77B:       488D0417         LEA RAX, [RDI+RDX]
+; 77F:       48D1F8           SAR RAX, 1
+; 782:       488B0406         MOV RAX, [RSI+RAX]
+; 786:       488B75A8         MOV RSI, [RBP-88]
+; 78A:       4889040E         MOV [RSI+RCX], RAX
+; 78E:       488D4301         LEA RAX, [RBX+1]
+; 792:       488945A8         MOV [RBP-88], RAX
+; 796:       498D0413         LEA RAX, [R11+RDX]
+; 79A:       488D4810         LEA RCX, [RAX+16]
+; 79E:       488D7301         LEA RSI, [RBX+1]
+; 7A2:       488D0417         LEA RAX, [RDI+RDX]
+; 7A6:       4883C010         ADD RAX, 16
+; 7AA:       48D1F8           SAR RAX, 1
+; 7AD:       488B0406         MOV RAX, [RSI+RAX]
+; 7B1:       48D1F9           SAR RCX, 1
+; 7B4:       488B75A8         MOV RSI, [RBP-88]
+; 7B8:       4889040E         MOV [RSI+RCX], RAX
+; 7BC:       4883C220         ADD RDX, 32
+; 7C0: L30:  4C39FA           CMP RDX, R15
+; 7C3:       7C9B             JL L29
+; 7C5:       E9C1FCFFFF       JMP L14
+; 7CA: L31:  488D7301         LEA RSI, [RBX+1]
+; 7CE:       31C9             XOR ECX, ECX
+; 7D0:       EB39             JMP L33
+; 7D2:       0F1F8000000000   NOP
+; 7D9:       0F1F8000000000   NOP
+; 7E0: L32:  498BC3           MOV RAX, R11
+; 7E3:       48D1F8           SAR RAX, 1
+; 7E6:       488BD1           MOV RDX, RCX
+; 7E9:       48D1FA           SAR RDX, 1
+; 7EC:       4801C2           ADD RDX, RAX
+; 7EF:       488D040F         LEA RAX, [RDI+RCX]
+; 7F3:       48D1F8           SAR RAX, 1
+; 7F6:       62F17F486F0406   VMOVDQU8 ZMM0, [RSI+RAX]
+; 7FD:       62F17F487F0416   VMOVDQU8 [RSI+RDX], ZMM0
+; 804:       4881C180000000   ADD RCX, 128
+; 80B: L33:  4C39F9           CMP RCX, R15
+; 80E:       7CD0             JL L32
+; 810:       E976FCFFFF       JMP L14
+; 815: L34:  837DA820         CMP DWORD PTR [RBP-88], 32
+; 819:       0F8F8AFBFFFF     JG L8
+; 81F:       488D7301         LEA RSI, [RBX+1]
+; 823:       488BC2           MOV RAX, RDX
+; 826:       488B0C06         MOV RCX, [RSI+RAX]
+; 82A:       488D7301         LEA RSI, [RBX+1]
+; 82E:       488D4208         LEA RAX, [RDX+8]
+; 832:       488B1406         MOV RDX, [RSI+RAX]
+; 836:       488D7301         LEA RSI, [RBX+1]
+; 83A:       498BC3           MOV RAX, R11
+; 83D:       48D1F8           SAR RAX, 1
+; 840:       48890C06         MOV [RSI+RAX], RCX
+; 844:       488D7301         LEA RSI, [RBX+1]
+; 848:       498BC3           MOV RAX, R11
+; 84B:       48D1F8           SAR RAX, 1
+; 84E:       4883C008         ADD RAX, 8
+; 852:       48891406         MOV [RSI+RAX], RDX
+; 856:       E930FCFFFF       JMP L14
+; 85B: L35:  488B05E6F7FFFF   MOV RAX, [RIP-2074]             ; "distance too far back"
+; 862:       488945C0         MOV [RBP-64], RAX
+; 866:       E9B9FDFFFF       JMP L19
+; 86B: L36:  488B05DEF7FFFF   MOV RAX, [RIP-2082]             ; "invalid distance code"
+; 872:       488945C0         MOV [RBP-64], RAX
+; 876:       E9A9FDFFFF       JMP L19
+; 87B: L37:  488BCA           MOV RCX, RDX
+; 87E:       49D3E9           SHR R9, CL
+; 881:       4929D2           SUB R10, RDX
+; 884:       488BC6           MOV RAX, RSI
+; 887:       48C1E805         SHR RAX, 5
+; 88B:       8D3C00           LEA EDI, [RAX+RAX]
+; 88E:       E991FAFFFF       JMP L7
+; 893: L38:  488B05BEF7FFFF   MOV RAX, [RIP-2114]             ; "invalid length code"
+; 89A:       488945C0         MOV [RBP-64], RAX
+; 89E:       E981FDFFFF       JMP L19
+; 8A3: L39:  488B45D0         MOV RAX, [RBP-48]
+; 8A7:       4883C008         ADD RAX, 8
+; 8AB:       498BCE           MOV RCX, R14
+; 8AE:       4839C1           CMP RCX, RAX
+; 8B1:       7725             JA L40
+; 8B3:       488B45F8         MOV RAX, [RBP-8]
+; 8B7:       488B502D         MOV RDX, [RAX+45]
+; 8BB:       48FFC2           INC RDX
+; 8BE:       498BC6           MOV RAX, R14
+; 8C1:       488B4DF8         MOV RCX, [RBP-8]
+; 8C5:       488B4935         MOV RCX, [RCX+53]
+; 8C9:       48D1F9           SAR RCX, 1
+; 8CC:       4829C8           SUB RAX, RCX
+; 8CF:       488B0402         MOV RAX, [RDX+RAX]
+; 8D3:       E966F9FFFF       JMP L5
+; 8D8: L40:  488B0581F7FFFF   MOV RAX, [RIP-2175]             ; "end of input"
+; 8DF:       488945C0         MOV [RBP-64], RAX
+; 8E3:       E93CFDFFFF       JMP L19
+; 8E8: L41:  49C1E90A         SHR R9, 10
+; 8EC:       4983C2F6         ADD R10, -10
+; 8F0:       48C1FE05         SAR RSI, 5
+; 8F4:       48D1E6           SHL RSI, 1
+; 8F7:       488BC2           MOV RAX, RDX
+; 8FA:       488D48F0         LEA RCX, [RAX-16]
+; 8FE:       4B8D1409         LEA RDX, [R9+R9]
+; 902:       48C7C0FEFFFFFF   MOV RAX, -2
+; 909:       48D3E0           SHL RAX, CL
+; 90C:       4883F0FE         XOR RAX, -2
+; 910:       4821C2           AND RDX, RAX
+; 913:       488D0416         LEA RAX, [RSI+RDX]
+; 917:       488B4DF0         MOV RCX, [RBP-16]
+; 91B:       8B544101         MOV EDX, [RCX+RAX*2+1]
+; 91F:       488BF2           MOV RSI, RDX
+; 922:       4883E61F         AND RSI, 31
+; 926:       498BC1           MOV RAX, R9
+; 929:       488BCE           MOV RCX, RSI
+; 92C:       4C8BC8           MOV R9, RAX
+; 92F:       49D3E9           SHR R9, CL
+; 932:       4929F2           SUB R10, RSI
+; 935:       488BC2           MOV RAX, RDX
+; 938:       48C1E805         SHR RAX, 5
+; 93C:       E9A9F8FFFF       JMP L3
+; 941: L42:  488B45D0         MOV RAX, [RBP-48]
+; 945:       4883C008         ADD RAX, 8
+; 949:       498BCE           MOV RCX, R14
+; 94C:       4839C1           CMP RCX, RAX
+; 94F:       7725             JA L43
+; 951:       488B45F8         MOV RAX, [RBP-8]
+; 955:       488B502D         MOV RDX, [RAX+45]
+; 959:       48FFC2           INC RDX
+; 95C:       498BC6           MOV RAX, R14
+; 95F:       488B4DF8         MOV RCX, [RBP-8]
+; 963:       488B4935         MOV RCX, [RCX+53]
+; 967:       48D1F9           SAR RCX, 1
+; 96A:       4829C8           SUB RAX, RCX
+; 96D:       488B0402         MOV RAX, [RDX+RAX]
+; 971:       E939F8FFFF       JMP L2
+; 976: L43:  488B05E3F6FFFF   MOV RAX, [RIP-2333]             ; "end of input"
+; 97D:       488945C0         MOV [RBP-64], RAX
+; 981:       E99EFCFFFF       JMP L19
+; 986: L44:  498BC6           MOV RAX, R14
+; 989:       488BCA           MOV RCX, RDX
+; 98C:       48D1F9           SAR RCX, 1
+; 98F:       4883C108         ADD RCX, 8
+; 993:       4839C8           CMP RAX, RCX
+; 996:       7610             JBE L45
+; 998:       488B05C1F6FFFF   MOV RAX, [RIP-2367]             ; "end of input"
+; 99F:       488945C0         MOV [RBP-64], RAX
+; 9A3:       E97CFCFFFF       JMP L19
+; 9A8: L45:  488B45F8         MOV RAX, [RBP-8]
+; 9AC:       488B502D         MOV RDX, [RAX+45]
+; 9B0:       48FFC2           INC RDX
+; 9B3:       498BC6           MOV RAX, R14
+; 9B6:       488B4DF8         MOV RCX, [RBP-8]
+; 9BA:       488B4935         MOV RCX, [RCX+53]
+; 9BE:       48D1F9           SAR RCX, 1
+; 9C1:       4829C8           SUB RAX, RCX
+; 9C4:       488B0402         MOV RAX, [RDX+RAX]
+; 9C8:       E977F7FFFF       JMP L0
