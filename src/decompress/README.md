@@ -49,8 +49,9 @@ and share their parts:
   issued before the refill so their loads overlap. From libdeflate: a length
   entry's bit count includes its extra bits, so one shift consumes both, and
   the decode tables are built by doubling the root (no strided stores, no
-  bit-reversal pass). The loop contains no calls (errors leave it and are
-  signalled afterwards), so SBCL keeps more of its state in registers. The
+  bit-reversal pass), in place in arrays reused across blocks and streams.
+  The loop contains no calls (errors leave it and are signalled afterwards),
+  so SBCL keeps more of its state in registers. The
   zlib Adler-32 runs 64 bytes per step with AVX-512 (`vpsadbw` and
   `vpmaddubsw`), or 32 with AVX2.
 
@@ -95,8 +96,8 @@ sb-simd-512 branch. C is libbrotli's `BrotliDecoderDecompress` and libz's
 | SBCL source, 8 MB, quality 9 / 11    | 1.58 / 1.42 MB → 8 MB | 885 / 839   | 892 / 903   | 0.99× / 0.93× |
 | SBCL source, 1 MB, quality 9 / 5     | 208 / 218 KB → 1 MB   | 823 / 768   | 872 / 810   | 0.94× / 0.95× |
 | **zlib / deflate**                   |                       |             |             |               |
-| Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 756         | 874         | 0.86×         |
-| Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 473         | 584         | 0.81×         |
+| Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 795         | 874         | 0.91×         |
+| Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 526         | 571         | 0.92×         |
 | Meslo Nerd Font Bold TTF, level 9    | 1.60 MB → 2.98 MB     | 526         | 579         | 0.91×         |
 | SBCL source, 8 MB, level 6 / 9       | 1.94 / 1.92 MB → 8 MB | 1111 / 1168 | 1273 / 1332 | 0.87× / 0.88× |
 

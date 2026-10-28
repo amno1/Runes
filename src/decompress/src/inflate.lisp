@@ -84,22 +84,24 @@ entry's bit count covers the extra bits too (at most 10 + 5 < 16)."
 ;;; reason.  Distance tables keep an 8-bit root.
 (defconstant +lit-root-bits+ 10)
 
-(defun build-deflate-table (lens start n count root-bits kind)
+(defun build-deflate-table (lens start n count root-bits kind scratch)
   "Decode table, in BUILD-TABLE's format, for the complete code given by the N
 lengths at LENS[START...], COUNT[l] of them of length l.  libdeflate's method:
 codewords are enumerated bit-reversed in canonical order, and the root is
 filled by doubling (the table is treated as 2^len entries while codes of
 length len are stored, one entry each, then copied onto its upper half), so
 there are no strided stores.  KIND (:LITERAL, :DISTANCE or :CODE-LENGTH) picks
-the map; literal/length entries are made with COMBINE-LENGTH."
+the map; literal/length entries are made with COMBINE-LENGTH.  The table is
+built in place in SCRATCH (+TABLE-CAPACITY+ entries; libdeflate builds into
+its decompressor object the same way); returns SCRATCH and the table's
+length."
   (declare (type u8vec lens) (type index start n) (type counts count)
-           (type (integer 5 11) root-bits)
+           (type (integer 5 11) root-bits) (type u32vec scratch)
            (optimize speed (debug 0) (safety 0)))
   (let ((offs (make-array 17 :element-type '(unsigned-byte 16) :initial-element 0))
         (sorted (make-array 288 :element-type '(unsigned-byte 16)))
-        (scratch (make-array #.(+ 2048 32768) :element-type '(unsigned-byte 32)))
         (cnt 0) (len 1) (codeword 0) (end 0) (i 0))
-    (declare (dynamic-extent offs sorted scratch)
+    (declare (dynamic-extent offs sorted)
              (type fixnum cnt end i) (type (integer 0 16) len)
              (type (unsigned-byte 16) codeword))
     (loop for l from 1 to 15 do (setf (aref offs (1+ l)) (+ (aref offs l) (aref count l))))
@@ -120,10 +122,7 @@ the map; literal/length entries are made with COMBINE-LENGTH."
                  ;; highest 0 bit below MASK, clear the 1 bits above it
                  `(let ((bit (ash 1 (1- (integer-length (logxor codeword ,mask))))))
                     (setf codeword (logior (logand codeword (1- bit)) bit))))
-               (done () `(return-from build-deflate-table
-                           (let ((tab (make-array end :element-type '(unsigned-byte 32))))
-                             (replace tab scratch :end2 end)
-                             tab))))
+               (done () `(return-from build-deflate-table (values scratch end))))
       (loop while (zerop (setf cnt (aref count len))) do (incf len))
       (setf end (ash 1 len))
       ;; codes of up to ROOT-BITS bits
@@ -167,12 +166,13 @@ the map; literal/length entries are made with COMBINE-LENGTH."
             (loop (setf cnt (aref count (incf len)))
                   (when (plusp cnt) (return)))))))))
 
-(defun deflate-table (lens start n kind &optional (root-bits 8))
+(defun deflate-table (lens start n kind root-bits tab)
   "Decode table for the code given by N lengths at LENS[START...].  KIND is
 :LITERAL, :DISTANCE or :CODE-LENGTH; like zlib, an incomplete code is only
 accepted as a single code of length 1 (literal and distance codes), and a
-distance code may be empty (an error only if a distance is ever needed)."
-  (declare (type u8vec lens) (type index start n))
+distance code may be empty (an error only if a distance is ever needed).
+Built in place in TAB (see BUILD-DEFLATE-TABLE); returns TAB."
+  (declare (type u8vec lens) (type index start n) (type u32vec tab))
   (let ((count (make-array 16 :element-type '(unsigned-byte 16) :initial-element 0))
         (m 0) (space 0) (first 0))
     (declare (dynamic-extent count) (type (integer 0 1024) m) (type fixnum space)
@@ -187,13 +187,13 @@ distance code may be empty (an error only if a distance is ever needed)."
     (cond
       ((> space 32768) (berr "oversubscribed prefix code"))
       ((= space 32768)
-       (build-deflate-table lens start n count root-bits kind))
+       (values (build-deflate-table lens start n count root-bits kind tab)))
       ;; incomplete codes zlib accepts: one code of length 1 (its other bit
       ;; pattern is invalid), and an empty distance code
       ((or (and (= m 1) (= (aref lens (+ start first)) 1) (not (eq kind :code-length)))
            (and (= m 0) (eq kind :distance)))
-       (let ((tab (make-array (ash 1 root-bits) :element-type '(unsigned-byte 32)
-                                                :initial-element (logior (ash +invalid-symbol+ 5) 1))))
+       (progn
+         (fill tab (logior (ash +invalid-symbol+ 5) 1) :end (ash 1 root-bits))
          (when (= m 1)
            (let ((v (case kind
                       (:literal (aref +literal-map+ first))
@@ -206,6 +206,38 @@ distance code may be empty (an error only if a distance is ever needed)."
          tab))
       (t (berr "incomplete prefix code")))))
 
+;;; ---- reusable table storage ------------------------------------------------
+;;;
+;;; As libdeflate's decompressor object: the dynamic blocks' decode tables are
+;;; built in place in arrays that are reused across blocks and streams, so a
+;;; block allocates, zeroes and copies nothing for its tables.  A stream takes
+;;; one set from a lock-free pool and returns it at the end (a stream that
+;;; signals an error just drops its set), so concurrent threads never share one.
+
+(defconstant +table-capacity+ #.(+ 2048 32768)
+  "Entries a table under construction may use: a root of up to 2^11 entries
+plus its subtables, which a complete code (Kraft) keeps within 2^15.")
+
+(defstruct (inflate-tables (:constructor make-inflate-tables ()) (:conc-name tables-))
+  (lit (make-array +table-capacity+ :element-type '(unsigned-byte 32)) :type u32vec)
+  (dist (make-array +table-capacity+ :element-type '(unsigned-byte 32)) :type u32vec)
+  ;; code-length codes are at most 7 bits, under an 8-bit root: no subtables
+  (cl (make-array 256 :element-type '(unsigned-byte 32)) :type u32vec))
+
+(sb-ext:defglobal **table-pool** nil)
+
+(defun take-tables ()
+  (loop (let ((head **table-pool**))
+          (when (null head) (return (make-inflate-tables)))
+          (when (eq (sb-ext:compare-and-swap (symbol-value '**table-pool**) head (cdr head)) head)
+            (return (car head))))))
+
+(defun return-tables (tables)
+  (loop (let ((head **table-pool**))
+          (when (eq (sb-ext:compare-and-swap (symbol-value '**table-pool**) head (cons tables head))
+                    head)
+            (return)))))
+
 (sb-ext:define-load-time-global +fixed-tables+
   (let ((lens (make-array 320 :element-type '(unsigned-byte 8))))
     (fill lens 8 :start 0 :end 144)
@@ -213,13 +245,19 @@ distance code may be empty (an error only if a distance is ever needed)."
     (fill lens 7 :start 256 :end 280)
     (fill lens 8 :start 280 :end 288)
     (fill lens 5 :start 288 :end 320)
-    (cons (deflate-table lens 0 288 :literal +lit-root-bits+)
-          (deflate-table lens 288 32 :distance)))
+    ;; the root is the whole table (no fixed code is longer than 9 bits)
+    (flet ((build (start n kind root-bits)
+             (subseq (deflate-table lens start n kind root-bits
+                                    (make-array +table-capacity+ :element-type '(unsigned-byte 32)))
+                     0 (ash 1 root-bits))))
+      (cons (build 0 288 :literal +lit-root-bits+)
+            (build 288 32 :distance 8))))
   "The fixed literal/length and distance codes of block type 1.")
 
-(defun read-dynamic-tables (r)
-  "Block type 2 header: returns the literal/length and distance decode tables."
-  (declare (type reader r))
+(defun read-dynamic-tables (r tables)
+  "Block type 2 header: returns the literal/length and distance decode tables,
+built in TABLES' arrays."
+  (declare (type reader r) (type inflate-tables tables))
   (let* ((hlit (+ 257 (read-bits r 5)))
          (hdist (+ 1 (read-bits r 5)))
          (hclen (+ 4 (read-bits r 4)))
@@ -229,7 +267,7 @@ distance code may be empty (an error only if a distance is ever needed)."
     (when (or (> hlit 286) (> hdist 30)) (berr "too many length or distance codes"))
     (dotimes (i hclen)
       (setf (aref cl-lens (aref order i)) (read-bits r 3)))
-    (let ((cl-table (deflate-table cl-lens 0 19 :code-length))
+    (let ((cl-table (deflate-table cl-lens 0 19 :code-length 8 (tables-cl tables)))
           (lens (make-array 320 :element-type '(unsigned-byte 8) :initial-element 0))
           (total (+ hlit hdist))
           (i 0))
@@ -263,8 +301,8 @@ distance code may be empty (an error only if a distance is ever needed)."
       (let ((dlens (make-array 32 :element-type '(unsigned-byte 8) :initial-element 0)))
         (declare (dynamic-extent dlens))
         (replace dlens lens :start2 hlit :end2 total)
-        (values (deflate-table lens 0 hlit :literal +lit-root-bits+)
-                (deflate-table dlens 0 32 :distance))))))
+        (values (deflate-table lens 0 hlit :literal +lit-root-bits+ (tables-lit tables))
+                (deflate-table dlens 0 32 :distance 8 (tables-dist tables)))))))
 
 ;;; ---- the block loop -------------------------------------------------------
 
@@ -403,7 +441,7 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
   "Drop the bits up to the next byte boundary (deflate ignores their value)."
   (with-reader (r) (br-drop (logand bits 7))))
 
-(defun inflate-into (r buf fp)
+(defun inflate-into (r buf fp tables)
   "Decode deflate blocks from R into BUF at FP until the final block.  Returns
 the (possibly regrown) BUF and the new FP."
   (declare (type reader r) (type u8vec buf) (type index fp))
@@ -426,7 +464,7 @@ the (possibly regrown) BUF and the new FP."
          (multiple-value-bind (ltab dtab)
              (if (= type 1)
                  (values (car +fixed-tables+) (cdr +fixed-tables+))
-                 (read-dynamic-tables r))
+                 (read-dynamic-tables r tables))
            (loop
              (multiple-value-bind (new-fp status) (inflate-block r buf fp ltab dtab)
                (setf fp new-fp)
@@ -454,9 +492,12 @@ the (possibly regrown) BUF and the new FP."
       (multiple-value-bind (buf fp)
           ;; + 258: the block loop wants room for a whole match before each
           ;; symbol, so an exact SIZE-HINT alone would make it regrow at the end
-          (inflate-into r (make-array (+ (or size-hint (max 4096 (* 4 (- len start)))) 258 +out-slack+)
-                                      :element-type '(unsigned-byte 8))
-                        0)
+          (let ((tables (take-tables)))
+            (multiple-value-prog1
+                (inflate-into r (make-array (+ (or size-hint (max 4096 (* 4 (- len start)))) 258 +out-slack+)
+                                            :element-type '(unsigned-byte 8))
+                              0 tables)
+              (return-tables tables)))
         (declare (type u8vec buf) (type index fp))
         (when (> (- (* 8 (reader-pos r)) (reader-bits r)) (* 8 len)) (berr "end of input"))
         (when zlib

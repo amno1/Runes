@@ -642,6 +642,33 @@ at refills. Source Code Pro, the stream with the most literals and the most
 distances under 8, is the one that responds in the opposite direction to
 both rejected changes; why is not known.
 
+**Table setup, second pass.** After the changes above, setup was still 37%
+of Source Code Pro's time and 23% of Red Hat's (sb-sprof, self + callees of
+`read-dynamic-tables`), `build-deflate-table` alone 22% / 15%. Same-session
+A/B against the previous commit, two rounds each:
+
+| Change                          | Red Hat | Source Code Pro | Meslo | src8m z6 / z9          | Kept? |
+|---------------------------------|---------|-----------------|-------|------------------------|-------|
+| Reused, in-place tables¹        | +4–5%   | **+11–13%**     | ±0    | −0.5 to −2% / −0.5%    | yes   |
+| Builder inlined per kind²       | −1–2%   | −2%             |       |                        | no    |
+| Leaner `deflate-table`³         | ±0      | ±0              |       |                        | no    |
+
+1. As libdeflate's decompressor object: the literal, distance and
+   code-length tables are built in place in arrays reused across blocks and
+   streams, so a block no longer allocates and zeroes its tables or copies
+   them out of a stack scratch area. A stream takes a set from a lock-free
+   pool (`compare-and-swap` on a list) and returns it at the end. A set is
+   ~273 KB (two 34,816-entry arrays, a complete code keeps subtables within
+   2^15 entries; the code-length table needs 256). Checked with 8 threads
+   decoding concurrently: 19,200 decodes, no mismatches, 8 sets pooled.
+2. One inlined copy of `build-deflate-table` per KIND, so the per-entry
+   `case` on KIND folds away. Relative to the row above.
+3. `deflate-table`'s counting loop at `(speed 3) (safety 0)`, and the
+   code-length array not zero-filled. Relative to the first row.
+
+Against libz in the same session (874 / 571): Red Hat 0.91×, Source Code
+Pro 0.92×.
+
 **AVX2 Adler-32.** On a stock SBCL (no sb-simd-512) the AVX-512 code is
 compiled out and the byte loop took 11% of a WOFF decode. With stock
 sb-simd's AVX2 (`u8.32-sad`, `s16.16-maddubs`, `s16.16-madd`; libdeflate's
