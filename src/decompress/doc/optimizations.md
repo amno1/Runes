@@ -842,3 +842,41 @@ setup (`read-dynamic-tables` and the builder); src8m z9 81%
 3. On the fonts a VOP touches only 55% of the time. Table setup (35% on
    Source Code Pro) needs its own work; it also has most of the extra
    branch misses (27 against 9 per KB).
+
+**The symbol loop as one VOP.** `src/inflate-vop.lisp`: `inflate-block`'s
+loop written in SBCL's x86-64 assembler, with the same steps (refill with
+one load, three literals per refill, early root lookup, the one-shift
+length, `copy-match`'s copy classes). Twelve registers hold the bit buffer,
+bit count, input and output positions, the four bases and four scratch
+values; only `cap` and the input limit stay on the stack. `SHRX`, `SHLX`
+and `BZHI` (BMI2, in the sb-simd-512 assembler) shift by any register, so
+`CL` is not reserved. Built only with `:decompress-avx512`.
+
+It runs while at least 16 input bytes remain, so its refills need no
+check, and stops at the top of an iteration (output full, input near its
+end); the Lisp loop then finishes the block. Invalid codes and distances
+stop it with a status, and `inflate-block` signals the same errors as
+before. The tests pass unchanged.
+
+| Stream          | HEAD        | VOP         | Change   |
+|-----------------|-------------|-------------|----------|
+| Red Hat         | 787–790     | 842–857     | +7–8%    |
+| Source Code Pro | 560–589     | 628–629     | +7–12%   |
+| Meslo           | 544–549     | 607–612     | +11–12%  |
+| src8m z6 / z9   | 1134–1150 / 1206–1221 | 1262–1278 / 1324–1351 | +11% / +10% |
+
+Counters per byte (`perf-compare.lisp`), ours / libdeflate:
+
+| Stream          | Cycles      | Instructions | IPC         |
+|-----------------|-------------|--------------|-------------|
+| Red Hat         | 6.42 / 4.86 | 18.7 / 13.7  | 2.91 / 2.81 |
+| Source Code Pro | 7.92 / 6.94 | 26.0 / 16.0  | 3.29 / 2.30 |
+| Meslo           | 8.21 / 7.00 | 15.7 / 12.5  | 1.91 / 1.78 |
+| src8m z6 / z9   | 3.79 / 2.91, 3.28 / 2.54 | 8.1 / 6.6 | 2.13 / 2.26, 2.45 / 2.59 |
+
+Instructions per byte on src8m fell from 16.1 to 8.0 (libdeflate 6.6), and
+IPC fell to libdeflate's: the loop is now bound by its dependency chain,
+as libdeflate's is. What is left: more branch misses than libdeflate (64
+against 45 per KB on src8m), and on the fonts the table setup. libdeflate's
+numbers vary by up to 15% between runs (Source Code Pro 5.87 earlier, 6.94
+here).

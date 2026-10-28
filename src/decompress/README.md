@@ -51,7 +51,10 @@ and share their parts:
   the decode tables are built by doubling the root (no strided stores, no
   bit-reversal pass), in place in arrays reused across blocks and streams.
   The loop contains no calls (errors leave it and are signalled afterwards),
-  so SBCL keeps more of its state in registers. The
+  so SBCL keeps more of its state in registers. With AVX-512 (sb-simd-512),
+  the loop runs as one VOP (`inflate-vop.lisp`, BMI2 shifts) while 16 input
+  bytes remain, with everything in registers; the Lisp loop finishes the
+  block and is the loop on other builds. The
   zlib Adler-32 runs 64 bytes per step with AVX-512 (`vpsadbw` and
   `vpmaddubsw`), or 32 with AVX2.
 
@@ -96,15 +99,15 @@ sb-simd-512 branch. C is libbrotli's `BrotliDecoderDecompress` and libz's
 | SBCL source, 8 MB, quality 9 / 11    | 1.58 / 1.42 MB → 8 MB | 885 / 839   | 892 / 903   | 0.99× / 0.93× |
 | SBCL source, 1 MB, quality 9 / 5     | 208 / 218 KB → 1 MB   | 823 / 768   | 872 / 810   | 0.94× / 0.95× |
 | **zlib / deflate**                   |                       |             |             |               |
-| Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 795         | 874         | 0.91×         |
-| Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 526         | 571         | 0.92×         |
-| Meslo Nerd Font Bold TTF, level 9    | 1.60 MB → 2.98 MB     | 526         | 579         | 0.91×         |
-| SBCL source, 8 MB, level 6 / 9       | 1.94 / 1.92 MB → 8 MB | 1111 / 1168 | 1273 / 1332 | 0.87× / 0.88× |
+| Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 857         | 874         | 0.98×         |
+| Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 629         | 571         | 1.10×         |
+| Meslo Nerd Font Bold TTF, level 9    | 1.60 MB → 2.98 MB     | 612         | 579         | 1.06×         |
+| SBCL source, 8 MB, level 6 / 9       | 1.94 / 1.92 MB → 8 MB | 1278 / 1351 | 1273 / 1332 | 1.00× / 1.01× |
 
 Small streams are dominated by per-stream setup (reading prefix codes and
-building their tables); large ones by the symbol loop, where the remaining gap
-is mostly SBCL's register allocation in one large loop body. zlib-ng's inflate
-is heavily SIMD-tuned. `doc/optimizations.md` records every optimisation tried,
+building their tables); large ones by the symbol loop. In Brotli's loop the
+remaining gap is mostly SBCL's register allocation in one large loop body;
+the deflate loop avoids it as a VOP, and matches zlib-ng on large streams. `doc/optimizations.md` records every optimisation tried,
 with measured results.
 
 ```sh
@@ -146,6 +149,7 @@ src/
   reader.lisp    bit reader (shared)
   huffman.lisp   prefix codes and decode tables (shared)
   decoder.lisp   Brotli: meta-blocks, the command loop, DECOMPRESS
+  inflate-vop.lisp  the deflate symbol loop as one VOP (AVX-512 builds)
   inflate.lisp   deflate and zlib: INFLATE, ZLIB-DECOMPRESS, Adler-32
 data/dictionary.bin
 doc/optimizations.md   every optimisation tried, with measured results

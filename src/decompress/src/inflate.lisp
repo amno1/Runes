@@ -366,7 +366,7 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
              (setf error message)
              (return-from decode)))
       (declare (inline berr))
-    (sb-sys:with-pinned-objects (buf)
+    (sb-sys:with-pinned-objects (buf in ltab dtab)
       (let ((bs (sb-sys:vector-sap buf)))
         (let ((sym 0) (saved 0))
           (declare (type index sym) (type (unsigned-byte 64) saved))
@@ -389,9 +389,24 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
                             (progn (setf (sb-sys:sap-ref-8 bs fp) sym)
                                    (incf fp))
                             (go other))))
-            ;; the early root lookup below needs >= 10 valid bits on entry too
-            (br-refill)
             (tagbody
+               ;; the loop as one VOP while the input has 16 bytes left; it
+               ;; stops at the top of an iteration, so this loop can go on
+               #+decompress-avx512
+               (when (>= limit 16)
+                 (multiple-value-bind (v b p f st)
+                     (%inflate-fast val bits pos fp (sb-sys:vector-sap in) bs
+                                    (sb-sys:vector-sap ltab) (sb-sys:vector-sap dtab)
+                                    (- limit 16) cap)
+                   (setf val v bits b pos p fp f)
+                   (case st
+                     (0 (go done))
+                     (1 (setf status :full) (go done))
+                     (3 (berr "invalid length code"))
+                     (4 (berr "invalid distance code"))
+                     (5 (berr "distance too far back")))))
+               ;; the early root lookup below needs >= 10 valid bits on entry too
+               (br-refill)
              top
                (when (> fp cap) (setf status :full) (go done))
                ;; a refill leaves >= 56 bits, enough for three literal codes

@@ -14,6 +14,7 @@
                              (:file "reader")
                              (:file "huffman")
                              (:file "decoder")
+                             (:file "inflate-vop")
                              (:file "inflate"))))
   :in-order-to ((test-op (test-op "decompress/tests"))))
 
