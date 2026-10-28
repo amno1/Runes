@@ -768,6 +768,28 @@ between sessions, so only the same-session pairs count.
    with `low-bits` for the distance extra bits: 2 fewer instructions in
    `inflate-block`, but slower.
 
+**One test per literal, retried in place.** To separate the idea from the
+`slow` label: each slot tests the root entry once, and on failure runs the
+old two-test code right there (no new variable, matches go straight to
+`other`, subtable literals stay in the pass). Against HEAD:
+
+| Stream          | HEAD      | One test  | Change      |
+|-----------------|-----------|-----------|-------------|
+| Red Hat         | 790–797   | 792–794   | ±0          |
+| Source Code Pro | 586–593   | 503–512   | −13 to −15% |
+| Meslo           | 551–554   | 543–544   | −1.5%       |
+| src8m z6 / z9   | 1144–1148 / 1198–1224 | 1134–1136 / 1197–1210 | −1% / ±1% |
+
+perf on a Source Code Pro run (whole process): instructions −1.7%,
+branches −1%, branch misses +18% (+7.7 M), cycles +2.3%. The extra misses
+alone, at 15–20 cycles each, account for most of the added cycles. The cost
+is prediction, not loop size: before, "subtable link?" was a
+rarely-taken branch and "literal?" a separate one, each with its own
+history. The fused test makes one branch decide both, and a failed test
+leads to two more branches at new sites with little history. Source Code
+Pro, which has the most long literal codes (subtable links) of the test
+streams, pays most. Not kept.
+
 Checked and not needed: `saved` is a raw word (no allocation in the loop),
 and the `(ldb (byte 64 0) …)` masks in `br-refill` compile to nothing. The
 refill without an input check was tried before (the fast/checked loop
