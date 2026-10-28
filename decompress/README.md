@@ -85,36 +85,46 @@ sbcl --script tests/run.lisp
 
 MB/s of decoded output, best of 5 rounds after warm-up, both sides decoding
 into a fresh buffer of the known size, on an AVX-512 machine with SBCL's
-sb-simd-512 branch. C is libbrotli's `BrotliDecoderDecompress` and libz's
-`uncompress` (zlib-ng 1.3.1 here, a SIMD-tuned zlib), called through
-`sb-alien`. A WOFF 1.0 row decodes every compressed table of the font.
+sb-simd-512 branch; each figure is the mean of two runs in the same session.
+C is called through `sb-alien`. A WOFF 1.0 row decodes every compressed
+table of the font.
 
-| Stream                               | Compressed → output   | decompress | C           | ratio         |
-|--------------------------------------|-----------------------|-------------|-------------|---------------|
-| **Brotli**                           |                       |             |             |               |
-| Red Hat Text (web font, WOFF2)       | 27.9 KB → 69 KB       | 335         | 342         | 0.98×         |
-| Meslo Nerd Font Bold (WOFF2)         | 1.18 MB → 2.42 MB     | 316         | 284         | 1.11×         |
-| Noto Serif Tangut (WOFF2)            | 1.02 MB → 2.40 MB     | 407         | 350         | 1.16×         |
-| Noto Sans SignWriting (WOFF2)        | 0.87 MB → 4.02 MB     | 545         | 498         | 1.09×         |
-| SBCL source, 8 MB, quality 9 / 11    | 1.58 / 1.42 MB → 8 MB | 1091 / 988  | 895 / 888   | 1.22× / 1.11× |
-| SBCL source, 1 MB, quality 9 / 5     | 208 / 218 KB → 1 MB   | 1012 / 915  | 866 / 803   | 1.17× / 1.14× |
-| **zlib / deflate**                   |                       |             |             |               |
-| Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 886         | 874         | 1.01×         |
-| Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 698         | 571         | 1.22×         |
-| Meslo Nerd Font Bold TTF, level 9    | 1.60 MB → 2.98 MB     | 619         | 579         | 1.07×         |
-| SBCL source, 8 MB, level 6 / 9       | 1.94 / 1.92 MB → 8 MB | 1285 / 1376 | 1273 / 1332 | 1.01× / 1.03× |
+| Brotli stream        | Size¹          | decompress  | libbrotli² | ratio         |
+|----------------------|----------------|-------------|------------|---------------|
+| Red Hat Text WOFF2   | 28 KB → 69 KB  | 343         | 343        | 1.00×         |
+| Meslo Nerd Font WOFF2 | 1.18 → 2.42 MB | 316        | 284        | 1.11×         |
+| Noto Serif Tangut WOFF2 | 1.02 → 2.40 MB | 409      | 352        | 1.16×         |
+| Noto Sans SignWriting WOFF2 | 0.87 → 4.02 MB | 544  | 501        | 1.09×         |
+| SBCL source q9 / q11 | 1.58 / 1.42 → 8 MB | 1131 / 1021 | 862 / 892 | 1.31× / 1.14× |
+| SBCL source 1 MB q9 / q5 | 208 / 218 KB → 1 MB | 1026 / 926 | 867 / 805 | 1.18× / 1.15× |
+
+| zlib stream          | Size¹          | decompress  | zlib-ng³    | libdeflate⁴ | vs zlib-ng / libdeflate |
+|----------------------|----------------|-------------|-------------|-------------|---------------|
+| Red Hat Text WOFF    | 36 KB → 73 KB  | 878         | 877         | 1008        | 1.00× / 0.87× |
+| Source Code Pro WOFF | 68 KB → 138 KB | 693         | 569         | 781         | 1.22× / 0.89× |
+| Meslo TTF, level 9   | 1.60 → 2.98 MB | 613         | 573         | 731         | 1.07× / 0.84× |
+| SBCL source, level 6 / 9 | 1.94 / 1.92 → 8 MB | 1325 / 1407 | 1274 / 1349 | 1599 / 1703 | 1.04× / 0.83× |
+
+1. Compressed → decoded.
+2. `BrotliDecoderDecompress`, libbrotli's one-shot decoder (C).
+3. libz's `uncompress`; here libz is zlib-ng 2.3's zlib-compatible build, a
+   SIMD-tuned zlib.
+4. `libdeflate_zlib_decompress` (`ZLIB=libdeflate` in `bench-c.lisp`), the
+   fastest whole-buffer deflate decoder we know of.
 
 Small streams are dominated by per-stream setup (reading prefix codes and
-building their tables); large ones by the symbol loop. In Brotli's loop the
-remaining gap is mostly SBCL's register allocation in one large loop body;
-the deflate loop avoids it as a VOP, and matches zlib-ng on large streams. `doc/optimizations.md` records every optimisation tried,
-with measured results.
+building their tables); large ones by the symbol loop. Both symbol loops run
+as VOPs on AVX-512 builds. The deflate decoder matches or beats zlib-ng and
+is 0.83–0.89× libdeflate; the gap to libdeflate is in the loop itself
+(`doc/optimizations.md`, section 18). `doc/optimizations.md` records every
+optimisation tried, with measured results.
 
 ```sh
 cd tests/bench
 SBCL=sbcl ./make-data.sh            # builds data/: fonts, SBCL source, zlib streams
 sbcl --script bench.lisp            # decompress
 sbcl --script bench-c.lisp          # libbrotli and libz
+ZLIB=libdeflate sbcl --script bench-c.lisp   # zlib streams with libdeflate
 ONLY=.woff sbcl --script bench.lisp # only files whose name contains ".woff"
 sbcl --script profile.lisp data/RedHatText-Regular.br
 sbcl --script profile.lisp data/SourceCodePro-Regular.woff   # zlib streams too

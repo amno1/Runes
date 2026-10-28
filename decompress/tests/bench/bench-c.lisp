@@ -3,14 +3,18 @@
 ;;;; Same files and method as bench.lisp: every stream in data/, ~100 MB of
 ;;;; output per round, best of 5 rounds, MB/s of output.  Brotli streams go to
 ;;;; libbrotlidec's one-shot BrotliDecoderDecompress, zlib streams and WOFF 1.0
-;;;; tables to libz's uncompress, through SB-ALIEN.  Like the Lisp decoders
+;;;; tables to libz's uncompress (or, with ZLIB=libdeflate, to libdeflate's
+;;;; libdeflate_zlib_decompress), through SB-ALIEN.  Like the Lisp decoders
 ;;;; with :SIZE-HINT, each call gets the exact output size and a fresh output
 ;;;; vector.  (The library itself uses no FFI; only this benchmark does.)
 ;;;;
 ;;;;   sbcl --script bench-c.lisp          (run from tests/bench)
 ;;;;   ONLY=.z sbcl --script bench-c.lisp  (only files whose name contains .z)
+;;;;   ZLIB=libdeflate sbcl --script bench-c.lisp   (zlib streams to libdeflate)
 ;;;;
-;;;; Needs libbrotlidec and libz; LIBBROTLIDEC / LIBZ override their paths.
+;;;; Needs libbrotlidec and libz (and libdeflate for ZLIB=libdeflate);
+;;;; LIBBROTLIDEC / LIBZ / LIBDEFLATE override their paths.  (On distributions
+;;;; that ship zlib-ng's compatibility build as libz.so, libz is zlib-ng.)
 
 (sb-alien:load-shared-object (or (sb-ext:posix-getenv "LIBBROTLIDEC") "libbrotlidec.so"))
 (sb-alien:load-shared-object (or (sb-ext:posix-getenv "LIBZ") "libz.so"))
@@ -31,6 +35,23 @@
   (source sb-sys:system-area-pointer)
   (source-len sb-alien:unsigned-long))
 
+(defvar *libdeflate*
+  (when (equal (sb-ext:posix-getenv "ZLIB") "libdeflate")
+    (sb-alien:load-shared-object (or (sb-ext:posix-getenv "LIBDEFLATE") "libdeflate.so"))
+    (sb-alien:alien-funcall
+     (sb-alien:extern-alien "libdeflate_alloc_decompressor" (function sb-sys:system-area-pointer))))
+  "A libdeflate decompressor, or NIL to use libz.")
+
+(defun libdeflate-zlib (in out)
+  (sb-alien:alien-funcall
+   (sb-alien:extern-alien "libdeflate_zlib_decompress"
+                          (function sb-alien:int sb-sys:system-area-pointer
+                                    sb-sys:system-area-pointer sb-alien:unsigned-long
+                                    sb-sys:system-area-pointer sb-alien:unsigned-long
+                                    sb-sys:system-area-pointer))
+   *libdeflate* (sb-sys:vector-sap in) (length in)
+   (sb-sys:vector-sap out) (length out) (sb-sys:int-sap 0)))
+
 (defun c-decompress (in n zlib)
   "Decode the stream IN into a new octet vector of exactly N bytes."
   (declare (type (simple-array (unsigned-byte 8) (*)) in) (type fixnum n))
@@ -38,8 +59,10 @@
     (sb-alien:with-alien ((size sb-alien:unsigned-long n))
       (sb-sys:with-pinned-objects (in out)
         (unless (if zlib
-                    (zerop (z-uncompress (sb-sys:vector-sap out) (sb-alien:addr size)
-                                         (sb-sys:vector-sap in) (length in)))
+                    (if *libdeflate*
+                        (zerop (libdeflate-zlib in out))
+                        (zerop (z-uncompress (sb-sys:vector-sap out) (sb-alien:addr size)
+                                         (sb-sys:vector-sap in) (length in))))
                     (= 1 (brotli-decoder-decompress (length in) (sb-sys:vector-sap in)
                                                     (sb-alien:addr size) (sb-sys:vector-sap out))))
           (error "failed to decode"))
