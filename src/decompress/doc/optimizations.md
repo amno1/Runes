@@ -794,3 +794,21 @@ Checked and not needed: `saved` is a raw word (no allocation in the loop),
 and the `(ldb (byte 64 0) …)` masks in `br-refill` compile to nothing. The
 refill without an input check was tried before (the fast/checked loop
 split, above).
+
+**Two literals per lookup (ISA-L's multi-symbol table), measured first.**
+Deflate has no context modelling, so section 7's objection does not apply.
+An instrumented copy counted, for each stream, the output bytes that could
+come from greedy pairs of consecutive literals whose two codes fit in one
+root lookup:
+
+| Stream          | Literals | Pairs, 10-bit root | 11-bit | 12-bit |
+|-----------------|----------|--------------------|--------|--------|
+| Red Hat         | 27%      | 1.2%               | 3.0%   | 6.4%   |
+| Source Code Pro | 36%      | 3.7%               | 5.3%   | 8.6%   |
+| Meslo           | 28%      | 0.0%               | 0.4%   | 2.5%   |
+| src8m z6        | 5.8%     | 0.0%               | 0.4%   | 1.5%   |
+| src8m z9        | 3.8%     | 0.0%               | 0.0%   | 0.0%   |
+
+(Percentages of output bytes.) Font literals have codes of mostly 8 bits or
+more, so two rarely fit. Even a 12-bit root, which cost src8m 2–5% at
+11 bits, would save the branch for under 9% of the output. Not built.
