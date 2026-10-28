@@ -944,6 +944,36 @@ pairs that fit), the 11-bit root and the one-test literal (table setup and
 branch prediction). The next gains are in what the chain does per symbol
 and in table setup, not in what holds the values.
 
+**Where the VOP's branch misses are.** `perf record -e branch-misses` on
+src8m z9, the samples mapped onto `inflate-fast`'s disassembly (grouped by
+the branch they follow; samples land an instruction or two past it):
+
+| Branch                                  | Share of misses |
+|-----------------------------------------|-----------------|
+| Literal or not (three slots, `other`)   | ≈ 23%           |
+| Copy class (`len > 16`, `dist`, exits)  | ≈ 25%           |
+| Length and distance subtable links      | ≈ 10%           |
+
+The literal decision follows the data and stays. The copy's length branch
+can go, as in libdeflate: for `dist >= 8`, copy a fixed number of words
+whatever the length, and loop only past them.
+
+| Change                       | Red Hat | Source Code Pro | Meslo | src8m z6 / z9   | Kept |
+|------------------------------|---------|-----------------|-------|-----------------|------|
+| Five words (40 bytes)¹       | −2%     | −2 to −3.5%     | −1.5% | +4–6% / +5–8.5% | no   |
+| Three words (24 bytes)¹      | ±0.5%   | ±1%             | −0.5% | +1–2% / +2–2.5% | yes  |
+| Loop top aligned to 32 bytes | ±0.5%   | ±0.5%           | ±0.5% | −1 to +2.5% / ±1% | no |
+
+1. Each word is loaded after the previous one is stored, which is correct
+   for `dist >= 8`. Font matches are mostly 16 bytes or less, so five
+   words is too much work for them; three words still removes the length
+   branch for matches up to 24 bytes.
+
+The gap left to libdeflate on large streams is structural: the literal
+branch, which follows the data, and about 1.4 more instructions per byte.
+Neither is a register-allocation artifact, so another VOP change will not
+remove them.
+
 ## 19. Table setup on the fonts
 
 The fonts' blocks are small: Source Code Pro has 45 dynamic blocks in
