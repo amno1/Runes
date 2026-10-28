@@ -7,11 +7,11 @@
 ;;; index.rs, fd_select.rs and the TransformSink of src/ps/charstring.rs.
 ;;;
 ;;; Positions are relative to the start of the CFF or CFF2 table, which is
-;;; held as a ZPB-OTF:FONT-DATA window.
+;;; held as a RUNES/OTF:FONT-DATA window.
 
-(in-package #:zpb-otf/charstring)
+(in-package #:runes/otf/charstring)
 
-(defun cff-u8 (fd pos) (zpb-otf:font-data-read-u8 fd pos))
+(defun cff-u8 (fd pos) (runes/otf:font-data-read-u8 fd pos))
 (defun cff-uint (fd pos size)
   (let ((v 0))
     (dotimes (i size v)
@@ -53,9 +53,9 @@
   (let* ((start (cff-index-offset index i))
          (end (cff-index-offset index (1+ i)))
          (fd (cff-index-data index)))
-    (when (or (< end start) (> (+ (cff-index-base index) end) (zpb-otf:font-data-length fd)))
+    (when (or (< end start) (> (+ (cff-index-base index) end) (runes/otf:font-data-length fd)))
       (fail 'charstring-malformed "INDEX entry out of bounds"))
-    (zpb-otf:font-data-slice fd (+ (cff-index-base index) start) (- end start))))
+    (runes/otf:font-data-slice fd (+ (cff-index-base index) start) (- end start))))
 
 (defun cff-index-end (index)
   "Position just past INDEX."
@@ -70,7 +70,7 @@
   (let ((format (cff-u8 fd pos)))
     (case format
       (0 (handler-case (cff-u8 fd (+ pos 1 gid))
-           (zpb-otf:font-out-of-bounds-error () nil)))
+           (runes/otf:font-out-of-bounds-error () nil)))
       ((3 4)
        (let* ((w (if (= format 3) 2 4))
               (fd-size (if (= format 3) 1 2))
@@ -135,7 +135,7 @@ the font's unitsPerEm from 'head'; without it, the FontMatrix decides."
           (2
            (let ((header-size (cff-u8 fd 2))
                  (top-length (cff-uint fd 3 2)))
-             (values t (zpb-otf:font-data-slice fd header-size top-length)
+             (values t (runes/otf:font-data-slice fd header-size top-length)
                      (read-cff-index fd (+ header-size top-length) t)))))
       (let ((font (%make-cff-font :data fd :cff2-p cff2-p :global-subrs global-subrs
                                   ;; CFF has a default charset and encoding 0,
@@ -153,7 +153,7 @@ the font's unitsPerEm from 'head'; without it, the FontMatrix decides."
                    (:fd-array (setf (cff-font-fd-array font) (read-cff-index fd value cff2-p)))
                    (:fd-select (setf (cff-font-fd-select font) value))
                    (:private
-                    (when (> (cdr value) (zpb-otf:font-data-length fd))
+                    (when (> (cdr value) (runes/otf:font-data-length fd))
                       (fail 'charstring-malformed "Private DICT out of bounds"))
                     (setf (cff-font-private-range font) value))
                    (:font-matrix (setf (cff-font-matrix font) (normalize-font-matrix value)))
@@ -161,7 +161,7 @@ the font's unitsPerEm from 'head'; without it, the FontMatrix decides."
                     (when cff2-p
                       ;; The store is preceded by a 2 byte length.
                       (setf (cff-font-var-store font)
-                            (zpb-otf:read-item-variation-store fd (+ value 2)))))))
+                            (runes/otf:read-item-variation-store fd (+ value 2)))))))
         (unless (cff-font-charstrings font)
           (fail 'charstring-missing-resource "no CharStrings"))
         (setf (cff-font-kind font)
@@ -205,9 +205,9 @@ CFF2 Private DICT that blends."
                     (dict-entry entries :font-matrix))))
     (let* ((fd (cff-font-data font))
            (subfont (make-cff-subfont :matrix matrix)))
-      (unless (and range (<= (cdr range) (zpb-otf:font-data-length fd)))
+      (unless (and range (<= (cdr range) (runes/otf:font-data-length fd)))
         (fail 'charstring-malformed "Private DICT out of bounds"))
-      (loop for (op . value) in (dict-entries (zpb-otf:font-data-slice fd (car range) (- (cdr range) (car range)))
+      (loop for (op . value) in (dict-entries (runes/otf:font-data-slice fd (car range) (- (cdr range) (car range)))
                                               :blend-state (cff-blend-state font 0 coords)
                                               :unhinted-private t)
             do (case op

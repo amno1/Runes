@@ -4,7 +4,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (export
  '(+hhea-extended-tag+ +hhea-tag+ hhea hhea-advance-width-max hhea-ascender

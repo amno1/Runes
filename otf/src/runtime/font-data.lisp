@@ -2,7 +2,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (defmacro define-constant (name value &optional doc)
   "Define a constant using alexandria:define-constant with :test 'equal."

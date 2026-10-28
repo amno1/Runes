@@ -7,26 +7,26 @@
 ;;; CFF and CFF2 fonts. Loaded after charstring-test.lisp, whose helpers and
 ;;; CFF2 example table it uses.
 
-(defpackage #:zpb-otf/cff-test
-  (:use #:cl #:zpb-otf/charstring)
-  (:import-from #:zpb-otf/charstring-test
+(defpackage #:runes/otf/cff-test
+  (:use #:cl #:runes/otf/charstring)
+  (:import-from #:runes/otf/charstring-test
                 #:check #:check-error #:f #:octets #:*cff2-example* #:example-blend)
   (:export #:run-cff-tests))
 
-(in-package #:zpb-otf/cff-test)
+(in-package #:runes/otf/cff-test)
 
 (defvar *test-fonts-dir*
   (merge-pathnames "fonts/" (make-pathname :directory (pathname-directory *load-truename*))))
 
 (defun cursor (&rest bytes)
-  (zpb-otf/charstring::charstring-cursor (apply #'octets bytes)))
+  (runes/otf/charstring::charstring-cursor (apply #'octets bytes)))
 
 (defun bcd (&rest bytes)
-  (zpb-otf/charstring::parse-bcd (apply #'cursor bytes)))
+  (runes/otf/charstring::parse-bcd (apply #'cursor bytes)))
 
-(defun value (bcd &optional scale) (zpb-otf/charstring::bcd-value bcd scale))
+(defun value (bcd &optional scale) (runes/otf/charstring::bcd-value bcd scale))
 
-(defun dynamic (bcd) (multiple-value-list (zpb-otf/charstring::bcd-dynamic-value bcd)))
+(defun dynamic (bcd) (multiple-value-list (runes/otf/charstring::bcd-dynamic-value bcd)))
 
 (defun entries (bytes &rest args) (apply #'dict-entries (apply #'octets bytes) args))
 
@@ -38,7 +38,7 @@
   (format t "~%--- DICT numbers (num.rs) ---~%")
   (check "int_operands"
          (flet ((p (b0 &rest bytes)
-                  (zpb-otf/charstring::parse-int (apply #'cursor bytes) b0)))
+                  (runes/otf/charstring::parse-int (apply #'cursor bytes) b0)))
            (equal (list (p 32) (p 246) (p 247 0) (p 250 255) (p 251 0) (p 254 255))
                   '(-107 107 108 1131 -108 -1131))))
   (check "binary_coded_decimal_operands"
@@ -56,8 +56,8 @@
   (check "binary_coded_decimal_exponent_overflow_consumes_number"
          (flet ((parsed (&rest bytes)
                   (let ((c (apply #'cursor bytes)))
-                    (list (value (zpb-otf/charstring::parse-bcd c))
-                          (zpb-otf/charstring::cursor-pos c)))))
+                    (list (value (runes/otf/charstring::parse-bcd c))
+                          (runes/otf/charstring::cursor-pos c)))))
            (and (equal (parsed #x1b #x10 #x01 #x00 #xff #x8b) (list #x7FFFFFFF 5))
                 (equal (parsed #xe1 #xb1 #x00 #x10 #x0f) (list (- #x7FFFFFFF) 5))
                 (equal (parsed #x1c #x10 #x01 #x00 #xff) (list 0 5))
@@ -68,21 +68,21 @@
 (defun test-matrices ()
   (format t "~%--- Font matrices (transform.rs) ---~%")
   (check "normalize_matrix"
-         (let ((m (zpb-otf/charstring::normalize-font-matrix
-                   (zpb-otf/charstring::make-scaled-font-matrix
+         (let ((m (runes/otf/charstring::normalize-font-matrix
+                   (runes/otf/charstring::make-scaled-font-matrix
                     :elements (vector 65536 0 0 32768 0 0) :scale 1))))
            (and (equalp (font-matrix-elements m) #(131072 0 0 65536 0 0))
                 (= (font-matrix-scale m) 2))))
   (check "combine_matrix"
-         (equalp (zpb-otf/charstring::combine-scaled
+         (equalp (runes/otf/charstring::combine-scaled
                   (map 'vector #'f '(0.5 0.75 -1.0 2.0 0.0 0.0))
                   (map 'vector #'f '(1.5 -1.0 0.25 -1.0 1.0 2.0))
                   1)
                  (map 'vector #'f '(1.75 -0.875 1.125 -1.8125 -1.5 4.75))))
   (check "degenerate matrices"
-         (and (zpb-otf/charstring::matrix-degenerate-p #(0 0 0 0 0 0))
-              (zpb-otf/charstring::matrix-degenerate-p (vector #x10000 #x10000 #x10000 #x10000 0 0))
-              (not (zpb-otf/charstring::matrix-degenerate-p (vector #x10000 0 0 #x10000 0 0))))))
+         (and (runes/otf/charstring::matrix-degenerate-p #(0 0 0 0 0 0))
+              (runes/otf/charstring::matrix-degenerate-p (vector #x10000 #x10000 #x10000 #x10000 0 0))
+              (not (runes/otf/charstring::matrix-degenerate-p (vector #x10000 0 0 #x10000 0 0))))))
 
 (defun test-dicts ()
   (format t "~%--- DICTs (dict.rs) ---~%")
@@ -152,7 +152,7 @@
   (let* ((loader (zpb-ttf:open-font-loader (merge-pathnames name *test-fonts-dir*)))
          (info (or (zpb-ttf::table-info "CFF2" loader) (zpb-ttf::table-info "CFF " loader))))
     (values loader
-            (open-cff-font (zpb-otf:font-data-slice (zpb-ttf::font-data loader)
+            (open-cff-font (runes/otf:font-data-slice (zpb-ttf::font-data loader)
                                                     (zpb-ttf::offset info) (zpb-ttf::size info))
                            :upem (zpb-ttf:units/em loader)))))
 
@@ -180,11 +180,11 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
 (defun test-fonts ()
   (format t "~%--- CFF and CFF2 fonts ---~%")
   (check "the CFF2 example table opens"
-         (let ((font (open-cff-font (zpb-otf:make-font-data *cff2-example*))))
+         (let ((font (open-cff-font (runes/otf:make-font-data *cff2-example*))))
            (and (cff-font-cff2-p font) (eq (cff-font-kind font) :cff2)
                 (= 1 (cff-num-subfonts font))
                 ;; The Private DICT says Subrs at 114 from its start.
-                (zpb-otf/charstring::cff-subfont-subrs (cff-subfont font 0 '(0))))))
+                (runes/otf/charstring::cff-subfont-subrs (cff-subfont font 0 '(0))))))
   (multiple-value-bind (loader font) (open-test-font "base.ttf")
     (unwind-protect
          (multiple-value-bind (commands widths-ok outside) (draw-all loader font #())
@@ -231,7 +231,7 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
 
 (defun filtered (&rest commands)
   "Commands reaching a capture sink through a nop-filter-sink."
-  (let* ((capture (make-instance 'zpb-otf/charstring-test::capture-sink))
+  (let* ((capture (make-instance 'runes/otf/charstring-test::capture-sink))
          (filter (make-instance 'nop-filter-sink :inner capture)))
     (dolist (c commands)
       (ecase (first c)
@@ -240,7 +240,7 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
         (:curve (apply #'sink-curve-to filter (rest c)))
         (:close (sink-close filter))))
     (sink-finish filter)
-    (zpb-otf/charstring-test::result capture)))
+    (runes/otf/charstring-test::result capture)))
 
 (defun test-outlines ()
   (format t "~%--- CFF outlines through zpb-ttf ---~%")
@@ -292,8 +292,8 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
 (defun segment-map (&rest from-to)
   "Segment map from (from to ...) normalized single floats, as 2.14 values in 16.16."
   (coerce (loop for (from to) on from-to by #'cddr
-                collect (cons (ash (zpb-otf/charstring::f2dot14-from-real from) 2)
-                              (ash (zpb-otf/charstring::f2dot14-from-real to) 2)))
+                collect (cons (ash (runes/otf/charstring::f2dot14-from-real from) 2)
+                              (ash (runes/otf/charstring::f2dot14-from-real to) 2)))
           'vector))
 
 (defun test-instances ()
@@ -377,8 +377,8 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
              (= (zpb-ttf:ascender loader) default)))))
 
 (defun run-cff-tests ()
-  (let ((zpb-otf/charstring-test::*failures* 0)
-        (zpb-otf/charstring-test::*count* 0))
+  (let ((runes/otf/charstring-test::*failures* 0)
+        (runes/otf/charstring-test::*count* 0))
     (format t "========================================================~%")
     (format t "CFF DICT, Font Matrix and Font Tests~%")
     (format t "========================================================~%")
@@ -390,7 +390,7 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
     (test-instances)
     (test-metrics)
     (format t "~%Results: ~D tests run, ~D failures.~%"
-            zpb-otf/charstring-test::*count* zpb-otf/charstring-test::*failures*)
-    (unless (zerop zpb-otf/charstring-test::*failures*)
-      (error "CFF test suite failed with ~D failure(s)" zpb-otf/charstring-test::*failures*))
+            runes/otf/charstring-test::*count* runes/otf/charstring-test::*failures*)
+    (unless (zerop runes/otf/charstring-test::*failures*)
+      (error "CFF test suite failed with ~D failure(s)" runes/otf/charstring-test::*failures*))
     t))

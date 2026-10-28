@@ -9,7 +9,7 @@
 ;;; Hinting parameters (blue values, stem snaps) are returned as the plain
 ;;; list of their delta-decoded fixed point values.
 
-(in-package #:zpb-otf/charstring)
+(in-package #:runes/otf/charstring)
 
 ;;; Binary coded decimal reals (num.rs)
 
@@ -337,7 +337,7 @@ does when concatenating the top and font DICT matrices."
     ((:xuid :base-font-blend) t)))
 
 (defun dict-entries (dict &key blend-state unhinted-private)
-  "Entries of the DICT DICT (an octet vector or ZPB-OTF:FONT-DATA), as a list
+  "Entries of the DICT DICT (an octet vector or RUNES/OTF:FONT-DATA), as a list
 of (operator . value), in order. An entry that cannot be read appears as
 (:error . condition) and the walk continues, as in Fontations.
 

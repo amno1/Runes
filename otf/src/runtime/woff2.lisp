@@ -2,7 +2,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (defconstant +woff2-signature+ #x774F4632) ; 'wOF2'
 (defconstant +ttcf-signature+  #x74746366) ; 'ttcf'

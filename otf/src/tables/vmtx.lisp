@@ -4,7 +4,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (export
  '(+vmtx-extended-tag+ +vmtx-tag+ read-vmtx read-vmtx-extended sanitize-vmtx

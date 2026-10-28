@@ -3,12 +3,12 @@
 ;;;; SPDX-License-Identifier: MIT
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (unless (find-package :zpb-otf)
-    (make-package :zpb-otf :use '(:cl))))
+  (unless (find-package :runes/otf)
+    (make-package :runes/otf :use '(:cl))))
 
-(defpackage #:zpb-otf/codegen
+(defpackage #:runes/otf/codegen
   (:nicknames #:otf-codegen)
-  (:use #:cl #:zpb-otf)
+  (:use #:cl #:runes/otf)
   (:shadow #:base #:head #:name #:read-name)
   (:export
    #:read-sexp-file

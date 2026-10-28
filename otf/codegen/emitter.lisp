@@ -2,14 +2,14 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf/codegen)
+(in-package #:runes/otf/codegen)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (unless (find-package :zpb-otf/schema)
-    (make-package :zpb-otf/schema :use '(:cl)))
-  (export (mapcar (lambda (s) (intern s :zpb-otf/schema))
+  (unless (find-package :runes/otf/schema)
+    (make-package :runes/otf/schema :use '(:cl)))
+  (export (mapcar (lambda (s) (intern s :runes/otf/schema))
                   '("TABLE" "RECORD" "FORMAT" "FLAGS" "ENUM" "FIELD" "VARIANT" "ARRAY"))
-          :zpb-otf/schema))
+          :runes/otf/schema))
 
 (defvar *known-tables* (make-hash-table :test 'equal))
 (defvar *known-records* (make-hash-table :test 'equal))
@@ -57,7 +57,7 @@
                     (write-char (char-upcase c) s))))))))
 
 (defun zsym (name)
-  (intern (to-kebab-name name) :zpb-otf))
+  (intern (to-kebab-name name) :runes/otf))
 
 (defparameter *primitive-types*
   '((:u8              :size 1 :reader font-data-read-u8)
@@ -893,7 +893,7 @@ name of a flag in the flag field's FLAGS type."
 (defun emit-file-forms (items stream filename)
   (let ((*exports* '())
         (*print-case* :downcase)
-        (*package* (find-package :zpb-otf))
+        (*package* (find-package :runes/otf))
         (all-forms '()))
     ;; 1. Enums & Flags
     (dolist (item items)
@@ -930,7 +930,7 @@ name of a flag in the flag field's FLAGS type."
     (format stream ";;;; DO NOT EDIT DIRECTLY~%")
     (format stream ";;;; Copyright (C) 2026 Arthur Miller and contributors~%")
     (format stream ";;;; SPDX-License-Identifier: MIT~%")
-    (pprint '(in-package #:zpb-otf) stream)
+    (pprint '(in-package #:runes/otf) stream)
     (terpri stream)
     (when *exports*
       (pprint `(export '(,@(sort (mapcar #'zsym (copy-list *exports*)) #'string< :key #'symbol-name))) stream)

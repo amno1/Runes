@@ -5,7 +5,7 @@ important format, truetype fonts, however only a subset of those: TrueType-outli
 
 When it comes to some modern formats, older formats, or more advanced features, it is not covered. Anyhow, what it does get us far. I have used it in X11 demos, in Garnet and in my own colour picker and termometer app, to render test, via cl-vectors, a path rasterizer also by the author of zpb-ttf. However, for modern font support, we need more.
 
-`zpb-otf`, expands the coverage from 12 tables to 52 table tags (46 distinct tables, plus 6 extended variants from ISO/IEC 14496-22:2026 such as `GVAR` and `HMTX`) and their shared sub-structures. The parsers are generated from the table definitions that Google's Fontations project feeds its own code generator, converted to s-expressions and compiled to Lisp. If you are wondering what "tables" are, it is various data needed to render fonts correctly on the screen. Modern font formats are like video or image formats, they act more like containers for various formats.
+`runes/otf`, expands the coverage from 12 tables to 52 table tags (46 distinct tables, plus 6 extended variants from ISO/IEC 14496-22:2026 such as `GVAR` and `HMTX`) and their shared sub-structures. The parsers are generated from the table definitions that Google's Fontations project feeds its own code generator, converted to s-expressions and compiled to Lisp. If you are wondering what "tables" are, it is various data needed to render fonts correctly on the screen. Modern font formats are like video or image formats, they act more like containers for various formats.
 
 "Table" here means a named, offset-delimited byte region inside the font file — not a data table in the database sense. The usage is the same as in PDF or SQLite: a *chunk of structured data* identified by a name, at a known offset.
 
@@ -41,7 +41,7 @@ Common tables grouped by concern:
 - **Color** — `COLR`, `CPAL`, `CBDT`, `CBLC`, `sbix`, `SVG `
 - **Apple AAT** — `morx`, `mort`, `trak`, `feat`, `ankr`, `kerx`, …
 
-Wrappers reuse the same tables: WOFF is the tables, zlib-compressed, plus a metadata header; WOFF2 is the tables, Brotli-compressed and transformed; TTC is multiple sfnt headers sharing one pool of tables. TTC files open directly. WOFF and WOFF2 files are first decoded to an sfnt (or a TTC, for a WOFF2 collection) in memory with `zpb-otf:decode-woff1` or `zpb-otf:decode-woff2`, using the Brotli and zlib decoders in `src/decompress`; the WOFF2 glyf, loca and hmtx transforms are reversed. `open-font-loader` detects both by their signature (from a pathname, a stream or octets) and decodes them first, so they open like any other font; `collection-index` picks a font of a WOFF2 collection.
+Wrappers reuse the same tables: WOFF is the tables, zlib-compressed, plus a metadata header; WOFF2 is the tables, Brotli-compressed and transformed; TTC is multiple sfnt headers sharing one pool of tables. TTC files open directly. WOFF and WOFF2 files are first decoded to an sfnt (or a TTC, for a WOFF2 collection) in memory with `runes/otf:decode-woff1` or `runes/otf:decode-woff2`, using the Brotli and zlib decoders of the `decompress` system (`decompress/` in the Runes repository); the WOFF2 glyf, loca and hmtx transforms are reversed. `open-font-loader` detects both by their signature (from a pathname, a stream or octets) and decodes them first, so they open like any other font; `collection-index` picks a font of a WOFF2 collection.
 
 So these "tables" are counting how many distinct tags and byte layouts the parser knows how to interpret. The font file itself may contain more tags that a parser silently skips or it may contain fewer. The parser fails only on the tags it *needs* and doesn't find (or finds and rejects).
 
@@ -55,7 +55,7 @@ Fontations is a project to bring memory safety into font parsing after several v
 
 Why don't we parse the OpenType spec ourselves? There is no machine-readable spec. The spec exists only as HTML prose, which Google copied into text and turned into codegen inputs, partly by hand. That raw text is irregular and needs hand-tuning to process correctly. I leave that to Google engineers, and instead convert their curated codegen inputs, which are uniform and thus simpler to parse. That relieves us also from maintaining a parser for each specific table, which itself is quite a lot of work. We do have to maintain a code generator, but it is simpler than one that would have to process the irregular raw table text. A few things the codegen inputs leave to hand-written Rust in Fontations (for example GPOS value records and fvar instance records) are hand-written here too, in `src/extensions.lisp`.
 
-zpb-otf replaces the parsers for various font tables and data but not the entire zpb-ttf. Only ~25–30% of zpb-ttf is byte-parsing that zpb-otf now generates. The other ~70% is the semantic API that downstream code actually calls: find-glyph, advance-width, contours, do-contours, kerning-offset, string-bounding-box, family-name, the glyph class, the font-loader lifecycle, TTC collection handling, the condition hierarchy, the glyph cache, lazy bounding-box/contour loading. We keep that high-level API code in zpb-ttf, but replace the loading code and the old stream-based parsers for the 12 tables that zpb-ttf already had. Nine of them are now read through zpb-otf's generated parsers; `glyf`, `kern` and `loca` are still decoded by hand in zpb-ttf, although generated `glyf` and `kern` readers exist.
+runes/otf replaces the parsers for various font tables and data but not the entire zpb-ttf. Only ~25–30% of zpb-ttf is byte-parsing that runes/otf now generates. The other ~70% is the semantic API that downstream code actually calls: find-glyph, advance-width, contours, do-contours, kerning-offset, string-bounding-box, family-name, the glyph class, the font-loader lifecycle, TTC collection handling, the condition hierarchy, the glyph cache, lazy bounding-box/contour loading. We keep that high-level API code in zpb-ttf, but replace the loading code and the old stream-based parsers for the 12 tables that zpb-ttf already had. Nine of them are now read through runes/otf's generated parsers; `glyf`, `kern` and `loca` are still decoded by hand in zpb-ttf, although generated `glyf` and `kern` readers exist.
 
 In other words, we are trying to be backwards compatible: the high-level API stays the same, so library clients should not need changes. A few results differ where the old code was wrong: `italic-angle` returns degrees (the old code returned the raw 16.16 bits), components of compound glyphs are returned in file order (the old code reversed them), compound glyphs made only of empty components have no contours, and an out-of-range glyph index signals an error instead of returning `nil`. CFF and CFF2 `.otf` fonts, which the old code rejected, now open and have outlines: their charstrings are evaluated by a port of Fontations' interpreter. CFF curves are cubic, so `contours` approximates each one with quadratic curves within a quarter of a font unit, and the new `cubic-contours` gives the exact outline of any glyph. A variable font, CFF2 or TrueType, can be set to an instance with `(setf (variation-coordinates loader) '(("wght" . 700)))`, and `variation-axes` lists its axes: outlines are then drawn at that instance (applying `gvar` for TrueType, with its inferred deltas, composite offsets and phantom points, as Fontations and FreeType do), advance widths and left side bearings follow `HVAR` or, without it, the phantom points (a CFF2 glyph's side bearing is its left edge at the instance), advance heights and top side bearings follow `VVAR` in the same way when the font has `vmtx`, and `ascender`, `descender`, `line-gap`, the underline metrics and the vertical ascender and descender follow `MVAR`, as skrifa applies it. `variation-metric-delta` gives the change of any other `MVAR` metric, such as the x-height (`xhgt`) or cap height (`cpht`). Coordinates are normalized through `fvar` and `avar` 1.0; `avar` 2.0 mappings are not applied. None of the test fonts has `vmtx` or `VVAR`, so the varied vertical metrics are untested beyond the code they share with `HVAR`. TrueType outlines are checked point by point against FreeType 2.13's at several instances, using test fonts and reference outlines from Fontations. Composite components are transformed in 16.16 fixed point as FreeType does, which can move a point by one unit compared with the old floating point code. The `seac` operator, with which some older Adobe CFF fonts build accented glyphs from two others, is not supported: such glyphs signal an error. It needs the font's charset and the Standard Encoding, and modern OpenType fonts don't use it. As a bonus we get more memory-safe parsing, more speed, and a lighter dependency than using FreeType via CFFI bindings, as I believe is the practice in the Common Lisp world. Note that a font-loader is not thread-safe: it fills its glyph cache lazily, so share one between threads only with your own locking. However, it should be lighter on memory usage from multiple threads than FreeType.
 
@@ -90,7 +90,7 @@ So the failure mode is: the API *accepts* any stream and *owns* (closes) it, but
   (open-font-loader buf))
 ```
 
-(`zpb-otf:make-font-data` itself wants a simple byte vector; `open-font-loader` and `zpb-otf:ensure-font-data` copy an adjustable one like `buf` for you.)
+(`runes/otf:make-font-data` itself wants a simple byte vector; `open-font-loader` and `runes/otf:ensure-font-data` copy an adjustable one like `buf` for you.)
 ### Not-implemented
 
 #### CVT, fpgm, prep and JSTF (by DeepSeek webchat)
@@ -105,7 +105,7 @@ So the failure mode is: the API *accepts* any stream and *owns* (closes) it, but
 
 **`prep` (Control Value Program)** is another TrueType bytecode table. It is executed whenever the point size or transformation changes, before any glyph is interpreted, and is used to initialize the CVT and storage areas.
 
-##### Why they have no schema in zpb-otf
+##### Why they have no schema in runes/otf
 
 All four fall outside the data-oriented table model that the codegen handles:
 
@@ -113,7 +113,7 @@ All four fall outside the data-oriented table model that the codegen handles:
 
 - **`JSTF` is a layout table with a deep dependency on `GSUB`/`GPOS` lookup lists.** Its records are offset-driven and variable-length, and its usefulness requires a shaping engine that understands lookup indices and justification prioritization. It is also rarely present in modern fonts, and Fontations has no `JSTF` reader in read-fonts (and no codegen input for it), which is why there is no schema here.
 
-The 52 table tags with schemas correspond to tables with non-trivial record layouts that benefit from generated accessors. The four above are either trivial to read with a slice (`cvt `, `fpgm`, `prep`) or depend on layout machinery that is not part of zpb-otf's scope (`JSTF`).
+The 52 table tags with schemas correspond to tables with non-trivial record layouts that benefit from generated accessors. The four above are either trivial to read with a slice (`cvt `, `fpgm`, `prep`) or depend on layout machinery that is not part of runes/otf's scope (`JSTF`).
 
 ##### Where parsers would come from
 
@@ -125,7 +125,7 @@ If you ever want to expose them:
 
 ##### Fontations
 
-Fontations treats `cvt `, `fpgm`, and `prep` as hinting inputs rather than parsed tables: it stores them as raw bytecode and only decodes them inside `skrifa`'s hinting VM. `JSTF` is not part of Fontations' read-fonts table coverage; the layout focus is on `GSUB`, `GPOS`, `GDEF`, and `BASE`. So the absence of schemas for these four in zpb-otf is consistent with Fontations' own scoping, and the 52-table count remains the accurate set of tables with structured readers.
+Fontations treats `cvt `, `fpgm`, and `prep` as hinting inputs rather than parsed tables: it stores them as raw bytecode and only decodes them inside `skrifa`'s hinting VM. `JSTF` is not part of Fontations' read-fonts table coverage; the layout focus is on `GSUB`, `GPOS`, `GDEF`, and `BASE`. So the absence of schemas for these four in runes/otf is consistent with Fontations' own scoping, and the 52-table count remains the accurate set of tables with structured readers.
 
 #### JSTF (by DeepSeek webchat)
 
@@ -155,7 +155,7 @@ Structurally, JSTF mirrors `GSUB`/`GPOS`: it organizes suggestions by **script**
 
 Fontations does **not** provide a structured JSTF reader. Its `read-fonts` crate focuses on the tables that shaping engines actually consume: `GSUB`, `GPOS`, `GDEF`, `BASE`, variations, color, etc. Its table provider can return the raw bytes for any tag, so JSTF could be parsed manually, but Fontations does not ship a generated or hand-written JSTF parser. This matches the table's real-world status: there is no shaping use case to justify the implementation effort.
 
-##### Summary for zpb-otf
+##### Summary for runes/otf
 
 Leaving JSTF out of the 52 schemas is the correct, honest choice. It is a table with no consumer, no meaningful font coverage, and no shaper support—including in Fontations. If you ever wanted to expose it, a raw `font-data-slice` on the JSTF tag would be sufficient until a justification engine actually appears.
 

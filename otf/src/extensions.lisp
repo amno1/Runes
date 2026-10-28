@@ -5,7 +5,7 @@
 ;;; The generated tables cannot express arrays whose element size or
 ;;; count depends on packed flag fields. These helpers decode them.
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (export '(+tuple-index-embedded-peak-tuple+ +tuple-index-intermediate-region+
           +tuple-index-private-point-numbers+ +tuple-index-tuple-index-mask+

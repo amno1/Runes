@@ -16,7 +16,7 @@
 
 (defun clamp-i32 (x) (max (- (ash 1 31)) (min (1- (ash 1 31)) x)))
 
-(defun read-fixed-bits (fd pos) (zpb-otf:font-data-read-i32 fd pos))
+(defun read-fixed-bits (fd pos) (runes/otf:font-data-read-i32 fd pos))
 
 (defun f2dot14-bits->fixed (bits) (ash bits 2))
 
@@ -27,11 +27,11 @@
   (let ((info (table-info "fvar" loader)))
     (when info
       (let* ((fd (font-data loader))
-             (fvar (zpb-otf:read-fvar fd (offset info) (size info))))
-        (loop for i below (zpb-otf:fvar-axis-count fvar)
-              collect (let* ((axis (zpb-otf:fvar-axis-ref fvar i))
-                             (pos (zpb-otf::record-ref-offset axis)))
-                        (list (zpb-otf:variation-axis-record-axis-tag axis)
+             (fvar (runes/otf:read-fvar fd (offset info) (size info))))
+        (loop for i below (runes/otf:fvar-axis-count fvar)
+              collect (let* ((axis (runes/otf:fvar-axis-ref fvar i))
+                             (pos (runes/otf::record-ref-offset axis)))
+                        (list (runes/otf:variation-axis-record-axis-tag axis)
                               (read-fixed-bits fd (+ pos 4))
                               (read-fixed-bits fd (+ pos 8))
                               (read-fixed-bits fd (+ pos 12)))))))))
@@ -48,11 +48,11 @@ axis of LOADER's font, in user units; NIL for a font that does not vary.")
   (let* ((max (max max min))
          (value (max min (min max value)))
          (result (cond ((< value default)
-                        (zpb-otf/charstring::fixed-neg
-                         (zpb-otf/charstring::fixed/ (clamp-i32 (- default value))
+                        (runes/otf/charstring::fixed-neg
+                         (runes/otf/charstring::fixed/ (clamp-i32 (- default value))
                                                      (clamp-i32 (- default min)))))
                        ((> value default)
-                        (zpb-otf/charstring::fixed/ (clamp-i32 (- value default))
+                        (runes/otf/charstring::fixed/ (clamp-i32 (- value default))
                                                     (clamp-i32 (- max default))))
                        (t 0))))
     (max #x-10000 (min #x10000 result))))
@@ -64,14 +64,14 @@ axis of LOADER's font, in user units; NIL for a font that does not vary.")
   (let ((info (table-info "avar" loader)))
     (when info
       (let* ((fd (font-data loader))
-             (avar (zpb-otf:read-avar fd (offset info) (size info)))
-             (pos (zpb-otf:avar-axis-segment-maps-start avar)))
-        (loop repeat (zpb-otf:avar-axis-count avar)
-              collect (let ((count (zpb-otf:font-data-read-u16 fd pos)))
+             (avar (runes/otf:read-avar fd (offset info) (size info)))
+             (pos (runes/otf:avar-axis-segment-maps-start avar)))
+        (loop repeat (runes/otf:avar-axis-count avar)
+              collect (let ((count (runes/otf:font-data-read-u16 fd pos)))
                         (prog1 (coerce (loop for i below count
                                              for p = (+ pos 2 (* i 4))
-                                             collect (cons (f2dot14-bits->fixed (zpb-otf:font-data-read-i16 fd p))
-                                                           (f2dot14-bits->fixed (zpb-otf:font-data-read-i16 fd (+ p 2)))))
+                                             collect (cons (f2dot14-bits->fixed (runes/otf:font-data-read-i16 fd p))
+                                                           (f2dot14-bits->fixed (runes/otf:font-data-read-i16 fd (+ p 2)))))
                                        'vector)
                           (incf pos (+ 2 (* count 4))))))))))
 
@@ -104,11 +104,11 @@ axis of LOADER's font, in user units; NIL for a font that does not vary.")
                      ((= k start) (+ (- coord (from start)) (to start)))
                      ((= k end) (+ (- coord (from (1- end))) (to (1- end))))
                      (t (let ((bf (from (1- k))) (bt (to (1- k))) (af (from k)) (at (to k)))
-                          (zpb-otf/charstring::fixed+
-                           bt (zpb-otf/charstring::fixed-mul-div
-                               (zpb-otf/charstring::fixed- at bt)
-                               (zpb-otf/charstring::fixed- coord bf)
-                               (zpb-otf/charstring::fixed- af bf)))))))))))))))
+                          (runes/otf/charstring::fixed+
+                           bt (runes/otf/charstring::fixed-mul-div
+                               (runes/otf/charstring::fixed- at bt)
+                               (runes/otf/charstring::fixed- coord bf)
+                               (runes/otf/charstring::fixed- af bf)))))))))))))))
 
 (defun normalize-coordinates (loader user-coordinates)
   "Normalized coordinates (reals in [-1, 1], one per axis) for
@@ -121,13 +121,13 @@ USER-COORDINATES, an alist of axis tag to user value."
                    for cell on coords
                    when (string= tag axis-tag)
                      do (setf (car cell)
-                              (normalize-axis-value (zpb-otf/charstring:float->fixed value)
+                              (normalize-axis-value (runes/otf/charstring:float->fixed value)
                                                     min default max))))
     (loop for maps in (avar-segment-maps loader)
           for cell on coords
           do (setf (car cell) (apply-segment-map maps (car cell))))
     ;; To 2.14, rounding as Fixed::to_f2dot14 does.
-    (mapcar (lambda (c) (/ (ash (zpb-otf/charstring::s32 (+ c 2)) -2) 16384)) coords)))
+    (mapcar (lambda (c) (/ (ash (runes/otf/charstring::s32 (+ c 2)) -2) 16384)) coords)))
 
 ;;; Selecting an instance
 
@@ -184,43 +184,43 @@ font does not vary that metric through this table."
   (if (or (null store) (> inner #xFFFF))
       0
       ;; Round the 16.16 delta to an integer as FreeType does.
-      (ash (+ (zpb-otf/charstring:item-variation-delta store outer inner coords) #x8000) -16)))
+      (ash (+ (runes/otf/charstring:item-variation-delta store outer inner coords) #x8000) -16)))
 
 (defun advance-width-delta (loader gid)
   "Change of GID's advance width at the loader's instance, from 'HVAR'."
-  (metrics-delta loader "HVAR" #'zpb-otf:read-hvar
-                 #'zpb-otf:hvar-item-variation-store-offset
-                 #'zpb-otf:hvar-advance-width-mapping-offset-offset
+  (metrics-delta loader "HVAR" #'runes/otf:read-hvar
+                 #'runes/otf:hvar-item-variation-store-offset
+                 #'runes/otf:hvar-advance-width-mapping-offset-offset
                  gid :direct t))
 
 (defun lsb-delta (loader gid)
   "Change of GID's left side bearing from the 'HVAR' LSB mapping, or NIL."
-  (metrics-delta loader "HVAR" #'zpb-otf:read-hvar
-                 #'zpb-otf:hvar-item-variation-store-offset
-                 #'zpb-otf:hvar-lsb-mapping-offset-offset
+  (metrics-delta loader "HVAR" #'runes/otf:read-hvar
+                 #'runes/otf:hvar-item-variation-store-offset
+                 #'runes/otf:hvar-lsb-mapping-offset-offset
                  gid))
 
 (defun advance-height-delta (loader gid)
   "Change of GID's advance height at the loader's instance, from 'VVAR'."
-  (metrics-delta loader "VVAR" #'zpb-otf:read-vvar
-                 #'zpb-otf:vvar-item-variation-store-offset
-                 #'zpb-otf:vvar-advance-height-mapping-offset-offset
+  (metrics-delta loader "VVAR" #'runes/otf:read-vvar
+                 #'runes/otf:vvar-item-variation-store-offset
+                 #'runes/otf:vvar-advance-height-mapping-offset-offset
                  gid :direct t))
 
 (defun tsb-delta (loader gid)
   "Change of GID's top side bearing from the 'VVAR' TSB mapping, or NIL."
-  (metrics-delta loader "VVAR" #'zpb-otf:read-vvar
-                 #'zpb-otf:vvar-item-variation-store-offset
-                 #'zpb-otf:vvar-tsb-mapping-offset-offset
+  (metrics-delta loader "VVAR" #'runes/otf:read-vvar
+                 #'runes/otf:vvar-item-variation-store-offset
+                 #'runes/otf:vvar-tsb-mapping-offset-offset
                  gid))
 
 (defun delta-set-index (pos fd index)
   "Outer and inner delta-set index for INDEX from the DeltaSetIndexMap at POS."
-  (let* ((format (zpb-otf:font-data-read-u8 fd pos))
-         (entry-format (zpb-otf:font-data-read-u8 fd (+ pos 1)))
+  (let* ((format (runes/otf:font-data-read-u8 fd pos))
+         (entry-format (runes/otf:font-data-read-u8 fd (+ pos 1)))
          (map-count (if (zerop format)
-                        (zpb-otf:font-data-read-u16 fd (+ pos 2))
-                        (zpb-otf:font-data-read-u32 fd (+ pos 2))))
+                        (runes/otf:font-data-read-u16 fd (+ pos 2))
+                        (runes/otf:font-data-read-u32 fd (+ pos 2))))
          (data (+ pos (if (zerop format) 4 6))))
     (if (zerop map-count)
         (values (ash index -16) (ldb (byte 16 0) index))
@@ -230,7 +230,7 @@ font does not vary that metric through this table."
                (entry-pos (+ data (* (min index (1- map-count)) entry-size)))
                (entry (let ((v 0))
                         (dotimes (i entry-size v)
-                          (setf v (logior (ash v 8) (zpb-otf:font-data-read-u8 fd (+ entry-pos i))))))))
+                          (setf v (logior (ash v 8) (runes/otf:font-data-read-u8 fd (+ entry-pos i))))))))
           (values (ldb (byte 16 0) (ash entry (- bit-count)))
                   (ldb (byte bit-count 0) entry))))))
 
@@ -245,19 +245,19 @@ default instance or when the font does not vary the metric.")
           (info (table-info "MVAR" loader)))
       (if (or (null coords) (null info))
           0
-          (let* ((mvar (zpb-otf:read-mvar (font-data loader) (offset info) (size info)))
-                 (store (zpb-otf:mvar-item-variation-store-offset mvar))
+          (let* ((mvar (runes/otf:read-mvar (font-data loader) (offset info) (size info)))
+                 (store (runes/otf:mvar-item-variation-store-offset mvar))
                  (record (when store
-                           (loop for i below (zpb-otf:mvar-value-record-count mvar)
-                                 for r = (zpb-otf:mvar-value-record-ref mvar i)
-                                 when (string= (zpb-otf:mvar-value-record-value-tag r) tag)
+                           (loop for i below (runes/otf:mvar-value-record-count mvar)
+                                 for r = (runes/otf:mvar-value-record-ref mvar i)
+                                 when (string= (runes/otf:mvar-value-record-value-tag r) tag)
                                    return r))))
             (if record
                 ;; Rounded to an integer as FreeType does.
-                (ash (+ (zpb-otf/charstring:item-variation-delta
+                (ash (+ (runes/otf/charstring:item-variation-delta
                          store
-                         (zpb-otf:mvar-value-record-delta-set-outer-index record)
-                         (zpb-otf:mvar-value-record-delta-set-inner-index record)
+                         (runes/otf:mvar-value-record-delta-set-outer-index record)
+                         (runes/otf:mvar-value-record-delta-set-inner-index record)
                          coords)
                         #x8000)
                      -16)

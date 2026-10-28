@@ -4,7 +4,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (export
  '(+kerx-subtable0-pair-size+ +kerx-tag+ kerx kerx-n-tables kerx-p kerx-padding

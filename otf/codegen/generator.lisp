@@ -2,7 +2,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf/codegen)
+(in-package #:runes/otf/codegen)
 
 (defun read-sexp-file (pathname)
   "Read all top-level s-expression forms from PATHNAME."

@@ -1,7 +1,7 @@
 # Test fonts
 
 These fonts are used only as test data. They are redistributed unmodified
-under their own licenses, which are independent of the zpb-otf/zpb-ttf code
+under their own licenses, which are independent of the runes/otf/zpb-ttf code
 license. Full license texts are in `licenses/`.
 
 | File | Copyright | License | Source |

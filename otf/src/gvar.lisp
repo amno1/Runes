@@ -12,11 +12,11 @@
 
 (in-package #:zpb-ttf)
 
-(defun f+ (a b) (zpb-otf/charstring::fixed+ a b))
-(defun f- (a b) (zpb-otf/charstring::fixed- a b))
-(defun f* (a b) (zpb-otf/charstring::fixed* a b))
-(defun f/ (a b) (zpb-otf/charstring::fixed/ a b))
-(defun fixed-from-int (i) (zpb-otf/charstring:fixed-from-int i))
+(defun f+ (a b) (runes/otf/charstring::fixed+ a b))
+(defun f- (a b) (runes/otf/charstring::fixed- a b))
+(defun f* (a b) (runes/otf/charstring::fixed* a b))
+(defun f/ (a b) (runes/otf/charstring::fixed/ a b))
+(defun fixed-from-int (i) (runes/otf/charstring:fixed-from-int i))
 (defun fixed-round (f) (ash (+ f #x8000) -16))
 
 (define-condition gvar-data-error (error) ()
@@ -30,13 +30,13 @@
 
 (defun gc-u8 (c)
   (when (>= (gc-pos c) (gc-end c)) (gvar-fail))
-  (prog1 (zpb-otf:font-data-read-u8 (gc-fd c) (gc-pos c)) (incf (gc-pos c))))
+  (prog1 (runes/otf:font-data-read-u8 (gc-fd c) (gc-pos c)) (incf (gc-pos c))))
 
 (defun gc-int (c bytes signed)
   (when (> (+ (gc-pos c) bytes) (gc-end c)) (gvar-fail))
   (let ((v 0))
     (dotimes (i bytes)
-      (setf v (logior (ash v 8) (zpb-otf:font-data-read-u8 (gc-fd c) (+ (gc-pos c) i)))))
+      (setf v (logior (ash v 8) (runes/otf:font-data-read-u8 (gc-fd c) (+ (gc-pos c) i)))))
     (incf (gc-pos c) bytes)
     (if (and signed (logbitp (1- (* 8 bytes)) v)) (- v (ash 1 (* 8 bytes))) v)))
 
@@ -57,8 +57,8 @@
       (let* ((fd (font-data loader))
              (base (offset info))
              (end (+ base (size info))))
-        (flet ((u16 (p) (zpb-otf:font-data-read-u16 fd p))
-               (u32 (p) (zpb-otf:font-data-read-u32 fd p)))
+        (flet ((u16 (p) (runes/otf:font-data-read-u16 fd p))
+               (u32 (p) (runes/otf:font-data-read-u32 fd p)))
           (let ((glyph-count (u16 (+ base 12)))
                 (long-p (logbitp 0 (u16 (+ base 14))))
                 (array (+ base (u32 (+ base 16)))))
@@ -145,7 +145,7 @@
 ;;; Tuples
 
 (defun read-tuple (fd pos axis-count)
-  (coerce (loop for i below axis-count collect (zpb-otf:font-data-read-i16 fd (+ pos (* 2 i))))
+  (coerce (loop for i below axis-count collect (runes/otf:font-data-read-i16 fd (+ pos (* 2 i))))
           'vector))
 
 (defun gvar-tuple-scalar (peak intermediate coords)
@@ -165,11 +165,11 @@
                     (when (or (<= coord start) (>= coord end)) (return nil))
                     (setf scalar
                           (if (< coord p)
-                              (zpb-otf/charstring::fixed-mul-div scalar (ash (- coord start) 2) (ash (- p start) 2))
-                              (zpb-otf/charstring::fixed-mul-div scalar (ash (- end coord) 2) (ash (- end p) 2))))))
+                              (runes/otf/charstring::fixed-mul-div scalar (ash (- coord start) 2) (ash (- p start) 2))
+                              (runes/otf/charstring::fixed-mul-div scalar (ash (- end coord) 2) (ash (- end p) 2))))))
                 (progn
                   (when (or (< coord (min p 0)) (> coord (max p 0))) (return nil))
-                  (setf scalar (zpb-otf/charstring::fixed-mul-div scalar (ash coord 2) (ash p 2)))))))))))
+                  (setf scalar (runes/otf/charstring::fixed-mul-div scalar (ash coord 2) (ash p 2)))))))))))
 
 (defun map-active-tuples (data coords fn)
   "Call FN with (scalar points data-cursor) for each tuple that applies at
@@ -180,8 +180,8 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
          (dpos (glyph-var-data-serialized data))
          (dend (glyph-var-data-serialized-end data)))
     (dotimes (i (glyph-var-data-tuple-count data))
-      (let* ((size (zpb-otf:font-data-read-u16 fd hpos))
-             (index (zpb-otf:font-data-read-u16 fd (+ hpos 2)))
+      (let* ((size (runes/otf:font-data-read-u16 fd hpos))
+             (index (runes/otf:font-data-read-u16 fd (+ hpos 2)))
              (p (+ hpos 4))
              (peak (if (logbitp 15 index)
                        (prog1 (read-tuple fd p axis-count) (incf p (* 2 axis-count)))

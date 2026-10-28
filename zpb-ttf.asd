@@ -1,4 +1,6 @@
 ;;;; zpb-ttf.asd — Access TrueType and OpenType font metrics and outlines
+;;;; The zpb-ttf API, kept for backward compatibility, on top of runes/otf.
+;;;; Its sources are in otf/src/ with runes/otf's.
 ;;;; Copyright (c) 2006 Zachary Beane, 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: BSD-2-Clause
 
@@ -12,9 +14,10 @@
   :author "Zachary Beane <xach@xach.com>, Arthur Miller and contributors"
   :description "Access TrueType and OpenType font metrics and outlines from Common Lisp"
   :license "BSD-2-Clause"
-  :depends-on (#:zpb-otf #:zpb-otf/charstring)
+  :depends-on (#:runes/otf #:runes/otf/charstring)
   :serial t
   :components ((:module "src"
+                :pathname "otf/src"
                 :serial t
                 :components ((:file "package")
                              (:file "util")

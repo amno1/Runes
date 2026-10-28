@@ -4,11 +4,11 @@
 
 ;;; Ported from the tests in Fontations' read-fonts/src/ps/charstring.rs.
 
-(defpackage #:zpb-otf/charstring-test
-  (:use #:cl #:zpb-otf/charstring)
+(defpackage #:runes/otf/charstring-test
+  (:use #:cl #:runes/otf/charstring)
   (:export #:run-charstring-tests))
 
-(in-package #:zpb-otf/charstring-test)
+(in-package #:runes/otf/charstring-test)
 
 (defvar *failures* 0)
 (defvar *count* 0)
@@ -91,23 +91,23 @@ for big-endian words."
 (defun binary (a b op) (moved-y (n 0) (n a) (n b) (esc op)))
 
 (defun evaluator (kind)
-  (zpb-otf/charstring::make-evaluator-for (ctx kind) nil (make-instance 'capture-sink)))
+  (runes/otf/charstring::make-evaluator-for (ctx kind) nil (make-instance 'capture-sink)))
 
 (defun push-all (ev &rest numbers)
   "Push integers, or fixed values for non-integers, as Fontations' tests do."
-  (let ((stack (zpb-otf/charstring::ev-stack ev)))
+  (let ((stack (runes/otf/charstring::ev-stack ev)))
     (dolist (x numbers)
       (if (integerp x)
-          (zpb-otf/charstring::stack-push-int stack x)
-          (zpb-otf/charstring::stack-push-fixed stack (f x))))))
+          (runes/otf/charstring::stack-push-int stack x)
+          (runes/otf/charstring::stack-push-fixed stack (f x))))))
 
 (defun op (ev operator)
-  (zpb-otf/charstring::evaluate-operator ev operator (zpb-otf/charstring::empty-cursor) 0))
+  (runes/otf/charstring::evaluate-operator ev operator (runes/otf/charstring::empty-cursor) 0))
 
 (defun stack-floats (ev)
-  (let ((stack (zpb-otf/charstring::ev-stack ev)))
-    (loop for i below (zpb-otf/charstring::stack-len stack)
-          collect (fixed->float (zpb-otf/charstring::stack-get-fixed stack i)))))
+  (let ((stack (runes/otf/charstring::ev-stack ev)))
+    (loop for i below (runes/otf/charstring::stack-len stack)
+          collect (fixed->float (runes/otf/charstring::stack-get-fixed stack i)))))
 
 ;;; Tests
 
@@ -218,21 +218,21 @@ for big-endian words."
            (let ((ev (evaluator kind)))
              (apply #'push-all ev (if (eq operator :sbw) '(42.5 0 501 1000) '(42.5 501 1000)))
              (op ev operator)
-             (list (zpb-otf/charstring::ev-sbx ev) (zpb-otf/charstring::ev-wx ev)))))
+             (list (runes/otf/charstring::ev-sbx ev) (runes/otf/charstring::ev-wx ev)))))
     (check "op_sbw_type1" (equal (h-sbw :sbw :type1) (list (f 42.5) (f 501))))
     (check "op_hsbw_type1" (equal (h-sbw :hsbw :type1) (list (f 42.5) (f 501))))
     (check "op_sbw_type2_no_effect" (equal (h-sbw :sbw :type2) '(0 0)))
     (check "op_hsbw_type2_no_effect" (equal (h-sbw :hsbw :type2) '(0 0))))
   (check "op_callothersubr_flex"
          (let* ((ev (evaluator :type1))
-                (sink (zpb-otf/charstring::ev-sink ev)))
+                (sink (runes/otf/charstring::ev-sink ev)))
            (push-all ev 0 1) (op ev :callothersubr)
            (dotimes (i 7) (push-all ev 1 2) (op ev :rmoveto))
            (push-all ev 0 100 200)
            (push-all ev 3 0) (op ev :callothersubr)
            (op ev :setcurrentpoint)
-           (and (= (zpb-otf/charstring::ev-x ev) (f 100))
-                (= (zpb-otf/charstring::ev-y ev) (f 200))
+           (and (= (runes/otf/charstring::ev-x ev) (f 100))
+                (= (runes/otf/charstring::ev-y ev) (f 200))
                 (equal (in-units (result sink))
                        '((:move 0 0) (:curve 2 4 3 6 4 8) (:curve 5 10 6 12 7 14))))))
   (check "roll_by_the_most_negative_shift"
@@ -253,13 +253,13 @@ for big-endian words."
 (defun test-multiple-master ()
   (format t "~%--- Multiple master othersubrs ---~%")
   (check "mm_blend"
-         (let ((ev (zpb-otf/charstring::make-evaluator-for (mm-context '(0 -0.25 1)) nil
+         (let ((ev (runes/otf/charstring::make-evaluator-for (mm-context '(0 -0.25 1)) nil
                                                            (make-instance 'capture-sink))))
            (push-all ev 1 0 2 3 4 -8 6 15)
            (op ev :callothersubr)
            (equal (stack-floats ev) '(3.5d0 -9.0d0))))
   (flet ((fresh (weights)
-           (zpb-otf/charstring::make-evaluator-for (mm-context weights) nil
+           (runes/otf/charstring::make-evaluator-for (mm-context weights) nil
                                                    (make-instance 'capture-sink))))
     (check "othersubr_arithmetic"
            (loop for (args expected) in '(((7 2 2 20) 9) ((7 2 2 21) 5) ((7 2 2 22) 14)
@@ -274,11 +274,11 @@ for big-endian words."
       (check "othersubr_build_char_array: store and read back"
              (and (null (othersubr ev 5 3 2 24))
                   (equal (othersubr ev 3 1 25) '(5.0d0))))
-      (zpb-otf/charstring::reset-stack ev)
+      (runes/otf/charstring::reset-stack ev)
       (check "othersubr_build_char_array: copy the weights"
              (and (null (othersubr ev 2 1 19))
                   (equal (othersubr ev 3 1 25) '(0.5d0))))
-      (zpb-otf/charstring::reset-stack ev)
+      (runes/otf/charstring::reset-stack ev)
       (check-error "build char array bounds (24)" charstring-invalid-operation (othersubr ev 1 8 2 24))
       (check-error "build char array bounds (25)" charstring-invalid-operation (othersubr ev 8 1 25))
       (check-error "build char array bounds (19)" charstring-invalid-operation (othersubr ev 6 1 19))))
@@ -355,8 +355,8 @@ for big-endian words."
    #x10 #x06))
 
 (defun example-blend (&rest coords)
-  (make-blend-state (zpb-otf:read-item-variation-store
-                     (zpb-otf:make-font-data *cff2-example*) 18)
+  (make-blend-state (runes/otf:read-item-variation-store
+                     (runes/otf:make-font-data *cff2-example*) 18)
                     coords 0))
 
 (defun test-blend ()
@@ -377,7 +377,7 @@ for big-endian words."
                               '(:u16 #xC000) '(:u16 #xC000) '(:u16 0)
                               '(:u16 0) '(:u16 0) '(:u16 1) '(:u16 0)
                               '(:u16 0) '(:u16 0) '(:u16 2) '(:u16 1) '(:u16 0)))
-         (store (zpb-otf:read-item-variation-store (zpb-otf:make-font-data store-bytes) 0))
+         (store (runes/otf:read-item-variation-store (runes/otf:make-font-data store-bytes) 0))
          (state (make-blend-state store '(-0.5) 0)))
     (check "store index 0 at -0.5" (equalp (blend-scalars state) (vector 0)))
     (blend-set-store-index state 1)

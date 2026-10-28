@@ -1,8 +1,8 @@
-;;;; package.lisp — OpenType runtime package for zpb-otf
+;;;; package.lisp — OpenType runtime package for runes/otf
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(defpackage #:zpb-otf
+(defpackage #:runes/otf
   (:nicknames #:otf)
   (:use #:cl)
   (:export

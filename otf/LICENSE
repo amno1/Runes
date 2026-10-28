@@ -1,11 +1,13 @@
-This repository contains two systems under two permissive licenses.
+This directory (otf/ in the Runes repository) contains two systems under
+two permissive licenses.
 
-  zpb-ttf  (zpb-ttf.asd and the *.lisp files directly in src/, except
-           src/extensions.lisp), derived from Zachary Beane's ZPB-TTF:
-           BSD 2-Clause, first notice below.
+  zpb-ttf  (zpb-ttf.asd at the top of the repository, and the *.lisp files
+           directly in src/, except src/extensions.lisp), derived from
+           Zachary Beane's ZPB-TTF: BSD 2-Clause, first notice below.
 
-  zpb-otf  (zpb-otf.asd, codegen/, schemas/, src/runtime/, src/tables/,
-           src/charstring/ and src/extensions.lisp): MIT, second notice below.
+  runes/otf  (the runes/otf systems in runes.asd, codegen/, schemas/,
+           src/runtime/, src/tables/, src/charstring/ and
+           src/extensions.lisp): MIT, second notice below.
 
 The table schemas in schemas/ are derived from the codegen inputs of the
 Fontations project (https://github.com/googlefonts/fontations), which is
@@ -47,7 +49,7 @@ BSD 2-Clause License (zpb-ttf)
 ;;; SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
-MIT License (zpb-otf)
+MIT License (runes/otf)
 ------------------------------------------------------------------------
 
 Copyright (c) 2026 Arthur Miller and contributors

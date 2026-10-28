@@ -7,12 +7,12 @@
 ;;; fonts/reference/. Loaded after charstring-test.lisp, whose check macros
 ;;; it uses.
 
-(defpackage #:zpb-ttf/gvar-test
+(defpackage #:runes/otf/gvar-test
   (:use #:cl)
-  (:import-from #:zpb-otf/charstring-test #:check)
+  (:import-from #:runes/otf/charstring-test #:check)
   (:export #:run-gvar-tests))
 
-(in-package #:zpb-ttf/gvar-test)
+(in-package #:runes/otf/gvar-test)
 
 (defvar *test-fonts-dir*
   (merge-pathnames "fonts/" (make-pathname :directory (pathname-directory *load-truename*))))
@@ -99,8 +99,8 @@ phantom point."
                                  (- (zpb-ttf:xmin g) (car (aref (zpb-ttf::%phantom-points g) 0))))))))))
 
 (defun run-gvar-tests ()
-  (let ((zpb-otf/charstring-test::*failures* 0)
-        (zpb-otf/charstring-test::*count* 0))
+  (let ((runes/otf/charstring-test::*failures* 0)
+        (runes/otf/charstring-test::*count* 0))
     (format t "========================================================~%")
     (format t "TrueType Outlines Against FreeType 2.13~%")
     (format t "========================================================~%")
@@ -111,7 +111,7 @@ phantom point."
     (dolist (name '("vazirmatn_var_trimmed.ttf" "hvar_with_truncated_adv_index_map.ttf"))
       (check-side-bearings name))
     (format t "~%Results: ~D tests run, ~D failures.~%"
-            zpb-otf/charstring-test::*count* zpb-otf/charstring-test::*failures*)
-    (unless (zerop zpb-otf/charstring-test::*failures*)
-      (error "gvar test suite failed with ~D failure(s)" zpb-otf/charstring-test::*failures*))
+            runes/otf/charstring-test::*count* runes/otf/charstring-test::*failures*)
+    (unless (zerop runes/otf/charstring-test::*failures*)
+      (error "gvar test suite failed with ~D failure(s)" runes/otf/charstring-test::*failures*))
     t))

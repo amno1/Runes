@@ -27,8 +27,8 @@ quadratic curves CONTOURS approximates it with.")
   (or (%cff-font loader)
       (setf (%cff-font loader)
             (let ((info (cff-table-info loader)))
-              (zpb-otf/charstring:open-cff-font
-               (zpb-otf:font-data-slice (font-data loader) (offset info) (size info))
+              (runes/otf/charstring:open-cff-font
+               (runes/otf:font-data-slice (font-data loader) (offset info) (size info))
                :upem (units/em loader))))))
 
 (defun loader-coords (loader)
@@ -38,7 +38,7 @@ quadratic curves CONTOURS approximates it with.")
   "Subfont INDEX at the loader's instance, parsed once per instance."
   (or (gethash index (cff-subfonts loader))
       (setf (gethash index (cff-subfonts loader))
-            (zpb-otf/charstring:cff-subfont (loader-cff-font loader) index (loader-coords loader)))))
+            (runes/otf/charstring:cff-subfont (loader-cff-font loader) index (loader-coords loader)))))
 
 ;;; Collecting the exact outline
 
@@ -56,28 +56,28 @@ and (:curve cx0 cy0 cx1 cy1 x y) commands in font units."))
 (defun outline-add (sink command)
   (vector-push-extend command (outline-current sink)))
 
-(defmethod zpb-otf/charstring:sink-move-to ((s outline-sink) x y)
+(defmethod runes/otf/charstring:sink-move-to ((s outline-sink) x y)
   (setf (outline-current s) (make-array 8 :adjustable t :fill-pointer 0))
   (push (outline-current s) (outline-contours s))
   (outline-add s (list :move (font-units x) (font-units y))))
 
-(defmethod zpb-otf/charstring:sink-line-to ((s outline-sink) x y)
+(defmethod runes/otf/charstring:sink-line-to ((s outline-sink) x y)
   (outline-add s (list :line (font-units x) (font-units y))))
 
-(defmethod zpb-otf/charstring:sink-curve-to ((s outline-sink) cx0 cy0 cx1 cy1 x y)
+(defmethod runes/otf/charstring:sink-curve-to ((s outline-sink) cx0 cy0 cx1 cy1 x y)
   (outline-add s (list :curve (font-units cx0) (font-units cy0) (font-units cx1) (font-units cy1)
                        (font-units x) (font-units y))))
 
-(defmethod zpb-otf/charstring:sink-close ((s outline-sink)))
+(defmethod runes/otf/charstring:sink-close ((s outline-sink)))
 
 (defun cff-glyph-outline (loader gid)
   "The exact outline of glyph GID of LOADER's CFF font, at the loader's instance."
   (let* ((font (loader-cff-font loader))
-         (index (or (zpb-otf/charstring:cff-subfont-index font gid)
+         (index (or (runes/otf/charstring:cff-subfont-index font gid)
                     (error 'unsupported-value :description "Glyph not covered by FDSelect"
                                               :actual-value gid :expected-values '("a covered glyph"))))
          (sink (make-instance 'outline-sink)))
-    (zpb-otf/charstring:cff-draw-glyph font (loader-cff-subfont loader index) gid sink
+    (runes/otf/charstring:cff-draw-glyph font (loader-cff-subfont loader index) gid sink
                                        (loader-coords loader))
     (map 'vector #'copy-seq (reverse (outline-contours sink)))))
 

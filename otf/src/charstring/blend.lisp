@@ -11,7 +11,7 @@
 ;;; ItemVariationData are computed when it is selected. The values are the
 ;;; same.
 
-(in-package #:zpb-otf/charstring)
+(in-package #:runes/otf/charstring)
 
 (defun f2dot14-from-real (x)
   "Raw 2.14 bits of the normalized coordinate X, clamped to [-2, 2)."
@@ -31,9 +31,9 @@
   (let ((scalar #x10000))
     (dotimes (i axis-count scalar)
       (let* ((pos (+ region-pos (* i 6)))
-             (start2 (zpb-otf:font-data-read-i16 font-data pos))
-             (peak2 (zpb-otf:font-data-read-i16 font-data (+ pos 2)))
-             (end2 (zpb-otf:font-data-read-i16 font-data (+ pos 4)))
+             (start2 (runes/otf:font-data-read-i16 font-data pos))
+             (peak2 (runes/otf:font-data-read-i16 font-data (+ pos 2)))
+             (end2 (runes/otf:font-data-read-i16 font-data (+ pos 4)))
              (coord2 (if (< i (length coords)) (aref coords i) 0)))
         ;; An axis with no peak does not restrict the region, and a
         ;; coordinate at the peak contributes a factor of one.
@@ -53,7 +53,7 @@
 
 (defclass item-variation-blend-state ()
   ((store :initarg :store :reader blend-store
-          :documentation "A ZPB-OTF:ITEM-VARIATION-STORE.")
+          :documentation "A RUNES/OTF:ITEM-VARIATION-STORE.")
    (coords :initarg :coords :reader blend-coords
            :documentation "Normalized coordinates as raw 2.14 values.")
    ;; Set only by BLEND-SET-STORE-INDEX, through the internal writers.
@@ -63,7 +63,7 @@
 the font's variation space."))
 
 (defun make-blend-state (store coords store-index)
-  "Blend state for the ZPB-OTF:ITEM-VARIATION-STORE STORE at COORDS, a
+  "Blend state for the RUNES/OTF:ITEM-VARIATION-STORE STORE at COORDS, a
 sequence of normalized axis coordinates (reals in [-1, 1], one per axis in
 'fvar' order). STORE-INDEX is the initial vsindex: for a charstring, the
 vsindex of its subfont's Private DICT, or 0 if that has none."
@@ -79,53 +79,53 @@ vsindex of its subfont's Private DICT, or 0 if that has none."
 (defmethod blend-set-store-index ((b item-variation-blend-state) index)
   (unless (eql index (blend-store-index b))
     (let* ((store (blend-store b))
-           (data (when (< -1 index (zpb-otf:item-variation-store-item-variation-data-count store))
-                   (zpb-otf:item-variation-store-item-variation-data-offsets-ref store index)))
-           (regions (zpb-otf:item-variation-store-variation-region-list-offset store)))
+           (data (when (< -1 index (runes/otf:item-variation-store-item-variation-data-count store))
+                   (runes/otf:item-variation-store-item-variation-data-offsets-ref store index)))
+           (regions (runes/otf:item-variation-store-variation-region-list-offset store)))
       (unless (and data regions)
         (fail 'charstring-malformed (format nil "no item variation data ~D" index)))
-      (let* ((fd (zpb-otf::table-ref-font-data regions))
-             (axis-count (zpb-otf:variation-region-list-axis-count regions))
-             (region-count (zpb-otf:variation-region-list-region-count regions))
-             (first-region (zpb-otf:variation-region-list-variation-regions-start regions))
+      (let* ((fd (runes/otf::table-ref-font-data regions))
+             (axis-count (runes/otf:variation-region-list-axis-count regions))
+             (region-count (runes/otf:variation-region-list-region-count regions))
+             (first-region (runes/otf:variation-region-list-variation-regions-start regions))
              (coords (blend-coords b)))
         (%set-scalars
          (map 'vector
               (lambda (i)
-                (let ((region-index (zpb-otf:item-variation-data-region-indexes-ref data i)))
+                (let ((region-index (runes/otf:item-variation-data-region-indexes-ref data i)))
                   (unless (< region-index region-count)
                     (fail 'charstring-malformed
                           (format nil "region ~D out of range" region-index)))
                   (region-scalar fd (+ first-region (* region-index axis-count 6))
                                  axis-count coords)))
-              (alexandria:iota (zpb-otf:item-variation-data-region-index-count data)))
+              (alexandria:iota (runes/otf:item-variation-data-region-index-count data)))
          b)
         (%set-store-index index b))))
   b)
 
 (defun item-variation-delta (store outer inner coords)
-  "Delta of item (OUTER, INNER) of the ZPB-OTF:ITEM-VARIATION-STORE STORE at
+  "Delta of item (OUTER, INNER) of the RUNES/OTF:ITEM-VARIATION-STORE STORE at
 COORDS (normalized reals, one per axis), in 16.16 units without rounding,
 like Fontations' ItemVariationStore::compute_delta. 0 for an item the store
 does not have."
   (let ((coords (map 'vector #'f2dot14-from-real coords)))
     (if (or (zerop (length coords))
             (and (= outer #xFFFF) (= inner #xFFFF))
-            (>= outer (zpb-otf:item-variation-store-item-variation-data-count store)))
+            (>= outer (runes/otf:item-variation-store-item-variation-data-count store)))
         0
-        (let* ((data (zpb-otf:item-variation-store-item-variation-data-offsets-ref store outer))
-               (regions (zpb-otf:item-variation-store-variation-region-list-offset store)))
+        (let* ((data (runes/otf:item-variation-store-item-variation-data-offsets-ref store outer))
+               (regions (runes/otf:item-variation-store-variation-region-list-offset store)))
           (if (or (null data) (null regions)
-                  (>= inner (zpb-otf:item-variation-data-item-count data)))
+                  (>= inner (runes/otf:item-variation-data-item-count data)))
               0
-              (let ((fd (zpb-otf::table-ref-font-data regions))
-                    (axis-count (zpb-otf:variation-region-list-axis-count regions))
-                    (region-count (zpb-otf:variation-region-list-region-count regions))
-                    (first-region (zpb-otf:variation-region-list-variation-regions-start regions))
+              (let ((fd (runes/otf::table-ref-font-data regions))
+                    (axis-count (runes/otf:variation-region-list-axis-count regions))
+                    (region-count (runes/otf:variation-region-list-region-count regions))
+                    (first-region (runes/otf:variation-region-list-variation-regions-start regions))
                     (sum 0))
-                (dotimes (i (zpb-otf:item-variation-data-region-index-count data) sum)
-                  (let ((delta (zpb-otf:item-variation-data-delta-set-ref data inner i))
-                        (region-index (zpb-otf:item-variation-data-region-indexes-ref data i)))
+                (dotimes (i (runes/otf:item-variation-data-region-index-count data) sum)
+                  (let ((delta (runes/otf:item-variation-data-delta-set-ref data inner i))
+                        (region-index (runes/otf:item-variation-data-region-indexes-ref data i)))
                     (unless (< region-index region-count)
                       (fail 'charstring-malformed (format nil "region ~D out of range" region-index)))
                     ;; A zero delta contributes nothing at any location.

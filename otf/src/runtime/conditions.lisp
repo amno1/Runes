@@ -2,7 +2,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (define-condition font-error (error)
   ((message :initarg :message :reader font-error-message :initform "Font error"))

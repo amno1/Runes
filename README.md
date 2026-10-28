@@ -7,6 +7,9 @@ Pure Common Lisp TrueType and OpenType font engine, metrics, discovery, and rast
 - **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`): Backend-neutral font discovery, metrics, layout, and antialiased glyph rasterization. Completely independent of X11/XCB, used by Wayland (Wayflan), Vulkan (Antron), and CPU renderers.
 - **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`): XCB RENDER drawing backend.
 - Backward compatibility: `cl-truetype.asd` and `clxcb-truetype.asd` are provided as aliases.
+- **`runes/otf`** (package `RUNES/OTF`, nickname `OTF`, in `otf/`): the OpenType loader, formerly zpb-otf. Bounds-checked readers for ~50 OpenType tables, CFF/CFF2 charstrings (`runes/otf/charstring`), variable fonts, WOFF and WOFF2. MIT licensed; see `otf/README.md`.
+- **`zpb-ttf`** (`zpb-ttf.asd`, sources in `otf/src/`): the zpb-ttf API on top of `runes/otf`, kept so existing zpb-ttf programs work unchanged. BSD 2-Clause.
+- **`decompress`** (in `decompress/`): Brotli, zlib and raw deflate decoders with no dependencies, usable on their own. MIT licensed; see `decompress/README.md`.
 
 ## Overview
 

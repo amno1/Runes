@@ -1,11 +1,13 @@
-# Makefile for zpb-otf and zpb-ttf
+# Makefile for runes/otf and zpb-ttf
 # OpenType & TrueType font parsing and metric extraction library for Common Lisp
 
 SBCL ?= sbcl
-SBCL_FLAGS ?= --noinform --eval '(ignore-errors (load "~/quicklisp/setup.lisp"))' --eval '(push (pathname "$(CURDIR)/") asdf:*central-registry*)'
+# The .asd files are at the root of the Runes repository, one level up.
+ROOT := $(abspath $(CURDIR)/..)
+SBCL_FLAGS ?= --noinform --eval '(ignore-errors (load "~/quicklisp/setup.lisp"))' --eval '(push (pathname "$(ROOT)/") asdf:*central-registry*)' --eval '(push (pathname "$(ROOT)/decompress/") asdf:*central-registry*)'
 
 QL_LOCAL_PROJECTS ?= $(HOME)/quicklisp/local-projects
-LINK_NAME ?= zpb-otf
+LINK_NAME ?= runes
 
 .PHONY: all codegen generate compile build install test tests test-decompress bench benchmark benchmarks clean help
 
@@ -14,8 +16,8 @@ all: compile
 help:
 	@echo "Available targets:"
 	@echo "  make codegen       - Run code generator on schemas/ to produce src/tables/"
-	@echo "  make compile       - Compile :zpb-otf and :zpb-ttf systems"
-	@echo "  make install       - Install symlink into ~/quicklisp/local-projects/"
+	@echo "  make compile       - Compile :runes/otf and :zpb-ttf systems"
+	@echo "  make install       - Link the Runes repository into ~/quicklisp/local-projects/"
 	@echo "  make test          - Run all test suites (contour + comprehensive table readers)"
 	@echo "  make test-decompress - Run the decompress tests (needs libbrotli and libz)"
 	@echo "  make bench         - Run performance benchmarks"
@@ -25,23 +27,23 @@ help:
 codegen generate:
 	@echo "==> Running OpenType table code generator..."
 	$(SBCL) $(SBCL_FLAGS) \
-		--eval '(asdf:load-system :zpb-otf/codegen :force t)' \
-		--eval '(zpb-otf/codegen:generate-all-tables #p"$(CURDIR)/schemas/" #p"$(CURDIR)/src/tables/")' \
+		--eval '(asdf:load-system :runes/otf/codegen :force t)' \
+		--eval '(runes/otf/codegen:generate-all-tables #p"$(CURDIR)/schemas/" #p"$(CURDIR)/src/tables/")' \
 		--eval '(sb-ext:exit :code 0)'
 
-## Compile library systems (:zpb-otf and :zpb-ttf)
+## Compile library systems (:runes/otf and :zpb-ttf)
 compile build:
-	@echo "==> Compiling :zpb-otf and :zpb-ttf..."
+	@echo "==> Compiling :runes/otf and :zpb-ttf..."
 	$(SBCL) $(SBCL_FLAGS) \
-		--eval '(asdf:compile-system :zpb-otf :force t)' \
+		--eval '(asdf:compile-system :runes/otf :force t)' \
 		--eval '(asdf:compile-system :zpb-ttf :force t)' \
 		--eval '(sb-ext:exit :code 0)'
 
-## Install symlink to this repository in Quicklisp local-projects
+## Link the Runes repository into Quicklisp local-projects
 install:
 	@echo "==> Installing symlink into $(QL_LOCAL_PROJECTS)/$(LINK_NAME)..."
 	mkdir -p $(QL_LOCAL_PROJECTS)
-	ln -sfn $(CURDIR) $(QL_LOCAL_PROJECTS)/$(LINK_NAME)
+	ln -sfn $(ROOT) $(QL_LOCAL_PROJECTS)/$(LINK_NAME)
 	@echo "==> Registering local projects with Quicklisp..."
 	$(SBCL) $(SBCL_FLAGS) \
 		--eval '(ql:register-local-projects)' \
@@ -59,7 +61,6 @@ test tests:
 test-decompress:
 	@echo "==> Running decompress test suite..."
 	$(SBCL) $(SBCL_FLAGS) \
-		--eval '(asdf:load-asd #p"$(CURDIR)/src/decompress/decompress.asd")' \
 		--eval '(asdf:test-system :decompress)' \
 		--eval '(sb-ext:exit :code 0)'
 

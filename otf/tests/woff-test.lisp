@@ -12,12 +12,12 @@
 ;;; signal a FONT-ERROR. Loaded after charstring-test.lisp, whose check
 ;;; macros it uses.
 
-(defpackage #:zpb-ttf/woff-test
+(defpackage #:runes/otf/woff-test
   (:use #:cl)
-  (:import-from #:zpb-otf/charstring-test #:check #:check-error)
+  (:import-from #:runes/otf/charstring-test #:check #:check-error)
   (:export #:run-woff-tests))
 
-(in-package #:zpb-ttf/woff-test)
+(in-package #:runes/otf/woff-test)
 
 (defvar *test-fonts-dir*
   (merge-pathnames "fonts/" (make-pathname :directory (pathname-directory *load-truename*))))
@@ -33,8 +33,8 @@
 
 (defun octets (fd)
   "The octets of FONT-DATA FD."
-  (let ((start (zpb-otf::font-data-offset fd)))
-    (subseq (zpb-otf::font-data-bytes fd) start (+ start (zpb-otf:font-data-length fd)))))
+  (let ((start (runes/otf::font-data-offset fd)))
+    (subseq (runes/otf::font-data-bytes fd) start (+ start (runes/otf:font-data-length fd)))))
 
 (defun u32 (v i) (logior (ash (aref v i) 24) (ash (aref v (+ i 1)) 16) (ash (aref v (+ i 2)) 8) (aref v (+ i 3))))
 
@@ -104,27 +104,27 @@ metrics when DECODED (a FONT-DATA) is opened."
       (let ((orig (slurp (font-path src))))
         (let ((woff1 (woff-path (concatenate 'string base ".woff"))))
           (check (format nil "~A.woff: tables match the original" base)
-                 (tables-match-p orig (octets (zpb-otf:decode-woff1 woff1 :verify-checksums t)) '()))
+                 (tables-match-p orig (octets (runes/otf:decode-woff1 woff1 :verify-checksums t)) '()))
           (when glyf
             (check (format nil "~A.woff: glyphs match the original" base)
-                   (glyphs-match-p (font-path src) (zpb-otf:decode-woff1 woff1)))))
+                   (glyphs-match-p (font-path src) (runes/otf:decode-woff1 woff1)))))
         (let ((woff2 (woff-path (concatenate 'string base ".woff2"))))
           (check (format nil "~A.woff2: untransformed tables match the original" base)
-                 (tables-match-p orig (octets (zpb-otf:decode-woff2 woff2))
+                 (tables-match-p orig (octets (runes/otf:decode-woff2 woff2))
                                  '("glyf" "loca" "hmtx" "head") :woff2 t))
           (when glyf
             (check (format nil "~A.woff2: glyphs match the original" base)
-                   (glyphs-match-p (font-path src) (zpb-otf:decode-woff2 woff2))))))))
+                   (glyphs-match-p (font-path src) (runes/otf:decode-woff2 woff2))))))))
   ;; a collection
   (let ((orig (slurp (font-path "TTC.ttc")))
-        (decoded (octets (zpb-otf:decode-woff2 (woff-path "TTC.woff2")))))
+        (decoded (octets (runes/otf:decode-woff2 (woff-path "TTC.woff2")))))
     (check "TTC.woff2: a collection of as many fonts"
            (= (font-count orig) (font-count decoded)))
     (dotimes (k (font-count orig))
       (check (format nil "TTC.woff2: font ~D's tables are the original's" k)
              (tables-match-p orig decoded '("glyf" "loca" "hmtx" "head") :font k :woff2 t))
       (check (format nil "TTC.woff2: font ~D's glyphs match" k)
-             (glyphs-match-p (font-path "TTC.ttc") (zpb-otf:decode-woff2 (woff-path "TTC.woff2"))
+             (glyphs-match-p (font-path "TTC.ttc") (runes/otf:decode-woff2 (woff-path "TTC.woff2"))
                              :collection-index k)))))
 
 (defun check-loader ()
@@ -148,24 +148,24 @@ metrics when DECODED (a FONT-DATA) is opened."
 (defun check-extras ()
   (let ((woff (woff-path "base.woff")))
     (check "base.woff: metadata block"
-           (search "zpb-ttf.test.base" (map 'string #'code-char (zpb-otf:decode-woff1-metadata woff))))
+           (search "zpb-ttf.test.base" (map 'string #'code-char (runes/otf:decode-woff1-metadata woff))))
     (check "base.woff: private data block"
            (string= "zpb-ttf private data"
-                    (map 'string #'code-char (octets (zpb-otf:woff1-private-data woff)))))
+                    (map 'string #'code-char (octets (runes/otf:woff1-private-data woff)))))
     (check "glyf_components.woff: no metadata or private data"
-           (and (null (zpb-otf:decode-woff1-metadata (woff-path "glyf_components.woff")))
-                (null (zpb-otf:woff1-private-data (woff-path "glyf_components.woff")))))))
+           (and (null (runes/otf:decode-woff1-metadata (woff-path "glyf_components.woff")))
+                (null (runes/otf:woff1-private-data (woff-path "glyf_components.woff")))))))
 
 (defun check-broken ()
   ;; truncated anywhere, or with a byte flipped in the header or directory:
   ;; a FONT-ERROR, or (for a flip the format cannot detect) a decoded font
   (dolist (name '("base.woff" "base.woff2" "TTC.woff2"))
     (let* ((v (slurp (woff-path name)))
-           (decode (if (search "woff2" name) #'zpb-otf:decode-woff2 #'zpb-otf:decode-woff1))
+           (decode (if (search "woff2" name) #'runes/otf:decode-woff2 #'runes/otf:decode-woff1))
            (bad '()))
       (loop for len in (list 0 3 20 44 47 60 (floor (length v) 2) (1- (length v)))
             do (handler-case (progn (funcall decode (subseq v 0 len)) (push len bad))
-                 (zpb-otf:font-error ())
+                 (runes/otf:font-error ())
                  (error (e) (push (list len e) bad))))
       (check (format nil "~A: every truncation signals FONT-ERROR" name) (null bad))
       (setf bad '())
@@ -173,14 +173,14 @@ metrics when DECODED (a FONT-DATA) is opened."
             do (let ((w (copy-seq v)))
                  (setf (aref w i) (logxor (aref w i) #x5A))
                  (handler-case (funcall decode w)
-                   (zpb-otf:font-error ())
+                   (runes/otf:font-error ())
                    (error (e) (push (list i e) bad)))))
       (check (format nil "~A: header and directory flips decode or signal FONT-ERROR" name)
              (or (null bad) (progn (format t "    ~S~%" (first bad)) nil))))))
 
 (defun run-woff-tests ()
-  (let ((zpb-otf/charstring-test::*failures* 0)
-        (zpb-otf/charstring-test::*count* 0))
+  (let ((runes/otf/charstring-test::*failures* 0)
+        (runes/otf/charstring-test::*count* 0))
     (format t "========================================================~%")
     (format t "WOFF 1.0 and WOFF2 Against the Original Fonts~%")
     (format t "========================================================~%")
@@ -189,7 +189,7 @@ metrics when DECODED (a FONT-DATA) is opened."
     (check-extras)
     (check-broken)
     (format t "~%Results: ~D tests run, ~D failures.~%"
-            zpb-otf/charstring-test::*count* zpb-otf/charstring-test::*failures*)
-    (unless (zerop zpb-otf/charstring-test::*failures*)
-      (error "WOFF test suite failed with ~D failure(s)" zpb-otf/charstring-test::*failures*))
+            runes/otf/charstring-test::*count* runes/otf/charstring-test::*failures*)
+    (unless (zerop runes/otf/charstring-test::*failures*)
+      (error "WOFF test suite failed with ~D failure(s)" runes/otf/charstring-test::*failures*))
     t))

@@ -2,7 +2,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller and contributors
 ;;;; SPDX-License-Identifier: MIT
 
-(in-package #:zpb-otf)
+(in-package #:runes/otf)
 
 (defstruct (table-ref (:constructor %make-table-ref (%table-font-data %table-offset %table-length)))
   "Base struct for all zero-copy OpenType table and subtable views."
