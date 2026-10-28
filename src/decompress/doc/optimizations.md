@@ -48,13 +48,16 @@ Before writing code we checked what 512-bit vectors could do for Brotli.
 sb-simd-512 offers AVX512F/BW/DQ/CD/VL/VBMI/VBMI2/IFMA/VNNI/BITALG/VPOPCNTDQ/FP16
 and AVX10; the CPU has F/BW/CD/DQ/IFMA/VBMI/VL (no VBMI2).
 
-| Part                                      | Vectorisable?                                  | Conclusion                   |
-|-------------------------------------------|------------------------------------------------|------------------------------|
-| Bit reader                                | no, serial                                     | needs a scalar rewrite       |
-| Huffman decoding                          | no, each code's length depends on the previous | needs lookup tables          |
-| Literal context                           | no, depends on the byte just decoded           | —                            |
-| Back-reference copies                     | yes                                            | the only real SIMD candidate |
-| Table building, move-to-front, transforms | partly                                         | too rare to matter           |
+| Part                              | Vectorisable? | Conclusion                   |
+|-----------------------------------|---------------|------------------------------|
+| Bit reader                        | no, serial    | needs a scalar rewrite       |
+| Huffman decoding                  | no¹           | needs lookup tables          |
+| Literal context                   | no²           | —                            |
+| Back-reference copies             | yes           | the only real SIMD candidate |
+| Tables, move-to-front, transforms | partly        | too rare to matter           |
+
+1. Each code's length depends on the previous one.
+2. It depends on the byte just decoded.
 
 Conclusion: the decoder was 20–30× slower than C for scalar reasons; SIMD could
 only help copies, and only after a scalar rewrite.
@@ -122,17 +125,26 @@ disassembly in the same process) showed the decode loop at ~75–83% of the time
 no calls or boxing in it, but ~15 values competing for ~12 free registers and
 tagged-fixnum shifts (`SAR`/`SHL` by 1) around byte-array indexing.
 
-| Change | Result | Kept? |
-|---|---|---|
-| Literal run as its own small function | **−5%** (a call and 6 returned values per command) | no |
-| 62-bit `val` so it is always a fixnum | neutral, later found harmful (keeps `val` tagged) | reversed later |
-| Fewer loop invariants (one context table per mode, one "context → table" vector per block type) | neutral | yes, simpler |
-| Copies ≤ 16 bytes: both loads before either store; `p1`/`p2` from the copy source | **+2 to +3%** (store-forwarding stalls) | yes |
-| `word` types on every index | **−12%** | no |
-| `word` types on `p1`/`p2` only | identical machine code | no |
-| SAP byte access in the literal loop + full 64-bit `val` + `bits`/`pos` as words with modular (`ldb`) arithmetic | **+4 to +5%** (156 → 111 tag shifts) | yes |
-| `fp` as a word | −4% | no |
-| `(the (integer 0 61) bits)` instead of `ldb` | re-tags `bits` (157 shifts) | no |
+| Change                                      | Result            | Kept?          |
+|---------------------------------------------|-------------------|----------------|
+| Literal run as its own function¹            | **−5%**           | no             |
+| 62-bit `val`, always a fixnum               | neutral²          | reversed later |
+| Fewer loop invariants³                      | neutral           | yes, simpler   |
+| Short copies: loads before stores⁴          | **+2 to +3%**     | yes            |
+| `word` types on every index                 | **−12%**          | no             |
+| `word` types on `p1`/`p2` only              | same machine code | no             |
+| SAP literals, raw `val`, word `bits`/`pos`⁵ | **+4 to +5%**     | yes            |
+| `fp` as a word                              | −4%               | no             |
+| `(the (integer 0 61) bits)`                 | re-tags `bits`⁶   | no             |
+
+1. A call and 6 returned values per command.
+2. Later found harmful: it keeps `val` tagged.
+3. One context table per mode, one "context → table" vector per block type.
+4. Copies ≤ 16 bytes do both loads before either store and take `p1`/`p2` from
+   the copy source: no store-forwarding stalls.
+5. SAP byte access in the literal loop, a full 64-bit `val`, and `bits`/`pos`
+   as words with modular (`ldb`) arithmetic: 156 → 111 tag shifts.
+6. Instead of `ldb`: 157 tag shifts.
 
 Lesson: in SBCL a type declaration states a range, not a representation. A
 value is kept raw only when its *derived* type is genuinely word-sized and every
@@ -155,11 +167,14 @@ The decoder allocated 2.3–2.4× the output size: the output buffer started at
 4 KB and doubled (copying each time), and the result was copied again with
 `subseq`. GC was only 0–2.6% of the time; the cost was the copying.
 
-| Change                                                      | src8m q9 / q11    | src1m q9 / q5         | Kept? |
-|-------------------------------------------------------------|-------------------|-----------------------|-------|
-| Before                                                      | 716–736 / 718–724 | 711–725 / 667–681     |       |
-| `%shrink-vector` instead of `subseq`, first buffer 4× input | 745–749 / 743–750 | 709–716 / 669–671     | yes   |
-| `:size-hint` (output allocated once at the exact size)      | **773 / 774–777** | **741–750 / 694–697** | yes   |
+| Change                             | src8m q9 / q11    | src1m q9 / q5         | Kept? |
+|------------------------------------|-------------------|-----------------------|-------|
+| Before                             | 716–736 / 718–724 | 711–725 / 667–681     |       |
+| `%shrink-vector`, 4× first buffer¹ | 745–749 / 743–750 | 709–716 / 669–671     | yes   |
+| `:size-hint`²                      | **773 / 774–777** | **741–750 / 694–697** | yes   |
+
+1. `%shrink-vector` instead of `subseq`, and a first buffer of 4× the input.
+2. The output allocated once, at the exact size.
 
 SBCL arenas were considered: available in this build, but they could at most
 save the remaining ~1.5% GC time, and the output cannot live in an arena.
@@ -177,49 +192,78 @@ Large fonts were near C; the small one was 0.64× C. Profiling it: ~40% of the
 time was setup — reading prefix codes and building 94 Huffman tables (31 of 256
 symbols, 5 of 704, 45 tiny code-length tables).
 
-| Change | Red Hat | Kept? |
-|---|---|---|
-| Inline the header bit-reader functions, stack-allocate scratch arrays, skip the 256-slot subtable passes when no code exceeds 8 bits, 5-bit (32-entry) tables for code-length codes | 205 → **249** (+21%) | yes |
-| `(safety 0)` in the table builder alone | none | yes (harmless) |
-| Skip zero lengths in the counting loop | neutral | no |
-| A pool holding all of a meta-block's tables, addressed by offset | 236–241 (slower: an extra add on every lookup) | no |
-| Build tables from the used symbols only (libbrotli's method: collect symbol/length pairs while reading, counting sort) | 249 → **283** (+14%) | yes |
+| Change                             | Red Hat              | Kept?          |
+|------------------------------------|----------------------|----------------|
+| Leaner header reading¹             | 205 → **249** (+21%) | yes            |
+| `(safety 0)` in the table builder  | none                 | yes (harmless) |
+| Skip zero lengths when counting    | neutral              | no             |
+| One pool for all tables²           | 236–241              | no             |
+| Tables from the used symbols only³ | 249 → **283** (+14%) | yes            |
+
+1. Inline the header bit-reader functions, stack-allocate scratch arrays, skip
+   the 256-slot subtable passes when no code exceeds 8 bits, and 5-bit
+   (32-entry) tables for code-length codes.
+2. All of a meta-block's tables in one pool, addressed by offset: slower, an
+   extra add on every lookup.
+3. libbrotli's method: collect symbol/length pairs while reading, then a
+   counting sort.
 
 ## 10. Removing run-time tests of fixed values
 
-| Change | Result | Kept? |
-|---|---|---|
-| AVX-512 chosen at compile time instead of a run-time `simd` flag (one fewer live variable) | **+2 to +5%** everywhere (Red Hat 288) | yes |
-| Literal run without the end-of-input test when `pos + 2k ≤ limit` | fonts ±1%, large files −2 to −4% | no |
-| `(min window fp)` computed once per command | −1 to −3% (one more live value) | no |
-| One test of (distance, length) per copy instead of five | +0 to +3% fonts, +1 to +8% source | yes |
-| Loop variant for a window covering all output (wc4-style, generated by a macro) | **+1 to +3%** on every file | yes |
-| Stage macros for the command loop | identical machine code (readability) | yes |
-| Variants per `npostfix` (0–3) | +1 to +3% source, **−3 to −5% Red Hat** | no |
-| Variants for `ndirect = 0` or one block type | never applies to the fonts (they use npostfix 1–2, ndirect 12–16, many block types) | not built |
+| Change                                     | Result                              | Kept?     |
+|--------------------------------------------|-------------------------------------|-----------|
+| AVX-512 chosen at compile time¹            | **+2 to +5%** (Red Hat 288)         | yes       |
+| No end-of-input test in literal runs²      | fonts ±1%, large −2 to −4%          | no        |
+| `(min window fp)` once per command         | −1 to −3%³                          | no        |
+| One (distance, length) test per copy⁴      | fonts +0–3%, source +1–8%           | yes       |
+| Loop variant for a full window⁵            | **+1 to +3%** everywhere            | yes       |
+| Stage macros for the command loop          | same code (readability)             | yes       |
+| Variants per `npostfix` (0–3)              | source +1–3%, **Red Hat −3 to −5%** | no        |
+| Variants for `ndirect = 0`, one block type | never applies⁶                      | not built |
+
+1. Instead of a run-time `simd` flag: one fewer live variable.
+2. When `pos + 2k ≤ limit`.
+3. One more live value.
+4. Instead of five.
+5. A window covering all output (wc4-style, generated by a macro).
+6. The fonts use npostfix 1–2, ndirect 12–16 and many block types.
 
 ## 11. Shortening the per-literal chain
 
 Each literal costs a dependency chain: bit buffer → table index → table load →
 shift → symbol → context lookup → next table. Ideas aimed at that chain:
 
-| Change | Result | Kept? |
-|---|---|---|
-| `p1`/`p2` packed into one register with a combined context table (one load per literal) | **−9%** on fonts | no |
-| The same with the packed value forced untagged (bit 63 kept set) | still −9%: the chain got longer (6 ALU steps instead of an `OR`) | no |
-| Refill byte count `(* 8 k)` → shift (it compiled to `IMUL`) | first neutral; with the next item +0.5 to +1.5% | yes |
-| Context parts precomputed into the decode-table entries, two loop variants | −4 to −6% (the carried value was spilled, extraction tagged) | no |
-| The literal run as a hand-written x86-64 VOP, all values in chosen registers | −1 to −3% fonts, **−10%** large files (saving/restoring every register around each short run) | no |
-| Subtable passes over only the needed root slots | Red Hat **+1.3 to +1.7%** | yes |
+| Change                                 | Result                          | Kept? |
+|----------------------------------------|---------------------------------|-------|
+| `p1`/`p2` packed in one register¹      | **−9%** on fonts                | no    |
+| The same, forced untagged²             | still −9%                       | no    |
+| Refill byte count as a shift³          | +0.5 to +1.5%                   | yes   |
+| Context parts in the table entries⁴    | −4 to −6%                       | no    |
+| Literal run as a hand-written VOP⁵     | fonts −1 to −3%, large **−10%** | no    |
+| Subtable passes over needed slots only | Red Hat **+1.3 to +1.7%**       | yes   |
+
+1. With a combined context table: one load per literal.
+2. Bit 63 kept set. The chain got longer: 6 ALU steps instead of an `OR`.
+3. `(* 8 k)` compiled to `IMUL`. Neutral at first; +0.5 to +1.5% together with
+   the next item.
+4. Context parts precomputed into the decode-table entries, two loop variants:
+   the carried value was spilled and its extraction tagged.
+5. An x86-64 VOP with all values in chosen registers; it saved and restored
+   every register around each short run.
 
 ## 12. Smaller cuts
 
-| Change                                                                                    | Result                                                          | Kept?            |
-|-------------------------------------------------------------------------------------------|-----------------------------------------------------------------|------------------|
-| Read the input in place (copy only its last 8 bytes, zero-padded)                         | small font neutral, large fonts +0.5 to +2%                     | yes              |
-| Globals (`define-load-time-global`) instead of specials for all tables and the dictionary | +0.5 to +2% on large fonts                                      | yes              |
-| Lexically bind the remaining specials read in loops                                       | noise; binding in the decode loop cost 1% (one more live value) | setup parts kept |
-| Inline all small functions                                                                | noise (setup only)                                              | yes              |
+| Change                                 | Result                             | Kept?            |
+|----------------------------------------|------------------------------------|------------------|
+| Read the input in place¹               | small font ±0, large fonts +0.5–2% | yes              |
+| Globals instead of specials²           | large fonts +0.5–2%                | yes              |
+| Bind the remaining specials lexically³ | noise; −1% in the decode loop      | setup parts kept |
+| Inline all small functions             | noise (setup only)                 | yes              |
+
+1. Copy only its last 8 bytes, zero-padded.
+2. `define-load-time-global` for all tables and the dictionary.
+3. Specials read in loops. Binding one in the decode loop cost 1% (one more
+   live value).
 
 ## 13. Measurement corrections
 
@@ -302,16 +346,27 @@ Test data: two real WOFF 1.0 fonts (every compressed table decoded, each with
 its origLength as size hint), the Meslo TTF and the 8 MB SBCL source as zlib
 streams.
 
-| Change                                                                                                                        | Red Hat WOFF  | Source Code Pro WOFF | Meslo .z    | src8m z6 / z9         | Kept?             |
-|-------------------------------------------------------------------------------------------------------------------------------|---------------|----------------------|-------------|-----------------------|-------------------|
-| First version                                                                                                                 | 341–343       | 222–224              | 265–266     | 482–484 / 492–494     |                   |
-| Output buffer + 258 bytes (an exact size hint made the loop regrow and copy the whole buffer at the end) and AVX-512 Adler-32 | **458–464**   | **272–275**          | **332–335** | **761–767 / 795–804** | yes               |
-| Refill only when needed (15 bits per symbol, 33 for a match) instead of before every symbol                                   | −2 to −4%     | +1.5%                | +3%         | +6 to +8%             | see below         |
-| Short-distance copy period from a table instead of `(* d (ceiling 8 d))` (compiled to `IDIV`)                                 | neutral       | neutral              | neutral     | neutral               | yes (no division) |
-| Reader: raw-word `val` slot and the classic 64-bit refill (`bits \|= 56`), so `val` is no longer tagged                       | +6 to +8%     | +6%                  | +9%         | +8 to +9%             | yes               |
-| Reader: modular `bits` subtraction                                                                                            | neutral       | +1.5%                | neutral     | neutral               | yes               |
-| Refill per symbol (re-tested with the new reader) vs only when needed                                                         | **+6 to +7%** | neutral              | −4%         | −7 to −8%             | yes, for fonts    |
-| Refill below 48 bits                                                                                                          | −9%           | −5%                  | −4%         | −5%                   | no                |
+| Change                           | Red Hat       | Source Code Pro | Meslo       | src8m z6 / z9         | Kept?     |
+|----------------------------------|---------------|-----------------|-------------|-----------------------|-----------|
+| First version                    | 341–343       | 222–224         | 265–266     | 482–484 / 492–494     |           |
+| Bigger buffer, AVX-512 Adler-32¹ | **458–464**   | **272–275**     | **332–335** | **761–767 / 795–804** | yes       |
+| Refill only when needed²         | −2 to −4%     | +1.5%           | +3%         | +6 to +8%             | see below |
+| Copy period from a table³        | neutral       | neutral         | neutral     | neutral               | yes       |
+| Raw-word `val`, 64-bit refill⁴   | +6 to +8%     | +6%             | +9%         | +8 to +9%             | yes       |
+| Modular `bits` subtraction       | neutral       | +1.5%           | neutral     | neutral               | yes       |
+| Refill per symbol, re-tested⁵    | **+6 to +7%** | neutral         | −4%         | −7 to −8%             | fonts     |
+| Refill below 48 bits             | −9%           | −5%             | −4%         | −5%                   | no        |
+
+1. Output buffer + 258 bytes (an exact size hint made the loop regrow and copy
+   the whole buffer at the end), and AVX-512 Adler-32.
+2. 15 bits per symbol, 33 for a match, instead of a refill before every
+   symbol.
+3. The short-distance copy period from a table instead of `(* d (ceiling 8
+   d))`, which compiled to `IDIV`. Kept: no division.
+4. A raw-word `val` slot and the classic 64-bit refill (`bits |= 56`), so
+   `val` is no longer tagged.
+5. Refill per symbol against only when needed, re-tested with the new reader.
+   Kept for the fonts.
 
 Adler-32 was 25–28% of the time as a byte loop. With AVX-512: per 64-byte
 block, `vpsadbw` adds the bytes, `vpmaddubsw` with weights 64…1 then
@@ -344,27 +399,46 @@ zlib-ng's source (`inffast_tpl.h`, `chunkset_avx512.c`) was the reference.
 Statistics from instrumenting the block loop on the test data decided which of
 its ideas mattered:
 
-| Stream               | Literals | Symbols needing a second lookup (8-bit root) | Match distance < 8 | Match length ≤ 16 |
-|----------------------|----------|----------------------------------------------|--------------------|-------------------|
-| Red Hat Text WOFF    | 73%      | 17.5%                                        | 6%                 | 92%               |
-| Source Code Pro WOFF | 80%      | 22.3%                                        | 17%                | 95%               |
-| Meslo .z             | 71%      | 17.0%                                        | 2%                 | 95%               |
-| src8m .z             | 31%      | 6.3%                                         | 0.4%               | 83%               |
+| Stream               | Literals | Second lookup¹ | Distance < 8² | Length ≤ 16² |
+|----------------------|----------|----------------|---------------|--------------|
+| Red Hat Text WOFF    | 73%      | 17.5%          | 6%            | 92%          |
+| Source Code Pro WOFF | 80%      | 22.3%          | 17%           | 95%          |
+| Meslo .z             | 71%      | 17.0%          | 2%            | 95%          |
+| src8m .z             | 31%      | 6.3%           | 0.4%          | 83%          |
+
+1. Symbols needing a second lookup with an 8-bit root.
+2. Share of matches.
 
 Results in order (same-session A/B runs):
 
-| Change                                                                                                                                                                   | Red Hat WOFF                      | Source Code Pro WOFF | Meslo .z            | src8m z6 / z9                   | Kept?   |
-|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|----------------------|---------------------|---------------------------------|---------|
-| Start of this round                                                                                                                                                      | 503                               | 286                  | 358                 | 823 / 856                       |         |
-| Literal/length decode tables with a 9 / **10** / 11-bit root (`build-table` and `br-sym` generalised to any root size)                                                   | 522 / **524** / 497               | 313 / **334** / 309  | 391 / **414** / 419 | ≈ +1%                           | yes, 10 |
-| Opmask: input position in a `k` register (`m8.64`)                                                                                                                       | SBCL still spilled it (see below) |                      |                     |                                 | no      |
-| No calls in the loop: error checks record the message and leave the loop (a local inline `BERR`), signalled afterwards. Stack references 98 → 69                         | +1%                               | +2%                  | ±0                  | ±0                              | yes     |
-| Opmask: `cap` and `limit` (loop invariants) in `k` registers                                                                                                             | −5%                               | −3%                  | −2%                 | −1.5%                           | no      |
-| Up to three literals per refill, unrolled (zlib-ng's fast path)                                                                                                          | **+7%**                           | +4%                  | +6%                 | +4–5%                           | yes     |
-| Decode-table entries carry a match's base and extra bits (`build-table`'s new MAP argument), so a match needs no second lookup and one range check rejects invalid codes | **+14%**                          | +6%                  | +12%                | **+18–21%**                     | yes     |
-| AVX-512 VBMI pattern copy for distances < 16 (one `vpermb`, one 64-byte store, as zlib-ng's `chunkmemset`)                                                               | −0.5%                             | +1%                  | ±0                  | −1.5% (Brotli source −2 to −4%) | no      |
-| Next root lookup issued before the refill (the refill's load overlaps the table load; the match path keeps 43 bits)                                                      | **+10%**                          | +2 to +6%            | +8%                 | +7–9%                           | yes     |
-| Distance tables with a 9 / 10-bit root                                                                                                                                   | −1% / −4%                         | −2% / −7%            | ±0 / −2%            | ±0                              | no      |
+| Change                         | Red Hat        | Source Code Pro | Meslo    | src8m z6 / z9 | Kept? |
+|--------------------------------|----------------|-----------------|----------|---------------|-------|
+| Start of this round            | 503            | 286             | 358      | 823 / 856     |       |
+| Literal root of 9 bits¹        | 522            | 313             | 391      | ≈ +1%         |       |
+| Literal root of 10 bits¹       | **524**        | **334**         | **414**  | ≈ +1%         | yes   |
+| Literal root of 11 bits¹       | 497            | 309             | 419      | ≈ +1%         |       |
+| Opmask: input position in `k`² | spilled anyway |                 |          |               | no    |
+| No calls in the loop³          | +1%            | +2%             | ±0       | ±0            | yes   |
+| Opmask: `cap`, `limit` in `k`  | −5%            | −3%             | −2%      | −1.5%         | no    |
+| Three literals per refill⁴     | **+7%**        | +4%             | +6%      | +4–5%         | yes   |
+| Match data in table entries⁵   | **+14%**       | +6%             | +12%     | **+18–21%**   | yes   |
+| VBMI pattern copy⁶             | −0.5%          | +1%             | ±0       | −1.5%⁷        | no    |
+| Root lookup before the refill⁸ | **+10%**       | +2 to +6%       | +8%      | +7–9%         | yes   |
+| Distance root of 9 / 10 bits   | −1% / −4%      | −2% / −7%       | ±0 / −2% | ±0            | no    |
+
+1. `build-table` and `br-sym` generalised to any root size.
+2. As an `m8.64`; SBCL still spilled it (see below).
+3. Error checks record the message and leave the loop (a local inline `BERR`);
+   the error is signalled afterwards. Stack references 98 → 69.
+4. Unrolled, as zlib-ng's fast path.
+5. Decode-table entries carry a match's base and extra bits (`build-table`'s
+   new MAP argument), so a match needs no second lookup and one range check
+   rejects invalid codes.
+6. AVX-512 VBMI pattern copy for distances < 16: one `vpermb` and one 64-byte
+   store, as zlib-ng's `chunkmemset`.
+7. The Brotli source files: −2 to −4%.
+8. The next root lookup issued before the refill, so the refill's load
+   overlaps the table load; the match path keeps 43 bits.
 
 From the start of the round: Red Hat WOFF 503 → **704** (+40%), Source Code
 Pro 286 → **394** (+38%), Meslo 358 → **503** (+40%), src8m 823 / 856 →
@@ -408,16 +482,19 @@ then pointer doubling with `vpermi2b` (J², J⁴ … J⁶⁴) gives the compacte
 of token offsets per block, with the next block's start carried over, as
 wordcount carries its previous byte.
 
-| Version (Noto Serif / Sans CJK)                | MB/s                                                           | vs scalar    |
-|------------------------------------------------|----------------------------------------------------------------|--------------|
-| Scalar                                         | 435–441                                                        | 1×           |
-| AVX-512, before type declarations (1)          | ~760–840                                                       | ~1.7–2.5×    |
-| AVX-512, typed                                 | 1750–1876                                                      | ~4.2×        |
-| Wordcount's `POPCNT` VOP instead of `LOGCOUNT` | same (the loop is limited by the shuffle chain)                | —            |
-| Two glyphs in flight                           | **2000–2160**                                                  | **4.6–4.9×** |
-| A separate prefix pass, 1–4 glyphs in flight   | 1530–1860 (slower: it no longer overlaps with the vector work) | —            |
+| Version (Noto Serif / Sans CJK)  | MB/s          | vs scalar    |
+|----------------------------------|---------------|--------------|
+| Scalar                           | 435–441       | 1×           |
+| AVX-512, untyped¹                | ~760–840      | ~1.7–2.5×    |
+| AVX-512, typed                   | 1750–1876     | ~4.2×        |
+| `POPCNT` VOP for `LOGCOUNT`²     | same³         | —            |
+| Two glyphs in flight             | **2000–2160** | **4.6–4.9×** |
+| Separate prefix pass, 1–4 glyphs | 1530–1860⁴    | —            |
 
-(1) a `U8.64` coercion call around every `vpermi2b`
+1. Before type declarations: a `U8.64` coercion call around every `vpermi2b`.
+2. Wordcount's `POPCNT` VOP instead of `LOGCOUNT`.
+3. The loop is limited by the shuffle chain.
+4. Slower: it no longer overlaps with the vector work.
 
 Brotli itself cannot use this method: its dependency runs through decoded
 output (the previous two bytes choose the next Huffman table) and Huffman codes
@@ -434,11 +511,20 @@ compiling): `:greedy` 381–385, `:adaptive` (default) 379–386, `:iterative`
 
 **Disassembly of `inflate-block`** (686 instructions):
 
-|                            | count     | what                                                                                                                                                                             |
-|----------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| register-to-register `MOV` | 170 (25%) | mostly `MOV RAX,X; op RAX; MOV X,RAX`: a two-address op whose result is not packed into its argument's register (e.g. `OR bits,56`, `SHR val,cl`, `SUB bits,n`)                  |
-| `SAR`/`SHL` by 1           | 55        | `fp` (R11) is a tagged fixnum: each literal store is `SAR; store; SAR; INC; LEA` to re-tag; `cap` is spilled *and* untagged at every room check; `len`/`dist`/`d` are tagged too |
-| stack references           | 78        | loop invariants live on the stack: `ltab`, `dtab`, `in`, `limit`, `cap`, the SAP base; `len` stored and reloaded                                                                 |
+|                            | Count     | What                     |
+|----------------------------|-----------|--------------------------|
+| register-to-register `MOV` | 170 (25%) | two-address round trips¹ |
+| `SAR`/`SHL` by 1           | 55        | tag conversions²         |
+| stack references           | 78        | spilled loop invariants³ |
+
+1. Mostly `MOV RAX,X; op RAX; MOV X,RAX`: a two-address op whose result is not
+   packed into its argument's register (e.g. `OR bits,56`, `SHR val,cl`, `SUB
+   bits,n`).
+2. `fp` (R11) is a tagged fixnum: each literal store is `SAR; store; SAR; INC;
+   LEA` to re-tag. `cap` is spilled *and* untagged at every room check;
+   `len`/`dist`/`d` are tagged too.
+3. On the stack: `ltab`, `dtab`, `in`, `limit`, `cap` and the SAP base; `len`
+   is stored and reloaded.
 
 **Output position as a raw address** (`op = sap-int(buf) + fp` of type `word`,
 literal stores through `int-sap`, a pointer version of the copy): tag
@@ -475,15 +561,28 @@ setup (`build-table`, `deflate-table`, `read-dynamic-tables`) 45%.
 SBCL 2.6.9 sb-simd-512 (`~/repos/sb-simd-512`), same-session A/B against the
 previous commit, two alternating rounds each; MB/s:
 
-| Change (cumulative)                                                                                                                                                                                       | Red Hat WOFF | Source Code Pro WOFF | Meslo .z | src8m z6 / z9         | Kept? |
-|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|----------------------|----------|-----------------------|-------|
-| Start (previous commit)                                                                                                                                                                                   | 624–640      | 361–375              | 485–497  | 1046–1081 / 1113–1147 |       |
-| Deflate's own table builder (`build-deflate-table`): codewords enumerated bit-reversed (libdeflate's `bsr` increment), root filled by doubling with block copies, no overlap checks (completeness is checked first) | +5–7%        | +7–9%                |          |                       | yes   |
-| Length entries' bit count includes the extra bits: one shift consumes code and extra bits, which are read from the bit buffer saved before it (libdeflate's `saved_bitbuf`)                             | **+16%**     | **+22–24%**          | +7%      | +3–5%                 | yes   |
-| The same for distances (6-bit count field, links at ≥ 32)                                                                                                                                                 | −0 to −1%    | −3 to −4%            | −3%      | −1%                   | no    |
-| Next root lookup and refill before the match copy (libdeflate's order)                                                                                                                                    | −5%          | −1%                  | −2%      | −1 to −2%             | no    |
-| `deflate-table` without its unused symbol/length arrays; code lengths decoded with the reader state in locals, one refill per code length                                                                  | +2%          | +3%                  | ±0       | ±0                    | yes   |
-| **Result**                                                                                                                                                                                                | **754–758**  | **470–475**          | 524–528  | 1108–1114 / 1161–1174 | |
+| Change (cumulative)          | Red Hat     | Source Code Pro | Meslo   | src8m z6 / z9         | Kept? |
+|------------------------------|-------------|-----------------|---------|-----------------------|-------|
+| Start (previous commit)      | 624–640     | 361–375         | 485–497 | 1046–1081 / 1113–1147 |       |
+| Deflate's own table builder¹ | +5–7%       | +7–9%           |         |                       | yes   |
+| One shift for length codes²  | **+16%**    | **+22–24%**     | +7%     | +3–5%                 | yes   |
+| One shift for distances³     | −0 to −1%   | −3 to −4%       | −3%     | −1%                   | no    |
+| Preload before the copy⁴     | −5%         | −1%             | −2%     | −1 to −2%             | no    |
+| Lighter table setup⁵         | +2%         | +3%             | ±0      | ±0                    | yes   |
+| **Result**                   | **754–758** | **470–475**     | 524–528 | 1108–1114 / 1161–1174 |       |
+
+1. `build-deflate-table`: codewords enumerated bit-reversed (libdeflate's
+   `bsr` increment), the root filled by doubling with block copies, no overlap
+   checks (completeness is checked first).
+2. A length entry's bit count includes its extra bits, so one shift consumes
+   both; the extra bits are read from the bit buffer saved before the shift
+   (libdeflate's `saved_bitbuf`).
+3. The same for distance entries, with a 6-bit count field and subtable links
+   at counts ≥ 32.
+4. The next root lookup and the refill issued before the match copy, in
+   libdeflate's order.
+5. `deflate-table` without its unused symbol and length arrays; code lengths
+   decoded with the reader state in locals, one refill per code length.
 
 +18% / +26% on the two WOFF fonts, +8% Meslo, +3–5% src8m. Against libz
 (zlib-ng) in the same session (874 / 584 / 579 / 1273 / 1332): 0.86× / 0.81× /
@@ -503,10 +602,10 @@ least 15 input bytes remain (an iteration refills at most twice, each
 advancing at most 7 bytes), and the checked copy for the end of the input.
 Same-session A/B against the commit above, two rounds each:
 
-| Variant                                            | Red Hat WOFF | Source Code Pro WOFF | Meslo .z | src8m z6 / z9     |
-|----------------------------------------------------|--------------|----------------------|----------|-------------------|
-| Test `pos + 15 > limit` per iteration              | ±0           | −3.5%                | ±0 / +1% | ±0 to +3% / +3–4% |
-| Precomputed `fast-end`, one compare per iteration  | ±0           | −3 to −6%            | +1–2%    | +2% / +2%         |
+| Variant                               | Red Hat | Source Code Pro | Meslo    | src8m z6 / z9     |
+|---------------------------------------|---------|-----------------|----------|-------------------|
+| Test `pos + 15 > limit` per iteration | ±0      | −3.5%           | ±0 / +1% | ±0 to +3% / +3–4% |
+| Precomputed `fast-end`, one compare   | ±0      | −3 to −6%       | +1–2%    | +2% / +2%         |
 
 Not kept: large streams gain 1–4%, but the font case loses, probably to
 the doubled loop code (the tests removed were well predicted, and the loop
@@ -521,11 +620,19 @@ memory operand off the critical path, cheaper than unpacking it on every use
 (the opmask result of section 16). Three ways to remove values instead,
 same-session A/B against the previous commit, two rounds each:
 
-| Change                                                                                                                                                  | Red Hat WOFF | Source Code Pro WOFF | Meslo .z | src8m z6 / z9     | Kept? |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|----------------------|----------|-------------------|-------|
-| Match copy through the output SAP (`copy-match`), so `buf` is not live in the loop                                                                      | ±0           | ±0                   | +1%      | +1–3% / +2–4%     | yes   |
-| Distance table at a constant offset (1344, above zlib's 1332-entry bound) in the literal table's vector: the offset folds into the address, one table register | ±0           | −4 to −6%            | +2–3%    | +2–4% / +3–5%     | no    |
-| `pos` and `bits` as one input bit position; a refill reloads `val` from it (no bit count, so the match path always refills)                             | −6%          | **+8–10%**           | −2%      | −2 to −4% / −3 to −5% | no |
+| Change                        | Red Hat | Source Code Pro | Meslo | src8m z6 / z9         | Kept? |
+|-------------------------------|---------|-----------------|-------|-----------------------|-------|
+| Match copy through the SAP¹   | ±0      | ±0              | +1%   | +1–3% / +2–4%         | yes   |
+| Distance table in one vector² | ±0      | −4 to −6%       | +2–3% | +2–4% / +3–5%         | no    |
+| One input bit position³       | −6%     | **+8–10%**      | −2%   | −2 to −4% / −3 to −5% | no    |
+
+1. `copy-match` copies through the output SAP that literals already use, so
+   `buf` is not live in the loop.
+2. The distance table at a constant offset (1344, above zlib's 1332-entry
+   bound) in the literal table's vector: the offset folds into the address,
+   so one register holds both tables.
+3. `pos` and `bits` as one input bit position; a refill reloads `val` from
+   it. With no bit count, the match path always refills.
 
 (The joint table first copied the literal table in, which cost Red Hat 3%
 and Source Code Pro 8%; building it in place fixed Red Hat only.) The bit
