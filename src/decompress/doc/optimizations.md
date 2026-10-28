@@ -494,6 +494,24 @@ the distance decode, the preloaded entry across the copy); under SBCL's
 register pressure in this loop that costs more than the shorter dependency
 chain gains, as with the opmask experiments in section 16.
 
+**No input check per refill (libdeflate's fast and generic loops).** The
+output is one preallocated buffer and the input is read in place, as in
+libdeflate, but every refill tested whether 8 more input bytes exist (else
+it loads from the zero-padded tail). Tried: the symbol loop generated twice
+from one macro, a fast copy whose refills have no test, entered while at
+least 15 input bytes remain (an iteration refills at most twice, each
+advancing at most 7 bytes), and the checked copy for the end of the input.
+Same-session A/B against the commit above, two rounds each:
+
+| Variant                                            | Red Hat WOFF | Source Code Pro WOFF | Meslo .z | src8m z6 / z9     |
+|----------------------------------------------------|--------------|----------------------|----------|-------------------|
+| Test `pos + 15 > limit` per iteration              | ±0           | −3.5%                | ±0 / +1% | ±0 to +3% / +3–4% |
+| Precomputed `fast-end`, one compare per iteration  | ±0           | −3 to −6%            | +1–2%    | +2% / +2%         |
+
+Not kept: large streams gain 1–4%, but the font case loses, probably to
+the doubled loop code (the tests removed were well predicted, and the loop
+still needs a bound value live).
+
 **AVX2 Adler-32.** On a stock SBCL (no sb-simd-512) the AVX-512 code is
 compiled out and the byte loop took 11% of a WOFF decode. With stock
 sb-simd's AVX2 (`u8.32-sad`, `s16.16-maddubs`, `s16.16-madd`; libdeflate's
