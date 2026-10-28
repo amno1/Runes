@@ -317,7 +317,7 @@ needs no register for the output vector.  Same classes and overshoot."
                              (sb-sys:sap-ref-64 ,sap (+ ,fp %i 8)) (sb-sys:sap-ref-64 ,sap (+ %src %i 8))))))
        (declare (inline words16))
        (cond
-         ((and (>= ,dist 16) (<= ,len 16))
+         ((and (<= ,len 16) (>= ,dist ,len))
           (let ((%a (sb-sys:sap-ref-64 ,sap %src)) (%b (sb-sys:sap-ref-64 ,sap (+ %src 8))))
             (setf (sb-sys:sap-ref-64 ,sap ,fp) %a
                   (sb-sys:sap-ref-64 ,sap (+ ,fp 8)) %b)))

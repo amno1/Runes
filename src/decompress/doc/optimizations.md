@@ -742,3 +742,33 @@ sb-simd's AVX2 (`u8.32-sad`, `s16.16-maddubs`, `s16.16-madd`; libdeflate's
 `adler32_avx2` scheme, weights 32…1), feature `:decompress-avx2`. Stock SBCL
 2.6.9, same-session A/B, all of this round: Red Hat 502–545 → 650–659,
 Source Code Pro 328–341 → 423–431.
+
+**A fourth batch of suggestions.** Each was A/B tested against the version
+before it, two rounds, same session. Source Code Pro varies by up to ±10%
+between sessions, so only the same-session pairs count.
+
+| Change                         | Red Hat | Source Code Pro | Meslo  | src8m z6 / z9   | Kept |
+|--------------------------------|---------|-----------------|--------|-----------------|------|
+| Short copy for `dist >= len`¹  | ±0      | +4%             | +2%    | +1% / +1%       | yes  |
+| 32-byte copy tier²             | ±0      | ±1%             | +1%    | ±0 / ±1%        | no   |
+| One test per root literal³     | −5%     | −16%            | −5%    | −7% / −7%       | no   |
+| Literal root of 11 bits⁴       | +1–3%   | +1%             | ±1%    | −2% / −2 to −5% | no   |
+| Unmasked refill shift⁵         | ±1%     | ±0 to −5%       | ±1%    | −2% / −2 to −4% | no   |
+
+1. `copy-match`'s two-word path took only `dist >= 16`; it now takes any
+   match of up to 16 bytes with `dist >= len` (the bytes past `len` are slack
+   that later output overwrites).
+2. An AVX 32-byte loop for `32 <= dist < 64`, beside the 64-byte AVX-512 one.
+3. A root entry below `256<<5` is always a literal (links, the end code and
+   lengths are above), so a literal needs one test and no `saved` write; the
+   rest went to a separate `slow` label. The loop got longer and slower.
+4. Needs a new link marker: an 11-bit length code plus 5 extra bits makes
+   16, the old marker. Section 16 found ≈ +1% as well.
+5. `(the (integer 0 63) bits)` instead of `(logand bits 63)` in `br-refill`,
+   with `low-bits` for the distance extra bits: 2 fewer instructions in
+   `inflate-block`, but slower.
+
+Checked and not needed: `saved` is a raw word (no allocation in the loop),
+and the `(ldb (byte 64 0) …)` masks in `br-refill` compile to nothing. The
+refill without an input check was tried before (the fast/checked loop
+split, above).
