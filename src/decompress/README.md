@@ -99,10 +99,10 @@ sb-simd-512 branch. C is libbrotli's `BrotliDecoderDecompress` and libz's
 | SBCL source, 8 MB, quality 9 / 11    | 1.58 / 1.42 MB → 8 MB | 885 / 839   | 892 / 903   | 0.99× / 0.93× |
 | SBCL source, 1 MB, quality 9 / 5     | 208 / 218 KB → 1 MB   | 823 / 768   | 872 / 810   | 0.94× / 0.95× |
 | **zlib / deflate**                   |                       |             |             |               |
-| Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 857         | 874         | 0.98×         |
-| Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 629         | 571         | 1.10×         |
-| Meslo Nerd Font Bold TTF, level 9    | 1.60 MB → 2.98 MB     | 612         | 579         | 1.06×         |
-| SBCL source, 8 MB, level 6 / 9       | 1.94 / 1.92 MB → 8 MB | 1278 / 1351 | 1273 / 1332 | 1.00× / 1.01× |
+| Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 886         | 874         | 1.01×         |
+| Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 698         | 571         | 1.22×         |
+| Meslo Nerd Font Bold TTF, level 9    | 1.60 MB → 2.98 MB     | 619         | 579         | 1.07×         |
+| SBCL source, 8 MB, level 6 / 9       | 1.94 / 1.92 MB → 8 MB | 1290 / 1360 | 1273 / 1332 | 1.01× / 1.02× |
 
 Small streams are dominated by per-stream setup (reading prefix codes and
 building their tables); large ones by the symbol loop. In Brotli's loop the

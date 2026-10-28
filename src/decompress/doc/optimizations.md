@@ -917,7 +917,10 @@ done. The font gap left is table setup.
    fail to compile: the VOP's twelve registers no longer fitted around the
    call. `inflate-fast` now holds the call alone; it runs once per block.
    (The VOP and `defknown` are in `eval-when`, so the same file can
-   compile the function with them.)
+   compile the function with them.) Not a speed change but a maintenance
+   hedge: the VOP's twelve registers constrain whatever is live around its
+   call, so with the call isolated, the Lisp loop can change without
+   re-checking that the VOP still fits.
 4. As for lengths: the code length at bit 21, the bit count including the
    extra bits, the extra bits read from the buffer saved before the shift.
    A root entry can then count 8 + 13 = 21 bits, so distance subtable links
@@ -940,3 +943,41 @@ two-literal table (the data: few matches at those distances, few literal
 pairs that fit), the 11-bit root and the one-test literal (table setup and
 branch prediction). The next gains are in what the chain does per symbol
 and in table setup, not in what holds the values.
+
+## 19. Table setup on the fonts
+
+The fonts' blocks are small: Source Code Pro has 45 dynamic blocks in
+138 KB of output (about 3 KB each), and each builds three tables. Their
+alphabets are not small, though: a literal table uses about 195 of 286
+symbols and puts about 6 codes in subtables (Red Hat: 216 and 26). So a
+small-alphabet fast path does not apply. perf samples mapped onto the
+builder's disassembly found the cost instead: about a quarter of
+`build-deflate-table` was its counting sort, where `sorted[offs[l]] = s;
+offs[l]++` reads `offs[l]` right after the previous symbol stored it, a
+chain through memory (store forwarding) per symbol. `deflate-table`'s
+`count[l]++` loop has the same chain.
+
+| Change                          | Red Hat   | Source Code Pro | Meslo  | src8m z6 / z9 | Kept |
+|---------------------------------|-----------|-----------------|--------|---------------|------|
+| Sort by length masks¹           | +1%       | +3–4.5%         | ±1%    | ±1% / ±1%     | yes  |
+| 16-bit `integer-length` operand² | −1 to +1% | +0.5–2%        | ±1%    | ±0 / ±0.5%    | no   |
+| Count by mask popcounts³        | +1–2%     | +4.5–5%         | ±0     | ±1% / +0.5%   | yes  |
+| No fill for zero runs⁴          | +0.5–2%   | +0.5–2.5%       | ±1%    | ±0.5% / +0.5% | yes  |
+
+1. With AVX-512, one compare of 64 code lengths against L gives the mask
+   of the symbols of length L; reading each mask's bits in turn (for L
+   from 1 up, chunks in order) lists the symbols in canonical order with a
+   counter in a register. 8–10 lengths × 5 chunks of compares per literal
+   table. The loads read up to 63 bytes past the lengths (masked off), so
+   the code-length and distance length arrays grew to 64 bytes; arrays
+   without that room (the fixed tables) keep the counting sort.
+2. Removes the sign handling around `BSR` in the next-codeword step.
+3. `count[l]` as the sum of popcounts of the same masks, 15 lengths × 5
+   chunks; the symbol of a one-symbol code is found by a scan.
+4. The code-length decoder called `fill` (out of line) for each repeat.
+   The lengths array starts zeroed, so zero runs (17, 18) are skipped, and
+   a repeat of the previous length (16, 3–6 bytes) is stored inline.
+
+Table setup went from 34% to 27% of Source Code Pro's time. Most of the
+rest is the builder's per-entry loop, a chain through the codeword
+(next-codeword, then the store), which libdeflate's builder has too.

@@ -104,12 +104,44 @@ length."
     (declare (dynamic-extent offs sorted)
              (type fixnum cnt end i) (type (integer 0 16) len)
              (type (unsigned-byte 16) codeword))
-    (loop for l from 1 to 15 do (setf (aref offs (1+ l)) (+ (aref offs l) (aref count l))))
-    (dotimes (s n)
-      (let ((l (aref lens (+ start s))))
-        (when (plusp l)
-          (setf (aref sorted (aref offs l)) s)
-          (incf (aref offs l)))))
+    ;; SORTED: the used symbols by length, then symbol (canonical order)
+    (flet ((counting-sort ()
+             ;; each symbol reads OFFS[l] right after the previous store to
+             ;; it, a chain through memory (store forwarding) per symbol
+             (loop for l from 1 to 15 do (setf (aref offs (1+ l)) (+ (aref offs l) (aref count l))))
+             (dotimes (s n)
+               (let ((l (aref lens (+ start s))))
+                 (when (plusp l)
+                   (setf (aref sorted (aref offs l)) s)
+                   (incf (aref offs l)))))))
+      (declare (inline counting-sort))
+      #-decompress-avx512 (counting-sort)
+      #+decompress-avx512
+      ;; one compare of 64 lengths gives the mask of the symbols with length
+      ;; L; reading its bits in order needs no memory chain.  The loads may
+      ;; read up to 63 bytes past N (masked off), so LENS must have room.
+      (if (> (+ start (* 64 (ceiling n 64))) (length lens))
+          (counting-sort)
+          (sb-sys:with-pinned-objects (lens)
+            (let ((sap (sb-sys:sap+ (sb-sys:vector-sap lens) start)))
+              (loop for l of-type (integer 1 16) from 1 to 15
+                    unless (zerop (aref count l))
+                      do (let ((v (sb-simd-avx512bw:u8.64 l)))
+                           (loop for c of-type fixnum from 0 below n by 64
+                                 do (let ((m (logand (sb-simd-avx512bw:m8.64-value
+                                                      (sb-simd-avx512bw:two-arg-u8.64-mask=
+                                                       (sb-simd-avx512bw:u8.64-sap-ref sap c) v))
+                                                     (if (>= (- n c) 64)
+                                                         #xFFFFFFFFFFFFFFFF
+                                                         (1- (ash 1 (- n c)))))))
+                                      (declare (type (unsigned-byte 64) m))
+                                      (loop until (zerop m)
+                                            do (setf (aref sorted i)
+                                                     (+ c (1- (integer-length
+                                                               (logand m (ldb (byte 64 0) (- m)))))))
+                                               (incf i)
+                                               (setf m (logand m (ldb (byte 64 0) (1- m)))))))))
+              (setf i 0)))))
     (macrolet ((entry (l) `(let* ((s (aref sorted i))
                                   (l ,l))
                              (incf i)
@@ -177,13 +209,45 @@ Built in place in TAB (see BUILD-DEFLATE-TABLE); returns TAB."
         (m 0) (space 0) (first 0))
     (declare (dynamic-extent count) (type (integer 0 1024) m) (type fixnum space)
              (type index first))
-    (dotimes (i n)
-      (let ((l (aref lens (+ start i))))
-        (when (plusp l)
-          (when (zerop m) (setf first i))
-          (incf m)
-          (incf (aref count l))
-          (incf space (ash 1 (- 15 l))))))
+    (flet ((count-scalar ()
+             ;; COUNT[l]++ per symbol: a chain through memory, as in the
+             ;; builder's counting sort
+             (dotimes (i n)
+               (let ((l (aref lens (+ start i))))
+                 (when (plusp l)
+                   (when (zerop m) (setf first i))
+                   (incf m)
+                   (incf (aref count l))
+                   (incf space (ash 1 (- 15 l))))))))
+      (declare (inline count-scalar))
+      #-decompress-avx512 (count-scalar)
+      #+decompress-avx512
+      ;; COUNT[l] = the bits set in the masks of 64-length compares against L
+      ;; (loads up to 63 bytes past N, masked off; see BUILD-DEFLATE-TABLE)
+      (if (> (+ start (* 64 (ceiling n 64))) (length lens))
+          (count-scalar)
+          (sb-sys:with-pinned-objects (lens)
+            (let ((sap (sb-sys:sap+ (sb-sys:vector-sap lens) start)))
+              (loop for c of-type fixnum from 0 below n by 64
+                    do (let ((x (sb-simd-avx512bw:u8.64-sap-ref sap c))
+                             (valid (if (>= (- n c) 64)
+                                        #xFFFFFFFFFFFFFFFF
+                                        (1- (ash 1 (- n c))))))
+                         (declare (type (unsigned-byte 64) valid))
+                         (loop for l of-type (integer 1 16) from 1 to 15
+                               do (incf (aref count l)
+                                        (logcount
+                                         (logand valid
+                                                 (sb-simd-avx512bw:m8.64-value
+                                                  (sb-simd-avx512bw:two-arg-u8.64-mask=
+                                                   x (sb-simd-avx512bw:u8.64 l))))))))))
+            (loop for l from 1 to 15
+                  do (incf m (aref count l))
+                     (incf space (ash (aref count l) (- 15 l))))
+            ;; FIRST only matters for a code of one symbol
+            (when (= m 1)
+              (setf first (position-if #'plusp lens :start start :end (+ start n)))
+              (decf first start)))))
     (cond
       ((> space 32768) (berr "oversubscribed prefix code"))
       ((= space 32768)
@@ -261,7 +325,7 @@ built in TABLES' arrays."
   (let* ((hlit (+ 257 (read-bits r 5)))
          (hdist (+ 1 (read-bits r 5)))
          (hclen (+ 4 (read-bits r 4)))
-         (cl-lens (make-array 19 :element-type '(unsigned-byte 8) :initial-element 0))
+         (cl-lens (make-array 64 :element-type '(unsigned-byte 8) :initial-element 0)) ; room for 64-byte loads
          (order +deflate-cl-order+))
     (declare (dynamic-extent cl-lens))
     (when (or (> hlit 286) (> hdist 30)) (berr "too many length or distance codes"))
@@ -292,13 +356,17 @@ built in TABLES' arrays."
                        (17 (values 0 (+ 3 (br-bits-no-refill 3))))
                        (t (values 0 (+ 11 (br-bits-no-refill 7)))))
                    (when (> (+ i n) total) (berr "code lengths repeat past the end"))
-                   (fill lens value :start i :end (+ i n))
+                   ;; LENS starts zeroed, so runs of zeros (17, 18) are only
+                   ;; skipped; a repeat (16) is 3-6 bytes, stored inline
+                   (unless (zerop value)
+                     (loop for j of-type (integer 0 320) from i below (+ i n)
+                           do (setf (aref lens j) value)))
                    (incf i n))))))
         (setf (reader-val r) val (reader-bits r) bits (reader-pos r) pos))
       (when (zerop (aref lens 256)) (berr "no end-of-block code"))
       ;; the distance lengths sit after the literal ones: copy them down to a
       ;; zero-padded 32-entry area so the table code sees one alphabet
-      (let ((dlens (make-array 32 :element-type '(unsigned-byte 8) :initial-element 0)))
+      (let ((dlens (make-array 64 :element-type '(unsigned-byte 8) :initial-element 0))) ; as CL-LENS
         (declare (dynamic-extent dlens))
         (replace dlens lens :start2 hlit :end2 total)
         (values (deflate-table lens 0 hlit :literal +lit-root-bits+ (tables-lit tables))
