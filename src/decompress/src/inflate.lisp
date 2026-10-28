@@ -332,13 +332,12 @@ needs no register for the output vector.  Same classes and overshoot."
           (words16))
          ((>= ,dist 8) (words16))
          (t
-          (let ((%p (aref +copy-period+ ,dist)))
-            (declare (type index %p))
-            (dotimes (%i (min ,len %p))
-              (setf (sb-sys:sap-ref-8 ,sap (+ ,fp %i)) (sb-sys:sap-ref-8 ,sap (+ %src %i))))
-            (loop for %i of-type index from %p below ,len by 8
-                  do (setf (sb-sys:sap-ref-64 ,sap (+ ,fp %i))
-                           (sb-sys:sap-ref-64 ,sap (+ ,fp (- %i %p)))))))))
+          ;; as libdeflate: overlapping 8-byte stores, each advancing DIST
+          ;; bytes; each store's first DIST bytes are right, the rest is
+          ;; rewritten by the next (may overshoot by up to 7 bytes)
+          (loop for %i of-type index from 0 below ,len by ,dist
+                do (setf (sb-sys:sap-ref-64 ,sap (+ ,fp %i))
+                         (sb-sys:sap-ref-64 ,sap (+ %src %i)))))))
      (incf ,fp ,len)))
 
 (defun inflate-block (r buf fp ltab dtab)

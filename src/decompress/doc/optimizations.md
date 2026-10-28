@@ -669,6 +669,68 @@ A/B against the previous commit, two rounds each:
 Against libz in the same session (874 / 571): Red Hat 0.91×, Source Code
 Pro 0.92×.
 
+**libdeflate itself.** libdeflate 1.26 (built from `~/repos/skia/libdeflate`,
+one decompressor object reused across calls), libz (zlib-ng) and this
+decoder in one process, interleaved, same method as `bench-c.lisp`; MB/s:
+
+| Stream          | libz        | libdeflate  | decompress  | ld / libz¹  | ours / ld¹  |
+|-----------------|-------------|-------------|-------------|-------------|-------------|
+| Red Hat         | 864         | 994         | 788         | 1.15        | 0.79        |
+| Source Code Pro | 572         | 779         | 511         | 1.36        | 0.66        |
+| Meslo           | 569         | 729         | 535         | 1.28        | 0.73        |
+| src8m z6 / z9   | 1259 / 1322 | 1607 / 1723 | 1124 / 1201 | 1.28 / 1.30 | 0.70 / 0.70 |
+
+1. `ld` is libdeflate, `ours` this decoder.
+
+On this machine libdeflate is 1.15–1.36× zlib-ng, not the 2–3× quoted
+against original zlib.
+
+**Short distances, as libdeflate.** Distances below 8 copied one period byte
+by byte (8–14 bytes), then 8-byte words. Same-session A/B, two rounds each:
+
+| Variant                    | Red Hat | Source Code Pro | Meslo   | src8m z6 / z9 | Kept? |
+|----------------------------|---------|-----------------|---------|---------------|-------|
+| A. Distance 1 broadcast¹   | −0.5%   | −1 to −2%       | −0.5%   | ±0 / −0.5%    | no    |
+| B. Stepping stores²        | −0.5%   | +1%             | +1–2%   | +2–4%         | yes   |
+| C. Stepping, then words³   | ≈ B     | ≈ B             | ≈ B     | ≈ B, −1%      | no    |
+
+1. One multiply by `#x0101010101010101`, then word stores; relative to the
+   byte loop.
+2. libdeflate's method for every distance below 8: overlapping 8-byte
+   stores, each advancing by the distance. Each store's first DIST bytes are
+   right and the rest is rewritten by the next.
+3. B for the first period only, then 8-byte words at the period. Compared
+   directly with B: within noise.
+
+**BMI2 shifts.** Zen 5 has BMI2, and the fork's assembler already defines
+`SHRX`/`SHLX`/`SARX`/`BZHI` (not exposed as VOPs or sb-simd functions). A
+prototype VOP pair (`defknown` + `define-vop` in a scratch copy) made
+`br-drop` and `br-refill` use `SHRX`/`SHLX`: in `inflate-block` 16 shifts by
+`CL` became 13 `SHRX`/`SHLX` and 7 `CL` shifts, 640 → 607 instructions, 69 → 57
+stack references, all tests passing. Measured against the same code without
+it:
+
+| Stream          | Change              |
+|-----------------|---------------------|
+| Red Hat         | ±1%                 |
+| Source Code Pro | +1.4% / −1.6%       |
+| Meslo           | −1.6%               |
+| src8m z6 / z9   | −2% / −2%           |
+| Brotli streams  | ±1–2%               |
+
+Not kept, and not added to sb-simd-512. Like the mov-retarget patch: fewer
+instructions, but Zen 5 removes the `MOV RCX` copies at rename and the loops
+are bound by dependency chains. (A real version would also need a type
+deriver: the VOP's word result widened derived types in Brotli's header
+code, which then used generic arithmetic.)
+
+**The SIMD-constant patch.** `simd-constant-fix` (`83319aeb7`, not in the
+sb-simd-512 build) stops SBCL re-propagating SIMD constants into loops. It
+applies to `adler32` only: its AVX-512 loop reloads `ones` from the
+constant pool every 64 bytes, and the weights vector is spilled and
+reloaded. `inflate-block` has no SIMD variables. Adler-32 is 0.3–1% of a
+decode, so neither costs measurable time.
+
 **AVX2 Adler-32.** On a stock SBCL (no sb-simd-512) the AVX-512 code is
 compiled out and the byte loop took 11% of a WOFF decode. With stock
 sb-simd's AVX2 (`u8.32-sad`, `s16.16-maddubs`, `s16.16-madd`; libdeflate's
