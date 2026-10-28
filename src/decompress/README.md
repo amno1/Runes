@@ -114,6 +114,8 @@ sbcl --script bench.lisp            # decompress
 sbcl --script bench-c.lisp          # libbrotli and libz
 ONLY=.woff sbcl --script bench.lisp # only files whose name contains ".woff"
 sbcl --script profile.lisp data/RedHatText-Regular.br
+sbcl --script perf-compare.lisp     # perf counters per byte, against libdeflate
+sbcl --script literal-pairs.lisp    # literal pairs a multi-symbol table could cover
 ```
 
 `make-data.sh` needs `brotli`, `woff2_compress`, libz, the fonts it names and
@@ -151,7 +153,8 @@ tests/
   tests.lisp     libbrotli and libz oracle tests;  run.lisp runs them
   vectors/       Brotli reference streams (.br) and originals (.raw)
   bench/         make-data.sh, woff2-streams.lisp, zlib-streams.lisp,
-                 bench.lisp, bench-c.lisp, profile.lisp
+                 bench.lisp, bench-c.lisp, profile.lisp,
+                 perf-compare.lisp, literal-pairs.lisp
 ```
 
 ## License

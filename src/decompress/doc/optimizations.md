@@ -812,3 +812,33 @@ root lookup:
 (Percentages of output bytes.) Font literals have codes of mostly 8 bits or
 more, so two rarely fit. Even a 12-bit root, which cost src8m 2–5% at
 11 bits, would save the branch for under 9% of the output. Not built.
+
+**CPU counters against libdeflate, before deciding on a VOP.**
+`tests/bench/perf-compare.lisp` runs each decoder under `perf stat` on
+~200 MB of output, minus a run that decodes nothing (so loading and
+compiling cancel out). Per output byte:
+
+| Stream          | Cycles, ours / ld | Instr., ours / ld | IPC, ours / ld | Misses/KB, ours / ld |
+|-----------------|-------------------|-------------------|----------------|----------------------|
+| Red Hat         | 6.55 / 5.08       | 32.8 / 13.7       | 5.00 / 2.69    | 3.0 / 3.6            |
+| Source Code Pro | 8.75 / 5.87       | 41.4 / 16.0       | 4.73 / 2.72    | 27.1 / 8.7           |
+| Meslo           | 8.97 / 6.82       | 31.3 / 12.5       | 3.49 / 1.83    | 135 / 123            |
+| src8m z6        | 3.93 / 3.34       | 16.1 / 6.6        | 4.10 / 1.97    | 66 / 51              |
+| src8m z9        | 3.97 / 2.70       | 16.1 / 6.6        | 4.04 / 2.45    | 60 / 44              |
+
+sb-sprof splits our time: Source Code Pro 55% `inflate-block`, 35% table
+setup (`read-dynamic-tables` and the builder); src8m z9 81%
+`inflate-block`.
+
+1. We execute 2.4× libdeflate's instructions, at 1.6–2.1× its IPC.
+   libdeflate runs at an IPC of 2–2.7, so its time is the dependency
+   chain. Ours runs at 4–5, near what Zen 5 sustains, so here the extra
+   instructions do cost time. (Single `MOV`s are still free, as above:
+   the cost is the 2.4× total, not any one instruction.)
+2. On src8m nearly all of it is the symbol loop: about 13 instructions
+   per byte against libdeflate's ~6. A loop written as one VOP, with
+   libdeflate's instruction count, would be bound by the same chain, so
+   up to libdeflate's cycles: +15% (z6) to +45% (z9) at best.
+3. On the fonts a VOP touches only 55% of the time. Table setup (35% on
+   Source Code Pro) needs its own work; it also has most of the extra
+   branch misses (27 against 9 per KB).
