@@ -797,7 +797,7 @@ split, above).
 
 **Two literals per lookup (ISA-L's multi-symbol table), measured first.**
 Deflate has no context modelling, so section 7's objection does not apply.
-An instrumented copy counted, for each stream, the output bytes that could
+`tests/bench/literal-pairs.lisp` counts, for each stream, the output bytes that could
 come from greedy pairs of consecutive literals whose two codes fit in one
 root lookup:
 
