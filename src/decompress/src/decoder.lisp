@@ -208,7 +208,11 @@ needs the window test."
         (lctx (svref +ctx-mode-luts+ (aref cmode 0)))
         (p1 (if (> fp 0) (aref buf (- fp 1)) 0))
         (p2 (if (> fp 1) (aref buf (- fp 2)) 0))
-        (postfix-mask (1- (ash 1 npostfix))))
+        (postfix-mask (1- (ash 1 npostfix)))
+        #+decompress-avx512
+        (st (make-array +st-size+ :element-type '(unsigned-byte 64) :initial-element 0)))
+    #+decompress-avx512
+    (declare (dynamic-extent st))
     (declare (type u8vec in lctx)
              (type index limit lt lp it ip dt dp)
              (type sb-ext:word pos bits)       ; full words: SBCL keeps them untagged
@@ -219,6 +223,16 @@ needs the window test."
              (type fixnum postfix-mask)
              (type simple-vector lslices))
     (setf lslice (svref lslices 0))
+    #+decompress-avx512
+    (macrolet ((sets (&rest pairs)
+                 `(setf ,@(loop for (k v) on pairs by #'cddr
+                                collect `(aref st ,k) collect `(ldb (byte 64 0) ,v)))))
+      (sets +st-target+ target +st-inlim+ (- limit 8) +st-inend+ (+ limit 8)
+            +st-tbase+ (reader-tbase r)
+            +st-window+ (if +big-window+ most-positive-fixnum window)
+            +st-ndirect+ ndirect +st-npostfix+ npostfix +st-pmask+ postfix-mask)
+      (dotimes (k 16)
+        (sets (+ +st-dsci+ k) (aref dsc-index k) (+ +st-dscv+ k) (aref dsc-value k))))
     ;; one stage macro per step of a command; they expand in place
     (macrolet ((switch (ntypes type prev count btab ctab)
                  ;; block switch: new block type and count for one category
@@ -231,6 +245,26 @@ needs the window test."
                     (setf ,prev ,type ,type %new)
                     (let ((%c (aref blen (br-sym ,ctab))))
                       (setf ,count (+ (ash %c -5) (br-bits (logand %c 31)))))))
+               #+decompress-avx512
+               (fast-commands ()
+                 ;; run the VOP from here: state into ST, back, and P1/P2 again
+                 `(progn
+                    (setf (aref st +st-icount+) icount (aref st +st-lcount+) lcount
+                          (aref st +st-dcount+) dcount (aref st +st-rbidx+) (aref rb 4))
+                    (dotimes (%k 4) (setf (aref st (+ +st-rb+ %k)) (aref rb %k)))
+                    (multiple-value-bind (%v %b %p %f %s)
+                        (brotli-fast val bits pos fp in buf (reader-tail r) st itab lslice lctx
+                                     (svref htreed (aref cmapd (* 4 dt)))
+                                     (svref htreed (aref cmapd (+ (* 4 dt) 1)))
+                                     (svref htreed (aref cmapd (+ (* 4 dt) 2)))
+                                     (svref htreed (aref cmapd (+ (* 4 dt) 3))))
+                      (setf val %v bits %b pos %p fp %f
+                            icount (aref st +st-icount+) lcount (aref st +st-lcount+)
+                            dcount (aref st +st-dcount+) (aref rb 4) (aref st +st-rbidx+)
+                            p1 (if (> fp 0) (aref buf (- fp 1)) 0)
+                            p2 (if (> fp 1) (aref buf (- fp 2)) 0))
+                      (dotimes (%k 4) (setf (aref rb %k) (aref st (+ +st-rb+ %k))))
+                      %s)))
                (max-distance ()
                  ;; farthest real back-reference; past it, a dictionary word
                  `(if +big-window+ fp (min window fp)))
@@ -296,26 +330,44 @@ needs the window test."
                           (setf p1 (if (> fp 0) (aref buf (- fp 1)) 0)
                                 p2 (if (> fp 1) (aref buf (- fp 2)) 0)))))))
       (loop while (< fp target) do
-        (when (zerop icount)
-          (switch nbl-i it ip icount ibt ict)
-          (setf itab (svref htreei it)))
-        (decf icount)
-        ;; insert-and-copy command: insert length, copy length, implicit distance?
-        (let* ((cmd (br-sym itab))
-               (ie (aref cmd-ins cmd))
-               (ce (aref cmd-cpy cmd))
-               (ilen (+ (ash ie -5) (br-bits (logand ie 31))))
-               (clen (+ (ash ce -5) (br-bits (logand ce 31)))))
-          (declare (type index cmd ilen clen))
-          (when (> ilen (- target fp)) (berr "insert length overruns meta-block"))
+        ;; STATUS 1: a whole command in Lisp; 2-4: the rest of the command
+        ;; the VOP stopped in (from the literal run, the distance or the copy)
+        (let ((status 1) (cmd 0) (ilen 0) (clen 0) (distance 0))
+          (declare (type (unsigned-byte 64) status) (type index cmd ilen clen)
+                   (type fixnum distance))
+          #+decompress-avx512
+          (progn
+            (setf status (fast-commands))
+            (case status
+              ((0) (return))
+              ((1 2 3 4))
+              (10 (berr "insert length overruns meta-block"))
+              (11 (berr "copy length overruns meta-block"))
+              (12 (berr "invalid distance"))
+              (t (berr "end of input")))
+            (when (> status 1)
+              (setf cmd (aref st +st-cmd+) ilen (aref st +st-ilen+) clen (aref st +st-clen+))
+              (when (= status 4) (setf distance (aref st +st-dist+)))))
+          (when (= status 1)
+            (when (zerop icount)
+              (switch nbl-i it ip icount ibt ict)
+              (setf itab (svref htreei it)))
+            (decf icount)
+            ;; insert-and-copy command: insert length, copy length, implicit distance?
+            (setf cmd (br-sym itab))
+            (let ((ie (aref cmd-ins cmd))
+                  (ce (aref cmd-cpy cmd)))
+              (setf ilen (+ (ash ie -5) (br-bits (logand ie 31)))
+                    clen (+ (ash ce -5) (br-bits (logand ce 31)))))
+            (when (> ilen (- target fp)) (berr "insert length overruns meta-block")))
           (literal-run)
           (when (>= fp target) (return))
-          (let ((distance 0)
-                (idx (aref rb 4)))
-            (declare (type fixnum distance idx))
-            (if (< cmd 128)
-                (setf distance (aref rb (logand (+ idx 3) 3)))   ; last distance, no push
-                (explicit-distance))
+          (let ((idx (aref rb 4)))
+            (declare (type fixnum idx))
+            (cond ((= status 4))          ; a dictionary word: DISTANCE is known
+                  ((< cmd 128)
+                   (setf distance (aref rb (logand (+ idx 3) 3))))   ; last distance, no push
+                  (t (explicit-distance)))
             (copy-or-dictionary)))))
     (setf (reader-val r) val (reader-bits r) bits (reader-pos r) pos)
     (when (/= fp target) (berr "meta-block produced wrong length"))

@@ -13,6 +13,7 @@
                              (:file "tables")
                              (:file "reader")
                              (:file "huffman")
+                             (:file "brotli-vop")
                              (:file "decoder")
                              (:file "inflate-vop")
                              (:file "inflate"))))

@@ -1011,3 +1011,72 @@ chain through memory (store forwarding) per symbol. `deflate-table`'s
 Table setup went from 34% to 27% of Source Code Pro's time. Most of the
 rest is the builder's per-entry loop, a chain through the codeword
 (next-codeword, then the store), which libdeflate's builder has too.
+
+## 20. The Brotli command loop as a VOP
+
+The deflate VOP (section 17) removed SBCL's register allocation from the
+symbol loop; section 6 found the Brotli gap was the same register
+pressure. `src/brotli-vop.lisp` now holds the common part of
+`command-loop` in assembler: the command symbol and both lengths, the
+literal run, the distance and the copy.
+
+| Part                      | Where           |
+|---------------------------|-----------------|
+| Bit buffer, positions¹    | registers       |
+| Other state²              | `st` vector     |
+| Block switches³           | Lisp            |
+| Dictionary words³         | Lisp            |
+| Refills near the end⁴     | VOP, from tail  |
+
+1. `val bits pos fp`, the input and output bases, and P1/P2 (the last
+   two bytes) during the literal run: twelve registers with four temps.
+2. Block counts, the current decode tables (tagged pointers of objects the
+   wrapper pins), the distance ring and the stream constants, in a
+   stack-allocated word vector addressed through one register.
+3. The VOP stops with a status: at a command's top (insert switch), inside
+   a literal run (literal switch), before the distance code (distance
+   switch), or with a distance past the window (a word). The rest of the
+   command is left in `st`; `command-loop` finishes it and calls again.
+4. Refills are checked against the input's end and load the reader's tail
+   there, so the VOP never stops for input.
+
+**Results** (MB/s, two alternating rounds each, same session):
+
+| Stream          | Before    | After       | Change     |
+|-----------------|-----------|-------------|------------|
+| Red Hat         | 303–311   | 324–347     | +4 to +14% |
+| Meslo           | 305       | 315–316     | +3%        |
+| Noto Tangut     | 399–400   | 406–408     | +2%        |
+| SignWriting     | 517       | 543–547     | +5%        |
+| src8m q9 / q11  | 889–897 / 842–861 | 1069–1112 / 972–1005 | +20% / +15% |
+| src1m q9 / q5   | 809–812 / 746–749 | 1012–1013 / 908–923 | +25% / +22% |
+
+The large streams, where the loop is all the time, gained the most: the
+decoder is now 1.1–1.2× libbrotli on them (section "Final result" had
+0.92–0.99×). The fonts gained less because their time is mostly table
+setup (section 9). The Lisp loop is unchanged without `:decompress-avx512`.
+
+**Section 19's mask sort in `build-table`.** Brotli's table builder has
+the same counting-sort chain through `start[l]`, so the 64-length mask
+walk was tried there too (for codes of 64+ used symbols; the length
+array grew by 63 bytes for the loads).
+
+| Change                 | Fonts     | src8m q9 / q11 | src1m q9 / q5 | Kept |
+|------------------------|-----------|----------------|---------------|------|
+| Mask sort¹             | −0.3 to −8% | −2 to −4%    | −2 to −3.5%   | no   |
+
+1. Two alternating rounds. It lost even on src8m, where table setup is a
+   negligible share, so the loss is not the sort itself; likely the larger
+   stack arrays or code layout in `read-complex-code`. Brotli's sort runs
+   over the used symbols only (as libbrotli does), so there was less to
+   gain than in deflate's builder, which scans the whole alphabet. The
+   popcount count was not tried, since it builds on the same masks.
+
+Why it worked in §19 and not here is not settled. In `build-deflate-table`
+the sort is a large share of a small function. Here it adds code to
+`build-table` and padding to `read-complex-code`'s stack arrays, and the
+loss is bigger than table setup's whole share of the time (Red Hat: about
+18%). So the cost was not the sort's own work. The likely cause is the
+change's side effects on the surrounding code, as with the rejections in
+§6, but this was not measured. The test would be the mask sort behind a
+run-time switch with everything else (arrays, padding) the same.

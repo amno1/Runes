@@ -92,12 +92,12 @@ sb-simd-512 branch. C is libbrotli's `BrotliDecoderDecompress` and libz's
 | Stream                               | Compressed → output   | decompress | C           | ratio         |
 |--------------------------------------|-----------------------|-------------|-------------|---------------|
 | **Brotli**                           |                       |             |             |               |
-| Red Hat Text (web font, WOFF2)       | 27.9 KB → 69 KB       | 319         | 347         | 0.92×         |
-| Meslo Nerd Font Bold (WOFF2)         | 1.18 MB → 2.42 MB     | 310         | 286         | 1.08×         |
-| Noto Serif Tangut (WOFF2)            | 1.02 MB → 2.40 MB     | 406         | 351         | 1.16×         |
-| Noto Sans SignWriting (WOFF2)        | 0.87 MB → 4.02 MB     | 524         | 501         | 1.05×         |
-| SBCL source, 8 MB, quality 9 / 11    | 1.58 / 1.42 MB → 8 MB | 885 / 839   | 892 / 903   | 0.99× / 0.93× |
-| SBCL source, 1 MB, quality 9 / 5     | 208 / 218 KB → 1 MB   | 823 / 768   | 872 / 810   | 0.94× / 0.95× |
+| Red Hat Text (web font, WOFF2)       | 27.9 KB → 69 KB       | 335         | 342         | 0.98×         |
+| Meslo Nerd Font Bold (WOFF2)         | 1.18 MB → 2.42 MB     | 316         | 284         | 1.11×         |
+| Noto Serif Tangut (WOFF2)            | 1.02 MB → 2.40 MB     | 407         | 350         | 1.16×         |
+| Noto Sans SignWriting (WOFF2)        | 0.87 MB → 4.02 MB     | 545         | 498         | 1.09×         |
+| SBCL source, 8 MB, quality 9 / 11    | 1.58 / 1.42 MB → 8 MB | 1091 / 988  | 895 / 888   | 1.22× / 1.11× |
+| SBCL source, 1 MB, quality 9 / 5     | 208 / 218 KB → 1 MB   | 1012 / 915  | 866 / 803   | 1.17× / 1.14× |
 | **zlib / deflate**                   |                       |             |             |               |
 | Red Hat Text (web font, WOFF 1.0)    | 36 KB → 73 KB         | 886         | 874         | 1.01×         |
 | Source Code Pro (web font, WOFF 1.0) | 68 KB → 138 KB        | 698         | 571         | 1.22×         |
@@ -150,6 +150,7 @@ src/
   reader.lisp    bit reader (shared)
   huffman.lisp   prefix codes and decode tables (shared)
   decoder.lisp   Brotli: meta-blocks, the command loop, DECOMPRESS
+  brotli-vop.lisp   the Brotli command loop as one VOP (AVX-512 builds)
   inflate-vop.lisp  the deflate symbol loop as one VOP (AVX-512 builds)
   inflate.lisp   deflate and zlib: INFLATE, ZLIB-DECOMPRESS, Adler-32
 data/dictionary.bin
