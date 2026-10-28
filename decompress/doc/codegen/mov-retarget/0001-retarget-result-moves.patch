@@ -1,0 +1,72 @@
+diff --git a/src/compiler/ir2opt.lisp b/src/compiler/ir2opt.lisp
+index c25e77c09..1352908c0 100644
+--- a/src/compiler/ir2opt.lisp
++++ b/src/compiler/ir2opt.lisp
+@@ -1709,11 +1709,67 @@
+                               (setf aligned-stack node)))))))
+                (remove-written-tns)))))))))
+ 
++;;; After pack: VOP ... => TMP[A] followed by MOVE TMP => DEST[B], where TMP
++;;; is written and read once.  B holds nothing live between the VOP and the
++;;; MOVE (the MOVE overwrites it and nothing runs in between), so TMP can be
++;;; put in B instead, unless the VOP itself uses B: through an argument other
++;;; than one that targets the result (x :target r, which already expects to
++;;; share a register with it), or for a temporary.  The MOVE then becomes
++;;; B => B and DELETE-NO-OP-VOPS removes it.  Pack misses these when the
++;;; result is packed before DEST's location is known.  Blocks are walked
++;;; backwards so that chains of moves collapse.
++(defvar *retarget-result-moves* t)
++
++(defun retarget-result-moves (component)
++  (flet ((same-location-p (tn as)
++           ;; whether TN occupies AS's location; TN may span several
++           ;; (e.g. a 128-bit value in a register pair)
++           (and (tn-offset tn)
++                (eq (sc-sb (tn-sc tn)) (sc-sb (tn-sc as)))
++                (<= (tn-offset tn) (tn-offset as)
++                    (+ (tn-offset tn) (sc-element-size (tn-sc tn)) -1)))))
++    (do-ir2-blocks (block component)
++      (do ((vop (ir2-block-last-vop block) (vop-prev vop)))
++          ((null vop))
++        (let ((move (vop-next vop))
++              (result (vop-results vop)))
++          (when (and move result
++                     (eq (vop-info-move-vop-p (vop-info move)) :move)
++                     (not (vop-info-save-p (vop-info vop)))
++                     (not (tn-ref-across result))
++                     (null (tn-ref-load-tn result))
++                     (null (tn-ref-load-tn (vop-args move)))
++                     (null (tn-ref-load-tn (vop-results move)))
++                     (eq (tn-ref-tn (vop-args move)) (tn-ref-tn result)))
++            (let ((tmp (tn-ref-tn result))
++                  (dest (tn-ref-tn (vop-results move))))
++              (when (and (very-temporary-p tmp)
++                         (eq (tn-kind tmp) :normal)
++                         (eq (sb-kind (sc-sb (tn-sc tmp))) :finite)
++                         (tn-offset dest)
++                         (= (sc-element-size (tn-sc tmp))
++                            (sc-element-size (tn-sc dest))
++                            1)
++                         (not (same-location-p tmp dest))
++                         (compatible-move-p tmp dest)
++                         (loop for arg = (vop-args vop) then (tn-ref-across arg)
++                               while arg
++                               never (or (and (same-location-p (tn-ref-tn arg) dest)
++                                              (neq (tn-ref-target arg) result))
++                                         (and (tn-ref-load-tn arg)
++                                              (same-location-p (tn-ref-load-tn arg) dest))))
++                         (loop for temp = (vop-temps vop) then (tn-ref-across temp)
++                               while temp
++                               never (same-location-p (tn-ref-tn temp) dest)))
++                (setf (tn-offset tmp) (tn-offset dest))))))))))
++
+ (defun ir2-optimize (component &optional stage)
+   (let ((*2block-info* (make-hash-table :test #'eq)))
+     (initialize-ir2-blocks-flow-info component)
+     (case stage
+       (regalloc
++       (when *retarget-result-moves*
++         (retarget-result-moves component))
+        (run-vop-optimizers component stage)
+        (delete-no-op-vops component)
+        (ir2-optimize-jumps component)

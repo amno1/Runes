@@ -1,0 +1,821 @@
+Using 12 processes
+sb-simd.impure: pid 242295
+deadline.impure: pid 242298
+condition-notify.pure: pid 242301
+threads.pure: pid 242304
+gethash-concurrency.pure: pid 242307
+threads-2.impure: pid 242310
+threads.impure: pid 242313
+arith-combinations.pure: pid 242316
+perfecthash.impure: pid 242319
+seq.impure: pid 242322
+deadlock.impure: pid 242325
+mutex.impure: pid 242328
+condition-notify.pure: success (332 msec)
+run-program.impure: pid 245326
+threads.pure: success (633 msec)
+compiler.pure: pid 246024
+perfecthash.impure: success (1835 msec)
+gc-slow.impure: pid 246068
+arith-combinations.pure: success (6159 msec)
+concurrent-syscalls.impure: pid 246500
+run-program.impure: success (6692 msec)
+timer.impure: pid 246524
+compiler.pure: success (7570 msec)
+wait-for.pure: pid 248538
+threads.impure: success (9765 msec)
+signals.impure: pid 249694
+mutex.impure: success (11135 msec)
+finalize-2.impure: pid 251525
+gc-slow.impure: success (9673 msec)
+bug-1180102.impure: pid 251634
+deadlock.impure: success (11538 msec)
+fcb-threads.impure: pid 251637
+seq.impure: success (14866 msec)
+semaphore.pure: pid 287808
+fcb-threads.impure: success (3479 msec)
+arith-slow.pure: pid 294388
+bug-1180102.impure: success (3789 msec)
+compiler-2.pure: pid 301906
+gethash-concurrency.pure: success (16249 msec)
+sb-concurrency.impure: pid 301967
+concurrent-syscalls.impure: success (10128 msec)
+arith-2.pure: pid 301986
+timer.impure: success (9610 msec)
+threads-slow.pure: pid 302288
+wait-for.pure: success (8606 msec)
+timer-dead-thread.impure: pid 302306
+threads-2.impure: success (17141 msec)
+sleepytests.pure: pid 302342
+signals.impure: success (8936 msec)
+gc-threads.impure: pid 302548
+arith-slow.pure: success (4222 msec)
+elfcore.test: pid 302608
+arith-2.pure: success (3386 msec)
+arith.pure: pid 302984
+semaphore.pure: success (6872 msec)
+bug-936304.impure: pid 303478
+bug-936304.impure: success (119 msec)
+bug-981106.impure: pid 303489
+deadline.impure: success (22505 msec)
+save4.test: pid 303521
+timer-dead-thread.impure: success (6243 msec)
+interrupt-atomic-incf.impure: pid 303550
+sb-concurrency.impure: success (6914 msec)
+redblack.pure: pid 303556
+threads-slow.pure: success (6521 msec)
+interrupt-consing.impure: pid 303560
+sleepytests.pure: success (7632 msec)
+compiler-slow.pure: pid 303608
+finalize-2.impure: success (14159 msec)
+fin-threadsafety.pure: pid 303621
+arith.pure: success (5826 msec)
+interrupted-sleep.impure: pid 303630
+save4.test: success (3228 msec)
+threads.test: pid 303647
+bug-981106.impure: success (4668 msec)
+load.impure: pid 303698
+gc-threads.impure: success (8386 msec)
+clos-add-remove-method.impure: pid 303729
+compiler-slow.pure: success (2963 msec)
+type.pure: pid 303733
+compiler-2.pure: status 1 (13125 msec)
+bug-1072739.pure: pid 303738
+interrupt-atomic-incf.impure: success (5418 msec)
+arena-small.impure: pid 303741
+bug-1072739.pure: success (319 msec)
+cmp-combinations.pure: pid 303751
+redblack.pure: success (5857 msec)
+session.impure: pid 303754
+threads.test: success (4048 msec)
+sb-sprof.impure: pid 303782
+clos-add-remove-method.impure: success (2828 msec)
+allocator.pure: pid 303785
+load.impure: success (3665 msec)
+classoid-typep.impure: pid 303789
+allocator.pure: success (509 msec)
+foreign.test: pid 303890
+fin-threadsafety.pure: success (5250 msec)
+hash-cache.pure: pid 304012
+interrupted-sleep.impure: success (5200 msec)
+run-program.test: pid 304150
+type.pure: success (3523 msec)
+print.impure: pid 304715
+elfcore.test: success (12819 msec)
+sb-posix.impure: pid 305505
+session.impure: success (3127 msec)
+dynamic-extent.pure: pid 305591
+sb-sprof.impure: success (2376 msec)
+list.pure: pid 305604
+sb-posix.impure: status 1 (116 msec)
+lzcore.test: pid 305623
+print.impure: success (1299 msec)
+finalize.impure: pid 305949
+run-program.test: success (2114 msec)
+array.pure: pid 306041
+arena-small.impure: success (4364 msec)
+profile.pure: pid 306044
+cmp-combinations.pure: success (4410 msec)
+stream.impure: pid 306067
+hash-cache.pure: success (2754 msec)
+package-id.impure: pid 306071
+classoid-typep.impure: success (3194 msec)
+clos-typechecking.impure: pid 306074
+list.pure: success (1719 msec)
+compiler.test: pid 306134
+profile.pure: success (1149 msec)
+save6.test: pid 306183
+stream.impure: success (838 msec)
+fifo-slow.impure: pid 306190
+foreign.test: success (3679 msec)
+save7.test: pid 306275
+clos-typechecking.impure: success (760 msec)
+seq.pure: pid 306305
+compiler.test: success (573 msec)
+clos.impure: pid 306481
+finalize.impure: success (2046 msec)
+save3.test: pid 306486
+package-id.impure: success (2277 msec)
+defstruct.impure: pid 306527
+array.pure: success (2825 msec)
+save2.test: pid 306538
+lzcore.test: success (3733 msec)
+compiler.impure: pid 306554
+save6.test: success (1957 msec)
+clos-call-next-method.impure: pid 306562
+fifo-slow.impure: success (2104 msec)
+save9.test: pid 306565
+save7.test: success (2402 msec)
+arenaheapwaste.impure: pid 306586
+save3.test: success (1911 msec)
+relocation.test: pid 306590
+clos.impure: success (2154 msec)
+exit-hang.impure: pid 306613
+interrupt-consing.impure: success (13483 msec)
+save1.test: pid 306618
+save9.test: success (1142 msec)
+hashset.pure: pid 306678
+clos-call-next-method.impure: success (1408 msec)
+compiler.impure-cload: pid 306681
+defstruct.impure: success (2138 msec)
+lockfree-list.pure: pid 306705
+exit-hang.impure: success (1160 msec)
+save8.test: pid 306708
+save2.test: success (2617 msec)
+disassem.impure: pid 306733
+relocation.test: success (1911 msec)
+stream.test: pid 306740
+dynamic-extent.pure: success (6328 msec)
+alien.impure: pid 306768
+save1.test: success (2097 msec)
+time.pure: pid 306815
+seq.pure: success (4641 msec)
+brothertree.impure: pid 306824
+arenaheapwaste.impure: success (2386 msec)
+map-tests.pure: pid 306841
+alien.impure: success (536 msec)
+hash.pure: pid 306872
+compiler.impure-cload: success (1822 msec)
+gc.impure: pid 307200
+compiler.impure: status 1 (3429 msec)
+room.test: pid 307409
+map-tests.pure: success (470 msec)
+bit-bash.pure: pid 307421
+time.pure: success (663 msec)
+smoke.impure: pid 307424
+lockfree-list.pure: success (1705 msec)
+ascii.pure: pid 307427
+hashset.pure: success (2237 msec)
+random.pure: pid 307433
+brothertree.impure: success (846 msec)
+sb-introspect.impure: pid 307436
+stream.test: success (1274 msec)
+ebcdic-us.pure: pid 307444
+disassem.impure: success (1506 msec)
+save5.test: pid 307448
+room.test: success (432 msec)
+unicode-properties.pure: pid 307457
+gc.impure: success (695 msec)
+external-format.pure: pid 307464
+hash.pure: success (1040 msec)
+hash-2.pure: pid 307481
+sb-simd.impure: success (40180 msec)
+filesys.pure: pid 307489
+smoke.impure: success (963 msec)
+info.pure: pid 307505
+random.pure: success (903 msec)
+backtrace.impure: pid 307509
+filesys.pure: status 1 (279 msec)
+compare-and-swap.impure: pid 307520
+bit-bash.pure: success (1235 msec)
+raw-slots-interleaved.impure: pid 307592
+save5.test: success (877 msec)
+init.test: pid 307633
+ascii.pure: success (1327 msec)
+iso-8859-1.pure: pid 308046
+ebcdic-us.pure: success (1213 msec)
+iso-8859-2.pure: pid 308697
+hash-2.pure: success (921 msec)
+iso-8859-3.pure: pid 308700
+backtrace.impure: success (590 msec)
+run-sbcl.test: pid 308703
+save8.test: success (3315 msec)
+traceroot.impure: pid 308752
+compare-and-swap.impure: success (692 msec)
+float.pure: pid 308778
+unicode-properties.pure: success (1404 msec)
+utf-8.pure: pid 308801
+raw-slots-interleaved.impure: success (596 msec)
+init-hooks.test: pid 308811
+run-sbcl.test: success (296 msec)
+gc-cardmark.impure: pid 308843
+external-format.pure: success (1735 msec)
+script.test: pid 308909
+init.test: success (1030 msec)
+clos-cache.impure: pid 308953
+info.pure: success (1312 msec)
+compiler-2.impure: pid 308965
+script.test: success (135 msec)
+banner.test: pid 308998
+sb-introspect.impure: success (2178 msec)
+sb-gmp.impure: pid 309010
+compiler-2.impure: success (498 msec)
+aprof.impure: pid 309020
+iso-8859-1.pure: success (1472 msec)
+bad-code.pure: pid 309023
+init-hooks.test: success (1140 msec)
+ctor.impure: pid 309061
+aprof.impure: success (180 msec)
+solist.pure: pid 309064
+float.pure: success (1276 msec)
+alloc-histo.impure: pid 309067
+iso-8859-2.pure: success (1504 msec)
+foreign-stack-alignment.impure: pid 309070
+sb-gmp.impure: success (616 msec)
+package-locks.impure: pid 309073
+foreign-stack-alignment.impure: success (240 msec)
+unicode-collation.pure: pid 309102
+clos-cache.impure: success (992 msec)
+unicode-normalization.pure: pid 309105
+banner.test: success (1111 msec)
+integerdiv.pure: pid 309122
+alloc-histo.impure: success (444 msec)
+filesys.test: pid 309125
+utf-8.pure: success (1760 msec)
+sb-simple-streams.impure: pid 309149
+iso-8859-3.pure: success (1965 msec)
+x86-64-codegen.impure: pid 309153
+package-locks.impure: success (589 msec)
+clos.test: pid 309174
+traceroot.impure: success (1947 msec)
+arena.impure: pid 309177
+bad-code.pure: success (793 msec)
+debug.pure: pid 309181
+filesys.test: success (284 msec)
+hash-table.impure: pid 309306
+clos.test: success (134 msec)
+sb-cover.impure: pid 309311
+sb-cover.impure: status 1 (142 msec)
+dump.impure-cload: pid 309325
+unicode-normalization.pure: success (655 msec)
+join-thread-timeout.impure: pid 309328
+unicode-collation.pure: success (658 msec)
+constraint.pure: pid 309331
+gc-cardmark.impure: success (2058 msec)
+mop.impure: pid 309334
+sb-simple-streams.impure: success (466 msec)
+packages.impure: pid 309340
+solist.pure: success (1088 msec)
+clos-1.impure: pid 309343
+integerdiv.pure: success (668 msec)
+reader.pure: pid 309347
+ctor.impure: success (1306 msec)
+save10.test: pid 309467
+x86-64-codegen.impure: success (736 msec)
+mop-24.impure: pid 309482
+clos-1.impure: success (246 msec)
+bad-code.impure: pid 309488
+hash-table.impure: success (559 msec)
+compiler-ir.pure: pid 309491
+join-thread-timeout.impure: success (397 msec)
+fwdref-layout.impure: pid 309496
+packages.impure: success (359 msec)
+alientype.pure-cload: pid 309503
+bad-code.impure: success (111 msec)
+heapsort.pure-cload: pid 309506
+reader.pure: success (310 msec)
+coerce.pure: pid 309509
+alientype.pure-cload: success (76 msec)
+debug.impure: pid 309512
+mop-24.impure: success (177 msec)
+sb-bsd-sockets.impure: pid 309515
+mop.impure: success (639 msec)
+type.impure: pid 309522
+compiler-ir.pure: success (262 msec)
+callback.impure: pid 309525
+coerce.pure: success (178 msec)
+bit-vector.impure: pid 309530
+fwdref-layout.impure: success (318 msec)
+kill-non-lisp-thread.impure: pid 309533
+dump.impure-cload: success (754 msec)
+symbol-2.pure: pid 309536
+debug.pure: success (1050 msec)
+backq.pure: pid 309543
+debug.impure: success (275 msec)
+mop-6.impure-cload: pid 309547
+heapsort.pure-cload: success (301 msec)
+assembler.pure: pid 309552
+backq.pure: success (134 msec)
+block-compile.impure: pid 309556
+kill-non-lisp-thread.impure: success (176 msec)
+sb-md5.impure: pid 309559
+callback.impure: success (283 msec)
+vector-2.pure: pid 309562
+mop-6.impure-cload: success (155 msec)
+loop.pure: pid 309565
+symbol-2.pure: success (245 msec)
+setf.pure: pid 309568
+assembler.pure: success (186 msec)
+mop.pure: pid 309571
+sb-bsd-sockets.impure: success (487 msec)
+condition-2.pure: pid 309574
+bit-vector.impure: success (345 msec)
+stream.pure: pid 309577
+type.impure: success (422 msec)
+clos-method-combination-redefinition.impure: pid 309586
+vector-2.pure: success (246 msec)
+avltree.pure: pid 309591
+block-compile.impure: success (301 msec)
+pathnames.pure: pid 309594
+mop.pure: success (212 msec)
+typehashmix.impure: pid 309597
+setf.pure: status 1 (278 msec)
+layouts.pure: pid 309601
+save10.test: success (956 msec)
+extended-sequences.impure: pid 309605
+sb-md5.impure: success (399 msec)
+pprint.impure: pid 309608
+condition-2.pure: success (271 msec)
+compiler-1.impure-cload: pid 309611
+loop.pure: success (345 msec)
+icf-smoketest.impure-cload: pid 309614
+clos-method-combination-redefinition.impure: success (221 msec)
+float-2.pure: pid 309617
+avltree.pure: success (150 msec)
+static-alloc.impure: pid 309620
+stream.pure: success (373 msec)
+clos.impure-cload: pid 309624
+typehashmix.impure: success (249 msec)
+string.pure: pid 309627
+constraint.pure: success (1451 msec)
+interface.impure: pid 309630
+static-alloc.impure: success (128 msec)
+interface.pure: pid 309633
+pathnames.pure: success (275 msec)
+static-garbage.impure: pid 309636
+compiler-1.impure-cload: success (206 msec)
+octets.pure: pid 309639
+pprint.impure: success (216 msec)
+hopscotch.impure-cload: pid 309642
+layouts.pure: success (308 msec)
+deprecation.impure: pid 309645
+clos.impure-cload: success (252 msec)
+mop-32.impure: pid 309648
+static-garbage.impure: success (199 msec)
+mop-3.impure-cload: pid 309651
+interface.pure: success (228 msec)
+compiler-2.impure-cload: pid 309654
+octets.pure: success (233 msec)
+slot-boundp.impure: pid 309657
+hopscotch.impure-cload: success (275 msec)
+reader.impure: pid 309660
+interface.impure: success (423 msec)
+mop-4.impure-cload: pid 309663
+mop-32.impure: success (210 msec)
+mop-2.impure-cload: pid 309666
+deprecation.impure: success (313 msec)
+condition.pure: pid 309669
+mop-3.impure-cload: success (214 msec)
+lambda-list.pure: pid 309672
+slot-boundp.impure: success (178 msec)
+backq.pure-cload: pid 309675
+compiler-2.impure-cload: success (237 msec)
+weak-hashtable.impure: pid 309678
+string.pure: success (499 msec)
+clos.pure: pid 309681
+extended-sequences.impure: success (678 msec)
+autoclose-stream.impure: pid 309684
+backq.pure-cload: success (86 msec)
+character.pure: pid 309687
+icf-smoketest.impure-cload: success (766 msec)
+sb-cltl2.impure: pid 309690
+autoclose-stream.impure: success (112 msec)
+interface.test: pid 309693
+mop-4.impure-cload: success (205 msec)
+backq-const-fold.impure-cload: pid 309703
+reader.impure: success (315 msec)
+defstruct.impure-cload: pid 309713
+interface.test: success (61 msec)
+format.pure: pid 309731
+condition.pure: success (285 msec)
+compiler.pure-cload: pid 309734
+float-2.pure: success (892 msec)
+mop-20.impure-cload: pid 309737
+character.pure: success (191 msec)
+simd-pack.pure: pid 309740
+clos.pure: success (263 msec)
+side-effectful-pathnames.test: pid 309743
+mop-2.impure-cload: success (333 msec)
+filecompile.impure: pid 309746
+lambda-list.pure: success (326 msec)
+mop-31.impure: pid 309749
+backq-const-fold.impure-cload: success (135 msec)
+finalize.test: pid 309759
+side-effectful-pathnames.test: success (33 msec)
+mop-23.impure: pid 309784
+sb-cltl2.impure: success (205 msec)
+mop-19.impure-cload: pid 309790
+defstruct.impure-cload: success (200 msec)
+mop-22.impure-cload: pid 309793
+simd-pack.pure: success (143 msec)
+unicode-breaking.pure: pid 309797
+mop-31.impure: success (146 msec)
+clos-interrupts.impure: pid 309800
+mop-20.impure-cload: success (185 msec)
+mop.impure-cload: pid 309803
+mop-23.impure: success (137 msec)
+do-refs.impure: pid 309806
+finalize.test: success (166 msec)
+symbol.pure: pid 309809
+mop-19.impure-cload: success (126 msec)
+defglobal.pure: pid 309813
+compiler.pure-cload: success (250 msec)
+ccase.pure: pid 309818
+format.pure: success (289 msec)
+describe.impure: pid 309821
+clos-interrupts.impure: success (98 msec)
+error-source-path.impure: pid 309825
+mop-22.impure-cload: success (158 msec)
+mop-21.impure-cload: pid 309828
+filecompile.impure: success (251 msec)
+loop-2.pure: pid 309831
+ccase.pure: success (96 msec)
+serve-event.pure: pid 309834
+defglobal.pure: success (125 msec)
+sb-aclrepl.impure: pid 309837
+unicode-breaking.pure: success (198 msec)
+map-refs.pure: pid 309840
+do-refs.impure: success (168 msec)
+eval.impure: pid 309843
+mop.impure-cload: success (191 msec)
+exhaust.impure: pid 309846
+loop-2.pure: success (128 msec)
+gray-streams.impure: pid 309849
+serve-event.pure: success (92 msec)
+stream.impure-cload: pid 309852
+describe.impure: success (190 msec)
+mop-1.impure-cload: pid 309855
+error-source-path.impure: success (191 msec)
+bsearch.pure: pid 309859
+mop-21.impure-cload: success (190 msec)
+walk.impure: pid 309862
+arena.impure: success (2951 msec)
+fun-names.pure: pid 309865
+map-refs.pure: success (119 msec)
+simd-pack-256.pure: pid 309868
+symbol.pure: success (294 msec)
+mop-28.impure: pid 309871
+sb-aclrepl.impure: success (204 msec)
+deprecation.internal.impure: pid 309874
+exhaust.impure: success (159 msec)
+macroexpand.pure: pid 309877
+eval.impure: success (187 msec)
+mop-26.impure: pid 309880
+fun-names.pure: success (116 msec)
+mop-27.impure: pid 309883
+stream.impure-cload: success (187 msec)
+compound-cons.pure: pid 309886
+walk.impure: success (156 msec)
+step.pure: pid 309889
+weak-hashtable.impure: success (893 msec)
+mop-33.impure: pid 309892
+bsearch.pure: success (173 msec)
+progv.pure: pid 309895
+deprecation.internal.impure: success (100 msec)
+heapwalk.impure: pid 309898
+simd-pack-256.pure: success (172 msec)
+bivalent-stream.pure: pid 309901
+mop-28.impure: success (176 msec)
+make-thread.pure: pid 309904
+mop-1.impure-cload: success (243 msec)
+properties.pure: pid 309907
+gray-streams.impure: success (268 msec)
+destructure.pure: pid 309910
+mop-27.impure: success (114 msec)
+mop-25.impure: pid 309913
+macroexpand.pure: success (158 msec)
+mop-30.impure: pid 309916
+mop-26.impure: success (168 msec)
+define-compiler-macro.pure: pid 309919
+mop-33.impure: success (88 msec)
+selfbuild-output.pure: pid 309922
+step.pure: success (105 msec)
+defglobal.pure-cload: pid 309925
+compound-cons.pure: success (142 msec)
+slot-value.impure: pid 309928
+properties.pure: success (92 msec)
+mop-7.impure-cload: pid 309931
+progv.pure: success (139 msec)
+concurrent-rename-package.impure: pid 309935
+heapwalk.impure: success (152 msec)
+sb-rotate-byte.impure: pid 309938
+mop-25.impure: success (108 msec)
+win64-exceptions.impure: pid 309941
+bivalent-stream.pure: success (166 msec)
+packed-varints.pure: pid 309944
+selfbuild-output.pure: success (91 msec)
+mop-29.impure: pid 309947
+defglobal.pure-cload: success (90 msec)
+system.impure: pid 309950
+define-compiler-macro.pure: success (99 msec)
+mop-18.impure-cload: pid 309953
+destructure.pure: success (161 msec)
+mop-5.impure-cload: pid 309956
+make-thread.pure: success (178 msec)
+toplevel.test: pid 309963
+mop-7.impure-cload: success (99 msec)
+gc-smoketest.pure: pid 309976
+mop-30.impure: success (173 msec)
+specializer.impure: pid 309986
+toplevel.test: success (38 msec)
+with-compilation-unit.impure: pid 310000
+win64-exceptions.impure: success (84 msec)
+slot-unbound.impure: pid 310003
+mop-18.impure-cload: success (103 msec)
+mop-9.impure-cload: pid 310007
+mop-29.impure: success (107 msec)
+mop-8.impure-cload: pid 310010
+sb-rotate-byte.impure: success (143 msec)
+save.impure: pid 310013
+concurrent-rename-package.impure: success (160 msec)
+coalesce.pure: pid 310016
+mop-5.impure-cload: success (124 msec)
+unicode-misc.pure: pid 310019
+system.impure: success (143 msec)
+gcd.pure: pid 310022
+with-compilation-unit.impure: success (104 msec)
+break-on-signals.impure: pid 310027
+packed-varints.pure: success (185 msec)
+private-cons.impure: pid 310030
+slot-unbound.impure: success (118 msec)
+win32-foreign-stack-unwind.impure: pid 310033
+mop-8.impure-cload: success (97 msec)
+constantp.pure: pid 310036
+specializer.impure: success (154 msec)
+enc-cn.pure: pid 310039
+mop-9.impure-cload: success (107 msec)
+full-eval.impure: pid 310042
+coalesce.pure: success (108 msec)
+style-warnings.impure: pid 310045
+gc-smoketest.pure: success (186 msec)
+deftype.impure: pid 310048
+save.impure: success (115 msec)
+encap.impure: pid 310051
+break-on-signals.impure: success (78 msec)
+typep.impure-cload: pid 310054
+slot-value.impure: success (328 msec)
+pprint.pure: pid 310057
+win32-foreign-stack-unwind.impure: success (87 msec)
+inspect.impure: pid 310060
+gcd.pure: success (145 msec)
+case.pure: pid 310063
+full-eval.impure: success (91 msec)
+mop-13.impure-cload: pid 310068
+constantp.pure: success (100 msec)
+chill.test: pid 310071
+unicode-misc.pure: success (166 msec)
+vector.pure: pid 310074
+private-cons.impure: success (170 msec)
+call-into-lisp.impure: pid 310093
+style-warnings.impure: status 1 (123 msec)
+unwind-to-frame-and-call.impure: pid 310096
+enc-cn.pure: success (145 msec)
+mop-12.impure-cload: pid 310099
+chill.test: success (58 msec)
+mop-15.impure-cload: pid 310102
+deftype.impure: success (133 msec)
+undefined-classoid-bug.test: pid 310105
+encap.impure: success (147 msec)
+mop-17.impure-cload: pid 310120
+typep.impure-cload: success (128 msec)
+enc-jpn.pure: pid 310123
+case.pure: success (104 msec)
+load.pure: pid 310127
+undefined-classoid-bug.test: success (52 msec)
+vopcombine.pure: pid 310134
+vector.pure: success (120 msec)
+mop-11.impure-cload: pid 310137
+pprint.pure: success (172 msec)
+mop-16.impure-cload: pid 310140
+inspect.impure: success (163 msec)
+sb-mpfr.impure: pid 310143
+unwind-to-frame-and-call.impure: success (122 msec)
+macro-policy-decls.impure-cload: pid 310146
+load.pure: success (82 msec)
+mlf.impure-cload: pid 310149
+mop-13.impure-cload: success (175 msec)
+mop-10.impure-cload: pid 310152
+call-into-lisp.impure: success (141 msec)
+mop-14.impure-cload: pid 310155
+mop-17.impure-cload: success (129 msec)
+fast-eval.impure: pid 310158
+mop-12.impure-cload: success (155 msec)
+immobile-space.impure: pid 310161
+mop-15.impure-cload: success (151 msec)
+filecompile.impure-cload: pid 310164
+mop-11.impure-cload: success (110 msec)
+load.impure-cload: pid 310167
+vopcombine.pure: success (124 msec)
+fin-call.impure: pid 310170
+enc-jpn.pure: success (163 msec)
+xset.pure: pid 310173
+sb-mpfr.impure: success (106 msec)
+hash-custom-test.pure: pid 310176
+macro-policy-decls.impure-cload: success (85 msec)
+win32.impure: pid 310179
+mlf.impure-cload: success (93 msec)
+unintern.impure: pid 310182
+mop-14.impure-cload: success (123 msec)
+trace.impure: pid 310185
+mop-16.impure-cload: success (180 msec)
+hide-packages.test: pid 310188
+fin-call.impure: success (85 msec)
+genheaders.test: pid 310199
+win32.impure: success (71 msec)
+futex-wait.test: pid 310202
+filecompile.impure-cload: success (115 msec)
+aliencall.pure: pid 310205
+fast-eval.impure: success (126 msec)
+atomic-xchg.pure: pid 310218
+futex-wait.test: success (16 msec)
+clockget.pure: pid 310229
+load.impure-cload: success (109 msec)
+clos-method-combination-caches.pure: pid 310232
+mop-10.impure-cload: success (170 msec)
+compiler-3.pure: pid 310235
+xset.pure: success (139 msec)
+coreparse.pure: pid 310238
+hash-custom-test.pure: success (138 msec)
+fast-assoc.pure: pid 310241
+unintern.impure: success (128 msec)
+gengc-barrier.pure: pid 310244
+trace.impure: success (108 msec)
+int-sset.pure: pid 310248
+aliencall.pure: success (114 msec)
+jump-table.pure: pid 310251
+atomic-xchg.pure: success (111 msec)
+lcse.pure: pid 310254
+clos-method-combination-caches.pure: success (129 msec)
+lispobj.pure: pid 310260
+clockget.pure: success (138 msec)
+mv-return.pure: pid 310263
+coreparse.pure: success (133 msec)
+sap.pure: pid 310266
+gengc-barrier.pure: success (121 msec)
+simd-pack-512-kmasks.pure: pid 310269
+lcse.pure: success (95 msec)
+simd-pack-512.pure: pid 310272
+int-sset.pure: success (127 msec)
+sset.pure: pid 310275
+immobile-space.impure: success (357 msec)
+tmpfile.pure: pid 310278
+lispobj.pure: success (114 msec)
+treeshake.pure: pid 310281
+hide-packages.test: success (295 msec)
+typecase-cache.pure: pid 310284
+mv-return.pure: success (140 msec)
+typetran.pure: pid 310287
+sap.pure: success (122 msec)
+ucs-2be.pure: pid 310290
+tmpfile.pure: success (102 msec)
+ucs-2le.pure: pid 310293
+treeshake.pure: success (142 msec)
+ucs-4be.pure: pid 310296
+sset.pure: success (191 msec)
+ucs-4le.pure: pid 310299
+jump-table.pure: success (296 msec)
+utf-16be.pure: pid 310302
+ucs-2be.pure: success (186 msec)
+utf-16le.pure: pid 310305
+simd-pack-512-kmasks.pure: success (311 msec)
+utf-32be.pure: pid 310308
+simd-pack-512.pure: success (287 msec)
+utf-32le.pure: pid 310311
+typetran.pure: success (237 msec)
+vectorfill.pure: pid 310314
+ucs-2le.pure: success (205 msec)
+weak-ht-pounding.pure: pid 310317
+fast-assoc.pure: success (503 msec)
+xref.pure: pid 310320
+ucs-4le.pure: success (180 msec)
+zstd.pure: pid 310323
+typecase-cache.pure: success (339 msec)
+boundp.pure-cload: pid 310338
+utf-16be.pure: success (221 msec)
+disassem.pure-cload: pid 310341
+ucs-4be.pure: success (231 msec)
+alien-struct-access.impure: pid 310344
+xref.pure: success (116 msec)
+alien-struct-by-value.impure: pid 310347
+vectorfill.pure: success (163 msec)
+arena-clos.impure: pid 310354
+disassem.pure-cload: success (121 msec)
+arenapred.impure: pid 310364
+utf-16le.pure: success (307 msec)
+arm64-codegen.impure: pid 310370
+boundp.pure-cload: success (186 msec)
+charmacro.impure: pid 310373
+utf-32le.pure: success (331 msec)
+chill.impure: pid 310376
+utf-32be.pure: success (335 msec)
+clos-discrimination-net.impure: pid 310379
+alien-struct-access.impure: success (260 msec)
+clos-hash.impure: pid 310382
+arenapred.impure: success (143 msec)
+clos-method-em-caches.impure: pid 310385
+arm64-codegen.impure: success (99 msec)
+clos-redef.impure: pid 310388
+charmacro.impure: success (150 msec)
+compile-constnil.impure: pid 310391
+clos-discrimination-net.impure: success (163 msec)
+filesys.impure: pid 310394
+zstd.pure: success (413 msec)
+form-number-translations.impure: pid 310397
+clos-redef.impure: success (116 msec)
+form-to-fasl.impure: pid 310400
+clos-method-em-caches.impure: success (152 msec)
+hashset.impure: pid 310403
+compile-constnil.impure: success (121 msec)
+ht-affinity.impure: pid 310408
+arena-clos.impure: success (436 msec)
+lcse.impure: pid 310411
+clos-hash.impure: success (236 msec)
+linkage-refs.impure: pid 310414
+form-to-fasl.impure: success (117 msec)
+mop-34.impure: pid 310417
+form-number-translations.impure: success (153 msec)
+mop-35.impure: pid 310420
+alien-struct-by-value.impure: success (562 msec)
+mop-36.impure: pid 310423
+filesys.impure: success (267 msec)
+mrgc-ht-rehash.impure: pid 310426
+lcse.impure: success (146 msec)
+mv-return.impure: pid 310429
+linkage-refs.impure: success (163 msec)
+phash-typecase.impure: pid 310432
+mop-35.impure: success (196 msec)
+pkgiter.impure: pid 310435
+mop-34.impure: success (230 msec)
+slot-mapper.impure: pid 310438
+mrgc-ht-rehash.impure: success (141 msec)
+stablehash.impure: pid 310441
+mop-36.impure: success (176 msec)
+utf-8.impure: pid 310444
+pkgiter.impure: success (123 msec)
+x86-linux.impure: pid 310447
+chill.impure: success (667 msec)
+defconst.impure-cload: pid 310450
+slot-mapper.impure: success (172 msec)
+checkheap.test: pid 310453
+stablehash.impure: success (175 msec)
+elf-sans-immobile.test: pid 310468
+phash-typecase.impure: success (304 msec)
+linkage-cells.test: pid 310480
+elf-sans-immobile.test: success (18 msec)
+load.test: pid 310485
+checkheap.test: success (61 msec)
+runtime-options.test: pid 310490
+ht-affinity.impure: success (530 msec)
+save11.test: pid 310498
+linkage-cells.test: success (18 msec)
+load.test: success (21 msec)
+x86-linux.impure: success (156 msec)
+runtime-options.test: success (23 msec)
+defconst.impure-cload: success (159 msec)
+mv-return.impure: success (625 msec)
+weak-ht-pounding.pure: success (1426 msec)
+hashset.impure: success (924 msec)
+utf-8.impure: success (699 msec)
+save11.test: success (1067 msec)
+compiler-3.pure: success (3082 msec)
+genheaders.test: success (4330 msec)
+Total realtime: 51308 msec
+Failing files:
+(style-warnings.impure NIL 310045)
+(setf.pure NIL 309568)
+(sb-cover.impure NIL 309311)
+(filesys.pure NIL 307489)
+(compiler.impure NIL 306554)
+(sb-posix.impure NIL 305505)
+(compiler-2.pure NIL 301906)
+==== Logs are in /tmp/claude-1000/-home-arthur-repos-skia-decompress/6c4c17c6-e6a7-49f3-ad17-7e4d904ba083/scratchpad/testlogs/ ====
