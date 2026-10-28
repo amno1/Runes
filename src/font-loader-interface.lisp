@@ -303,6 +303,19 @@ kerning table."
   "Valid sfntVersion values at the start of a font's table directory.")
 
 (defun open-font-loader-from-data (data &key (collection-index 0) input-stream)
+  ;; WOFF and WOFF2 ('wOFF', 'wOF2'): decode to an sfnt (or TTC) in memory first
+  (when (>= (zpb-otf:font-data-length data) 4)
+    (case (zpb-otf:font-data-read-u32 data 0)
+      (#x774F4646
+       (return-from open-font-loader-from-data
+         (open-font-loader-from-data (zpb-otf:decode-woff1 data)
+                                     :collection-index collection-index
+                                     :input-stream input-stream)))
+      (#x774F4632
+       (return-from open-font-loader-from-data
+         (open-font-loader-from-data (zpb-otf:decode-woff2 data)
+                                     :collection-index collection-index
+                                     :input-stream input-stream)))))
   (let* ((sfnt-magic (zpb-otf:font-data-read-u32 data 0))
          (font-offset 0)
          (coll-count nil)

@@ -36,6 +36,11 @@
     (load (merge-pathnames "gvar-test.lisp" this-dir))
     (uiop:symbol-call :zpb-ttf/gvar-test :run-gvar-tests)
 
+    ;; 6. WOFF 1.0 and WOFF2 against the original fonts
+    (format t "~%--- 6. Running WOFF Tests (woff-test.lisp) ---~%")
+    (load (merge-pathnames "woff-test.lisp" this-dir))
+    (uiop:symbol-call :zpb-ttf/woff-test :run-woff-tests)
+
     (format t "~%========================================================~%")
     (format t "ALL TEST SUITES PASSED CLEANLY!~%")
     (format t "========================================================~%")

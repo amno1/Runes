@@ -21,6 +21,14 @@ from Fontations' `font-test-data/test_data/extracted` (generated there by
 `extract_glyphs.py`, under Fontations' MIT license); the tests compare against
 them.
 
+`woff/` holds WOFF 1.0 and WOFF2 copies of `base.ttf`, `glyf_components.ttf`,
+`vazirmatn_var_trimmed.ttf`, `LiberationSans-Regular.ttf`, `Cantarell-VF.otf`
+and (WOFF2 only) `TTC.ttc`, under the same licenses, made by
+`woff/make-woff.py`: WOFF 1.0 by its own zlib encoder (`base.woff` also
+carries a test metadata and private data block), WOFF2 by `woff2_compress`,
+which drops the `DSIG` table. The font data is otherwise unchanged; the
+tests compare the decoded tables with the originals.
+
 The OFL and Bitstream Vera licenses forbid selling the fonts by themselves and
 require modified versions to be renamed. Don't modify these files in place;
 if a test needs a changed font, give it a new name.
