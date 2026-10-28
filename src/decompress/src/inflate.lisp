@@ -30,10 +30,14 @@
     (dotimes (i 30 a)
       (setf (aref a i) (logior (ash (svref base i) 5) (svref extra i))))))
 
-;;; What the decode tables hold per symbol (BUILD-TABLE's MAP): literals and
-;;; the end code themselves; for length and distance codes +MATCH-FLAG+ | base<<4
-;;; | extra bits, so a match needs no second lookup; unused symbols map to
-;;; +INVALID-SYMBOL+ (below +MATCH-FLAG+, so one comparison rejects them).
+;;; What the decode tables hold per symbol (BUILD-DEFLATE-TABLE's MAP):
+;;; literals and the end code themselves; for length and distance codes
+;;; +MATCH-FLAG+ with their base and extra-bit count, so a match needs no
+;;; second lookup.  As in libdeflate, a length entry's bit count includes the
+;;; extra bits, so one shift consumes both; the decoder reads the extra bits
+;;; from the bit buffer as it was before that shift.  (Done for distances
+;;; too, it measured 1-4% slower.)  Unused symbols map to +INVALID-SYMBOL+
+;;; (below +MATCH-FLAG+, so one comparison rejects them).
 (defconstant +match-flag+ #x100000)
 (defconstant +invalid-symbol+ 1023
   "Symbol of decode-table entries that no valid stream can reach.")
@@ -41,9 +45,22 @@
 (defglobal-table +literal-map+ u32vec
   (let ((m (make-array 288 :element-type '(unsigned-byte 32) :initial-element +invalid-symbol+)))
     (dotimes (i 257) (setf (aref m i) i))
+    ;; lengths: extra bits at 16, the base at 4; the decode table adds the
+    ;; code's length below the base and the extra bits to its bit count
+    ;; (COMBINE-LENGTH), so one shift consumes code and extra bits
     (dotimes (i 29 m)
       (let ((e (aref +length-tab+ i)))
-        (setf (aref m (+ 257 i)) (logior +match-flag+ (ash (ash e -5) 4) (logand e 31)))))))
+        (setf (aref m (+ 257 i)) (logior +match-flag+ (ash (logand e 31) 16) (ash (ash e -5) 4)))))))
+
+(declaim (inline combine-length))
+(defun combine-length (v l)
+  "Literal/length table entry for map value V, code length L: for a length,
+L goes in V's low 4 bits (to find the extra bits below the code) and the
+entry's bit count covers the extra bits too (at most 10 + 5 < 16)."
+  (declare (type (unsigned-byte 27) v) (type (integer 0 15) l))
+  (if (>= v +match-flag+)
+      (logior (ash (logior v l) 5) (+ l (ldb (byte 3 16) v)))
+      (logior (ash v 5) l)))
 
 (defglobal-table +distance-map+ u32vec
   (let ((m (make-array 32 :element-type '(unsigned-byte 32) :initial-element +invalid-symbol+)))
@@ -63,42 +80,127 @@
 ;;; reason.  Distance tables keep an 8-bit root.
 (defconstant +lit-root-bits+ 10)
 
+(defun build-deflate-table (lens start n count root-bits kind)
+  "Decode table, in BUILD-TABLE's format, for the complete code given by the N
+lengths at LENS[START...], COUNT[l] of them of length l.  libdeflate's method:
+codewords are enumerated bit-reversed in canonical order, and the root is
+filled by doubling (the table is treated as 2^len entries while codes of
+length len are stored, one entry each, then copied onto its upper half), so
+there are no strided stores.  KIND (:LITERAL, :DISTANCE or :CODE-LENGTH) picks
+the map; literal/length entries are made with COMBINE-LENGTH."
+  (declare (type u8vec lens) (type index start n) (type counts count)
+           (type (integer 5 11) root-bits)
+           (optimize speed (safety 0)))
+  (let ((offs (make-array 17 :element-type '(unsigned-byte 16) :initial-element 0))
+        (sorted (make-array 288 :element-type '(unsigned-byte 16)))
+        (scratch (make-array #.(+ 2048 32768) :element-type '(unsigned-byte 32)))
+        (cnt 0) (len 1) (codeword 0) (end 0) (i 0))
+    (declare (dynamic-extent offs sorted scratch)
+             (type fixnum cnt end i) (type (integer 0 16) len)
+             (type (unsigned-byte 16) codeword))
+    (loop for l from 1 to 15 do (setf (aref offs (1+ l)) (+ (aref offs l) (aref count l))))
+    (dotimes (s n)
+      (let ((l (aref lens (+ start s))))
+        (when (plusp l)
+          (setf (aref sorted (aref offs l)) s)
+          (incf (aref offs l)))))
+    (macrolet ((entry (l) `(let* ((s (aref sorted i))
+                                  (l ,l))
+                             (incf i)
+                             (case kind
+                               (:literal (combine-length (aref +literal-map+ s) l))
+                               (:distance (logior (ash (aref +distance-map+ s) 5) l))
+                               (t (logior (ash s 5) l)))))
+               (next-codeword (mask)
+                 ;; the next canonical codeword, bit-reversed: set the
+                 ;; highest 0 bit below MASK, clear the 1 bits above it
+                 `(let ((bit (ash 1 (1- (integer-length (logxor codeword ,mask))))))
+                    (setf codeword (logior (logand codeword (1- bit)) bit))))
+               (done () `(return-from build-deflate-table
+                           (let ((tab (make-array end :element-type '(unsigned-byte 32))))
+                             (replace tab scratch :end2 end)
+                             tab))))
+      (loop while (zerop (setf cnt (aref count len))) do (incf len))
+      (setf end (ash 1 len))
+      ;; codes of up to ROOT-BITS bits
+      (loop while (<= len root-bits) do
+        (loop
+          (setf (aref scratch codeword) (entry len))
+          (when (= codeword (1- end))           ; the last codeword (all 1s)
+            (loop while (< end (ash 1 root-bits))
+                  do (replace scratch scratch :start1 end :end2 end)
+                     (setf end (ash end 1)))
+            (done))
+          (next-codeword (1- end))
+          (when (zerop (decf cnt)) (return)))
+        (loop
+          (when (<= (incf len) root-bits)
+            (replace scratch scratch :start1 end :end2 end)
+            (setf end (ash end 1)))
+          (unless (zerop (setf cnt (aref count len))) (return))))
+      ;; longer codes: subtables, each sized to be filled exactly
+      (let ((rmask (1- (ash 1 root-bits))) (prefix -1) (sstart 0))
+        (declare (type fixnum prefix sstart))
+        (setf end (ash 1 root-bits))
+        (loop
+          (unless (= (logand codeword rmask) prefix)
+            (let ((sbits (- len root-bits)) (used cnt))
+              (declare (type (integer 0 15) sbits) (type fixnum used))
+              (loop while (< used (ash 1 sbits))
+                    do (incf sbits)
+                       (setf used (+ (ash used 1) (aref count (+ root-bits sbits)))))
+              (setf prefix (logand codeword rmask)
+                    sstart end
+                    (aref scratch prefix) (logior (ash sstart 5) (+ 16 sbits))
+                    end (+ sstart (ash 1 sbits)))))
+          (let ((e (entry (- len root-bits))))
+            (loop for j of-type fixnum from (+ sstart (ash codeword (- root-bits))) below end
+                    by (ash 1 (- len root-bits))
+                  do (setf (aref scratch j) e)))
+          (when (= codeword (1- (ash 1 len))) (done))
+          (next-codeword (1- (ash 1 len)))
+          (when (zerop (decf cnt))
+            (loop (setf cnt (aref count (incf len)))
+                  (when (plusp cnt) (return)))))))))
+
 (defun deflate-table (lens start n kind &optional (root-bits 8))
   "Decode table for the code given by N lengths at LENS[START...].  KIND is
 :LITERAL, :DISTANCE or :CODE-LENGTH; like zlib, an incomplete code is only
 accepted as a single code of length 1 (literal and distance codes), and a
 distance code may be empty (an error only if a distance is ever needed)."
   (declare (type u8vec lens) (type index start n))
-  (with-code-arrays (syms lens* count n)
-    (let ((m 0) (space 0))
-      (declare (type (integer 0 1024) m) (type fixnum space))
-      (dotimes (i n)
-        (let ((l (aref lens (+ start i))))
-          (when (plusp l)
-            (setf (aref syms m) i (aref lens* m) l)
-            (incf m)
-            (incf (aref count l))
-            (incf space (ash 1 (- 15 l))))))
-      (cond
-        ((> space 32768) (berr "oversubscribed prefix code"))
-        ((= space 32768)
-         (build-table syms lens* m count root-bits
-                      (case kind (:literal +literal-map+) (:distance +distance-map+))))
-        ;; incomplete codes zlib accepts: one code of length 1 (its other bit
-        ;; pattern is invalid), and an empty distance code
-        ((or (and (= m 1) (= (aref lens* 0) 1) (not (eq kind :code-length)))
-             (and (= m 0) (eq kind :distance)))
-         (let ((tab (make-array (ash 1 root-bits) :element-type '(unsigned-byte 32)
-                                                  :initial-element (logior (ash +invalid-symbol+ 5) 1))))
-           (when (= m 1)
-             (let ((v (case kind
-                        (:literal (aref +literal-map+ (aref syms 0)))
-                        (:distance (aref +distance-map+ (aref syms 0)))
-                        (t (aref syms 0)))))
-               (loop for j from 0 below (ash 1 root-bits) by 2
-                     do (setf (aref tab j) (logior (ash v 5) 1)))))
-           tab))
-        (t (berr "incomplete prefix code"))))))
+  (let ((count (make-array 16 :element-type '(unsigned-byte 16) :initial-element 0))
+        (m 0) (space 0) (first 0))
+    (declare (dynamic-extent count) (type (integer 0 1024) m) (type fixnum space)
+             (type index first))
+    (dotimes (i n)
+      (let ((l (aref lens (+ start i))))
+        (when (plusp l)
+          (when (zerop m) (setf first i))
+          (incf m)
+          (incf (aref count l))
+          (incf space (ash 1 (- 15 l))))))
+    (cond
+      ((> space 32768) (berr "oversubscribed prefix code"))
+      ((= space 32768)
+       (build-deflate-table lens start n count root-bits kind))
+      ;; incomplete codes zlib accepts: one code of length 1 (its other bit
+      ;; pattern is invalid), and an empty distance code
+      ((or (and (= m 1) (= (aref lens (+ start first)) 1) (not (eq kind :code-length)))
+           (and (= m 0) (eq kind :distance)))
+       (let ((tab (make-array (ash 1 root-bits) :element-type '(unsigned-byte 32)
+                                                :initial-element (logior (ash +invalid-symbol+ 5) 1))))
+         (when (= m 1)
+           (let ((v (case kind
+                      (:literal (aref +literal-map+ first))
+                      (:distance (aref +distance-map+ first))
+                      (t first))))
+             (loop for j from 0 below (ash 1 root-bits) by 2
+                   do (setf (aref tab j) (if (eq kind :literal)
+                                             (combine-length v 1)
+                                             (logior (ash v 5) 1))))))
+         tab))
+      (t (berr "incomplete prefix code")))))
 
 (sb-ext:define-load-time-global +fixed-tables+
   (let ((lens (make-array 320 :element-type '(unsigned-byte 8))))
@@ -128,20 +230,29 @@ distance code may be empty (an error only if a distance is ever needed)."
           (total (+ hlit hdist))
           (i 0))
       (declare (dynamic-extent lens) (type (integer 0 320) total i))
-      (loop while (< i total) do
-        (let ((sym (read-sym r cl-table)))
-          (cond
-            ((< sym 16) (setf (aref lens i) sym) (incf i))
-            ((> sym 18) (berr "invalid code length code"))
-            (t (multiple-value-bind (value n)
-                   (case sym
-                     (16 (when (zerop i) (berr "repeat with no previous length"))
-                         (values (aref lens (1- i)) (+ 3 (read-bits r 2))))
-                     (17 (values 0 (+ 3 (read-bits r 3))))
-                     (t (values 0 (+ 11 (read-bits r 7)))))
-                 (when (> (+ i n) total) (berr "code lengths repeat past the end"))
-                 (fill lens value :start i :end (+ i n))
-                 (incf i n))))))
+      ;; the reader's state in locals, as in INFLATE-BLOCK; one refill per
+      ;; code length covers its code (<= 7 bits) and repeat bits (<= 7)
+      (let ((in (reader-in r)) (limit (reader-limit r))
+            (val (reader-val r)) (bits (reader-bits r)) (pos (reader-pos r)))
+        (declare (type u8vec in) (type index limit)
+                 (type (unsigned-byte 64) val) (type sb-ext:word pos bits))
+        (loop while (< i total) do
+          (br-need 14)
+          (let ((sym (br-sym cl-table (progn))))
+            (declare (type (unsigned-byte 27) sym))
+            (cond
+              ((< sym 16) (setf (aref lens i) sym) (incf i))
+              ((> sym 18) (berr "invalid code length code"))
+              (t (multiple-value-bind (value n)
+                     (case sym
+                       (16 (when (zerop i) (berr "repeat with no previous length"))
+                           (values (aref lens (1- i)) (+ 3 (br-bits-no-refill 2))))
+                       (17 (values 0 (+ 3 (br-bits-no-refill 3))))
+                       (t (values 0 (+ 11 (br-bits-no-refill 7)))))
+                   (when (> (+ i n) total) (berr "code lengths repeat past the end"))
+                   (fill lens value :start i :end (+ i n))
+                   (incf i n))))))
+        (setf (reader-val r) val (reader-bits r) bits (reader-pos r) pos))
       (when (zerop (aref lens 256)) (berr "no end-of-block code"))
       ;; the distance lengths sit after the literal ones: copy them down to a
       ;; zero-padded 32-entry area so the table code sees one alphabet
@@ -181,10 +292,21 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
       (declare (inline berr))
     (sb-sys:with-pinned-objects (buf)
       (let ((bs (sb-sys:vector-sap buf)))
-        (let ((sym 0))
-          (declare (type index sym))
-          (macrolet ((next-symbol ()
-                       `(setf sym (br-sym ltab (progn) #.+lit-root-bits+)))
+        (let ((sym 0) (saved 0))
+          (declare (type index sym) (type (unsigned-byte 64) saved))
+          ;; SAVED is VAL before the symbol's last shift: a length entry's
+          ;; shift also drops its extra bits, which are read from SAVED
+          (macrolet ((finish-symbol (entry)
+                       `(let ((%e ,entry))
+                          (declare (type (unsigned-byte 32) %e))
+                          (when (>= (logand %e 31) 16)
+                            (br-drop #.+lit-root-bits+)
+                            (setf %e (aref ltab (+ (ash %e -5) (low-bits val (- (logand %e 31) 16))))))
+                          (setf saved val)
+                          (br-drop (logand %e 31))
+                          (setf sym (ash %e -5))))
+                     (next-symbol ()
+                       `(finish-symbol (aref ltab (ldb (byte #.+lit-root-bits+ 0) val))))
                      (literal-or-leave ()
                        ;; store a literal, or go handle the end code / a match
                        `(if (< sym 256)
@@ -204,22 +326,24 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
                ;; always left here), so the refill's load overlaps it.
                (let ((e (aref ltab (ldb (byte #.+lit-root-bits+ 0) val))))
                  (br-refill)
-                 (setf sym (br-sym-entry ltab e #.+lit-root-bits+)))
+                 (finish-symbol e))
                (literal-or-leave)
                (next-symbol) (literal-or-leave)
                (next-symbol) (literal-or-leave)
                (go top)
              other
                (when (= sym 256) (go done))
-               ;; a match needs up to 33 more bits (5 length extra, 15
-               ;; distance code, 13 distance extra), and the next iteration's
-               ;; early root lookup 10 after that
-               (br-need 43)
-               ;; length entries hold +MATCH-FLAG+ | base<<4 | extra bits
+               ;; a match needs up to 28 more bits (15 distance code, 13
+               ;; distance extra; the length's extra bits are consumed
+               ;; already), and the next iteration's early root lookup 10
+               ;; after that
+               (br-need 38)
+               ;; length entries hold +MATCH-FLAG+ | extra bits<<16 | base<<4
+               ;; | code length
                (when (< sym +match-flag+) (berr "invalid length code"))
-               (let ((len (+ (ldb (byte 9 4) sym) (ldb (byte (logand sym 15) 0) val))))
+               (let ((len (+ (ldb (byte 9 4) sym)
+                             (low-bits (ash saved (- (logand sym 15))) (ldb (byte 3 16) sym)))))
                  (declare (type index len))
-                 (br-drop (logand sym 15))
                  (let ((d (br-sym dtab (progn))))
                    (declare (type index d))
                    (when (< d +match-flag+) (berr "invalid distance code"))
@@ -334,6 +458,11 @@ origLength as SIZE-HINT.  Signals DEFLATE-ERROR on malformed input."
   (let ((w (make-array 64 :element-type '(signed-byte 8))))
     (dotimes (i 64 w) (setf (aref w i) (- 64 i)))))
 
+#+decompress-avx2
+(defglobal-table +adler-weights+ (simple-array (signed-byte 8) (32))
+  (let ((w (make-array 32 :element-type '(signed-byte 8))))
+    (dotimes (i 32 w) (setf (aref w i) (- 32 i)))))
+
 (defun adler32 (buf n)
   "Adler-32 of the first N bytes of BUF."
   (declare (type u8vec buf) (type index n) (optimize (speed 3) (safety 0)))
@@ -369,6 +498,36 @@ origLength as SIZE-HINT.  Signals DEFLATE-ERROR on malformed input."
                   (sump (multiple-value-call #'+ (sb-simd-avx512f:u64.8-values ps)))
                   (sum2 (multiple-value-call #'+ (sb-simd-avx512f:s32.16-values s2))))
               (setf b (mod (+ b (* 64 blocks a) (* 64 sump) sum2) 65521)
+                    a (mod (+ a sum1) 65521)))))))
+    ;; the same with AVX2, 32 bytes per step (libdeflate's adler32_avx2)
+    #+decompress-avx2
+    (sb-sys:with-pinned-objects (buf)
+      (let ((sap (sb-sys:vector-sap buf))
+            (w (sb-simd-avx:s8.32-aref +adler-weights+ 0))
+            (ones (sb-simd-avx:s16.16 1))
+            (zero (sb-simd-avx:u8.32 0)))
+        (declare (type sb-simd-avx:s8.32 w) (type sb-simd-avx:s16.16 ones)
+                 (type sb-simd-avx:u8.32 zero))
+        (loop while (<= (+ i 32) n) do
+          (let ((blocks (min 2048 (floor (- n i) 32)))
+                (s1 (sb-simd-avx:u64.4 0))
+                (ps (sb-simd-avx:u64.4 0))
+                (s2 (sb-simd-avx:s32.8 0)))
+            (declare (type (integer 1 2048) blocks) (type sb-simd-avx:u64.4 s1 ps)
+                     (type sb-simd-avx:s32.8 s2))
+            (dotimes (k blocks)
+              (let ((x (sb-simd-avx:u8.32-sap-ref sap i)))
+                (declare (type sb-simd-avx:u8.32 x))
+                (setf ps (sb-simd-avx2:u64.4+ ps s1)
+                      s1 (sb-simd-avx2:u64.4+ s1 (sb-simd-avx2:u8.32-sad x zero))
+                      s2 (sb-simd-avx2:s32.8+
+                          s2 (sb-simd-avx:s32.8!
+                              (sb-simd-avx2:s16.16-madd (sb-simd-avx2:s16.16-maddubs x w) ones))))
+                (incf i 32)))
+            (let ((sum1 (multiple-value-call #'+ (sb-simd-avx:u64.4-values s1)))
+                  (sump (multiple-value-call #'+ (sb-simd-avx:u64.4-values ps)))
+                  (sum2 (multiple-value-call #'+ (sb-simd-avx:s32.8-values s2))))
+              (setf b (mod (+ b (* 32 blocks a) (* 32 sump) sum2) 65521)
                     a (mod (+ a sum1) 65521)))))))
     ;; the rest (all of it without AVX-512), in chunks small enough that the
     ;; sums stay fixnums

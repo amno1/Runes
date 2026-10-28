@@ -44,4 +44,12 @@
               (funcall (find-symbol "INSTRUCTION-SET-AVAILABLE-P" "SB-SIMD-INTERNALS")
                        (funcall (find-symbol "FIND-INSTRUCTION-SET" "SB-SIMD-INTERNALS")
                                 :avx512bw))))
-    (pushnew :decompress-avx512 *features*)))
+    (pushnew :decompress-avx512 *features*))
+  ;; Otherwise stock sb-simd's AVX2 (32 bytes per step) for Adler-32.
+  (when (and (not (member :decompress-avx512 *features*))
+             (find-package "SB-SIMD-AVX2")
+             (ignore-errors
+              (funcall (find-symbol "INSTRUCTION-SET-AVAILABLE-P" "SB-SIMD-INTERNALS")
+                       (funcall (find-symbol "FIND-INSTRUCTION-SET" "SB-SIMD-INTERNALS")
+                                :avx2))))
+    (pushnew :decompress-avx2 *features*)))

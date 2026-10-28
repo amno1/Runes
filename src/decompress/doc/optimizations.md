@@ -462,3 +462,41 @@ reg-reg MOVs, 685 → 626 instructions, stack references unchanged). It passes
 SBCL's test suite and decompress's tests. Executed instructions drop 7–12%
 across five inputs, but MB/s ranges from −3% to +1.4%: neutral, because Zen 5
 eliminates reg-reg MOVs at rename and these loops are dependency-bound.
+
+## 17. Deflate, third round: libdeflate's ideas
+
+libdeflate (`lib/decompress_template.h`, `build_decode_table` in
+`lib/deflate_decompress.c`) was the reference. Its decompressor has no SIMD of
+its own (the x86 variant is the same C built with BMI2); its SIMD is in
+Adler-32 and CRC-32. What it has is a table builder and an entry layout.
+Profile at the start (Source Code Pro WOFF, sb-sprof): block loop 48%, table
+setup (`build-table`, `deflate-table`, `read-dynamic-tables`) 45%.
+
+SBCL 2.6.9 sb-simd-512 (`~/repos/sb-simd-512`), same-session A/B against the
+previous commit, two alternating rounds each; MB/s:
+
+| Change (cumulative)                                                                                                                                                                                       | Red Hat WOFF | Source Code Pro WOFF | Meslo .z | src8m z6 / z9         | Kept? |
+|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|----------------------|----------|-----------------------|-------|
+| Start (previous commit)                                                                                                                                                                                   | 624–640      | 361–375              | 485–497  | 1046–1081 / 1113–1147 |       |
+| Deflate's own table builder (`build-deflate-table`): codewords enumerated bit-reversed (libdeflate's `bsr` increment), root filled by doubling with block copies, no overlap checks (completeness is checked first) | +5–7%        | +7–9%                |          |                       | yes   |
+| Length entries' bit count includes the extra bits: one shift consumes code and extra bits, which are read from the bit buffer saved before it (libdeflate's `saved_bitbuf`)                             | **+16%**     | **+22–24%**          | +7%      | +3–5%                 | yes   |
+| The same for distances (6-bit count field, links at ≥ 32)                                                                                                                                                 | −0 to −1%    | −3 to −4%            | −3%      | −1%                   | no    |
+| Next root lookup and refill before the match copy (libdeflate's order)                                                                                                                                    | −5%          | −1%                  | −2%      | −1 to −2%             | no    |
+| `deflate-table` without its unused symbol/length arrays; code lengths decoded with the reader state in locals, one refill per code length                                                                  | +2%          | +3%                  | ±0       | ±0                    | yes   |
+| **Result**                                                                                                                                                                                                | **754–758**  | **470–475**          | 524–528  | 1108–1114 / 1161–1174 | |
+
++18% / +26% on the two WOFF fonts, +8% Meslo, +3–5% src8m. Against libz
+(zlib-ng) in the same session (874 / 584 / 579 / 1273 / 1332): 0.86× / 0.81× /
+0.91× / 0.87× / 0.88×.
+
+Both rejected changes add a value live across the match path (`saved` through
+the distance decode, the preloaded entry across the copy); under SBCL's
+register pressure in this loop that costs more than the shorter dependency
+chain gains, as with the opmask experiments in section 16.
+
+**AVX2 Adler-32.** On a stock SBCL (no sb-simd-512) the AVX-512 code is
+compiled out and the byte loop took 11% of a WOFF decode. With stock
+sb-simd's AVX2 (`u8.32-sad`, `s16.16-maddubs`, `s16.16-madd`; libdeflate's
+`adler32_avx2` scheme, weights 32…1), feature `:decompress-avx2`. Stock SBCL
+2.6.9, same-session A/B, all of this round: Red Hat 502–545 → 650–659,
+Source Code Pro 328–341 → 423–431.
