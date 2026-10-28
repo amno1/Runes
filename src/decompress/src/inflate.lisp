@@ -366,7 +366,7 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
              (setf error message)
              (return-from decode)))
       (declare (inline berr))
-    (sb-sys:with-pinned-objects (buf in ltab dtab)
+    (sb-sys:with-pinned-objects (buf)
       (let ((bs (sb-sys:vector-sap buf)))
         (let ((sym 0) (saved 0))
           (declare (type index sym) (type (unsigned-byte 64) saved))
@@ -395,9 +395,7 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
                #+decompress-avx512
                (when (>= limit 16)
                  (multiple-value-bind (v b p f st)
-                     (%inflate-fast val bits pos fp (sb-sys:vector-sap in) bs
-                                    (sb-sys:vector-sap ltab) (sb-sys:vector-sap dtab)
-                                    (- limit 16) cap)
+                     (inflate-fast val bits pos fp in buf ltab dtab (- limit 16) cap)
                    (setf val v bits b pos p fp f)
                    (case st
                      (0 (go done))

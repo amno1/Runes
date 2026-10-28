@@ -22,6 +22,8 @@
 
 #+decompress-avx512
 (progn
+;; at compile time too: INFLATE-FAST below is compiled with the VOP
+(eval-when (:compile-toplevel :load-toplevel :execute)
 (sb-c:defknown decompress::%inflate-fast
     ((unsigned-byte 64) (unsigned-byte 64) (unsigned-byte 64) (unsigned-byte 64)
      system-area-pointer system-area-pointer system-area-pointer system-area-pointer
@@ -236,5 +238,19 @@
             (inst add fp saved)
             (inst jmp top))
           (mapc #'funcall (reverse out-of-line))
-          (emit-label done))))))
-)
+          (emit-label done)))))))
+
+;;; The VOP needs twelve registers, so it is called from this function of its
+;;; own, where nothing else is live; INFLATE-BLOCK calls it once per block.
+;;; (Inside INFLATE-BLOCK it packs only while that function's own register
+;;; use around the call happens to leave room.)
+(defun decompress::inflate-fast (val bits pos fp in buf ltab dtab in-limit cap)
+  (declare (optimize (speed 3) (safety 0) (debug 0))
+           (type (unsigned-byte 64) val bits pos fp in-limit cap)
+           (type (simple-array (unsigned-byte 8) (*)) in buf)
+           (type (simple-array (unsigned-byte 32) (*)) ltab dtab))
+  (sb-sys:with-pinned-objects (in buf ltab dtab)
+    (decompress::%inflate-fast val bits pos fp
+                               (sb-sys:vector-sap in) (sb-sys:vector-sap buf)
+                               (sb-sys:vector-sap ltab) (sb-sys:vector-sap dtab)
+                               in-limit cap))))

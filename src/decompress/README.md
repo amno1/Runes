@@ -117,6 +117,7 @@ sbcl --script bench.lisp            # decompress
 sbcl --script bench-c.lisp          # libbrotli and libz
 ONLY=.woff sbcl --script bench.lisp # only files whose name contains ".woff"
 sbcl --script profile.lisp data/RedHatText-Regular.br
+sbcl --script profile.lisp data/SourceCodePro-Regular.woff   # zlib streams too
 sbcl --script perf-compare.lisp     # perf counters per byte, against libdeflate
 sbcl --script literal-pairs.lisp    # literal pairs a multi-symbol table could cover
 ```

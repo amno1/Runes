@@ -880,3 +880,63 @@ as libdeflate's is. What is left: more branch misses than libdeflate (64
 against 45 per KB on src8m), and on the fonts the table setup. libdeflate's
 numbers vary by up to 15% between runs (Source Code Pro 5.87 earlier, 6.94
 here).
+
+## 18. After the VOP: re-testing the register-bound rejections
+
+The VOP removed SBCL's register allocation from the symbol loop, so ideas
+rejected earlier because they added a live value were tried again. Each
+was A/B tested against the version before it, two rounds, same session.
+
+**Where the font time goes now.** `tests/bench/profile.lisp` now takes
+zlib and WOFF streams (all tables, sampled every 0.2 ms):
+
+| Share of time           | Source Code Pro | Red Hat |
+|-------------------------|-----------------|---------|
+| `inflate-block`¹        | 60%             | 72%     |
+| Table setup²            | 34%             | 18%     |
+| `lisp_alloc`            | 2.2%            | ≈ 0     |
+| Output fill / shrink    | 2.6% / 0.1%     | 0.4% / 0.3% |
+
+1. The VOP and the Lisp loop that finishes each block.
+2. `read-dynamic-tables` with everything it calls (`deflate-table`,
+   `build-deflate-table`).
+
+Allocation is noise, so caching the reader's 32-byte tail vector was not
+done. The font gap left is table setup.
+
+**Results:**
+
+| Change                           | Red Hat | Source Code Pro | Meslo  | src8m z6 / z9 | Kept |
+|----------------------------------|---------|-----------------|--------|---------------|------|
+| VOP in a function of its own³    | −2 to +1% | −3 to +1%     | ±0     | ±1%           | yes  |
+| One shift for distances⁴         | ±0      | −1%             | ±1%    | ±0 / ±1%      | no   |
+| Preload before the copy⁵         | ±1%     | ±1%             | ±1%    | −1 to −3% / −1% | no |
+| Fast/slow split⁶                 |         |                 |        |               | (already) |
+
+3. Changing the distance decode in the Lisp loop made `inflate-block`
+   fail to compile: the VOP's twelve registers no longer fitted around the
+   call. `inflate-fast` now holds the call alone; it runs once per block.
+   (The VOP and `defknown` are in `eval-when`, so the same file can
+   compile the function with them.)
+4. As for lengths: the code length at bit 21, the bit count including the
+   extra bits, the extra bits read from the buffer saved before the shift.
+   A root entry can then count 8 + 13 = 21 bits, so distance subtable links
+   moved to 24. It removes no step from the chain: the extra bits still
+   wait for the shift of the saved buffer.
+5. In the short-copy path (distance dead once the source is known) the
+   next root entry was loaded before the two stores, entering the next
+   iteration after its lookup.
+6. The VOP already is libdeflate's fast loop: it checks the input once per
+   iteration (perfectly predicted), its refills have no check, and the
+   Lisp loop is the slow tail. Nothing to split.
+
+**What the VOP did and did not change.** It gained 7–12% by halving the
+instructions (no tag shifts, no stack traffic), and moved the loop from
+throughput-bound to bound by its dependency chain. Neither re-tested idea
+shortens that chain, so neither pays: their earlier losses were partly
+register pressure, but without it they are neutral, not gains. Rejections
+that still stand for other reasons: the 32-byte copy tier and the
+two-literal table (the data: few matches at those distances, few literal
+pairs that fit), the 11-bit root and the one-test literal (table setup and
+branch prediction). The next gains are in what the chain does per symbol
+and in table setup, not in what holds the values.
