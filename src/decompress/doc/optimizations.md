@@ -724,11 +724,16 @@ are bound by dependency chains. (A real version would also need a type
 deriver: the VOP's word result widened derived types in Brotli's header
 code, which then used generic arithmetic.)
 
-**The SIMD-constant patch.** `simd-constant-fix` (`83319aeb7`, not in the
-sb-simd-512 build) stops SBCL re-propagating SIMD constants into loops. It
-applies to `adler32` only: its AVX-512 loop reloads `ones` from the
-constant pool every 64 bytes, and the weights vector is spilled and
-reloaded. `inflate-block` has no SIMD variables. Adler-32 is 0.3–1% of a
+**The SIMD-constant patch.** `simd-constant-fix` (`83319aeb7`) stops SBCL
+re-propagating SIMD constants into loops. It applies to `adler32` only:
+`inflate-block` has no SIMD variables. Before it, the AVX-512 loop reloaded
+`ones` from the constant pool every 64 bytes and the spilled weights vector
+from the stack. Now applied to sb-simd-512 (`9b7e3b5a7`): the constant-pool
+load is gone, but all three constants (`zero`, the weights, `ones`) are
+reloaded from the stack instead, because `adler32`'s outer loop makes full
+calls (a generic `FLOOR`, `TRUNCATE` for `mod`, `multiple-value-call #'+` for
+the lane sums) and SBCL gives every value live across a call a stack home.
+Removing those calls would keep them in registers; Adler-32 is 0.3–1% of a
 decode, so neither costs measurable time.
 
 **AVX2 Adler-32.** On a stock SBCL (no sb-simd-512) the AVX-512 code is
