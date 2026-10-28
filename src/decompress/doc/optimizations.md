@@ -512,6 +512,29 @@ Not kept: large streams gain 1–4%, but the font case loses, probably to
 the doubled loop code (the tests removed were well predicted, and the loop
 still needs a bound value live).
 
+**Fewer live values in the block loop.** The loop keeps about 14 values
+live across an iteration (`val`, `bits`, `pos`, `fp`, `in`, `limit`, `r`,
+`bs`, `buf`, `cap`, `ltab`, `dtab`, `sym`, `saved`) against libdeflate's
+~9, and SBCL has roughly 12–13 general registers to give. Packing loop
+invariants into shared registers was not tried: a spilled invariant is one
+memory operand off the critical path, cheaper than unpacking it on every use
+(the opmask result of section 16). Three ways to remove values instead,
+same-session A/B against the previous commit, two rounds each:
+
+| Change                                                                                                                                                  | Red Hat WOFF | Source Code Pro WOFF | Meslo .z | src8m z6 / z9     | Kept? |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|----------------------|----------|-------------------|-------|
+| Match copy through the output SAP (`copy-match`), so `buf` is not live in the loop                                                                      | ±0           | ±0                   | +1%      | +1–3% / +2–4%     | yes   |
+| Distance table at a constant offset (1344, above zlib's 1332-entry bound) in the literal table's vector: the offset folds into the address, one table register | ±0           | −4 to −6%            | +2–3%    | +2–4% / +3–5%     | no    |
+| `pos` and `bits` as one input bit position; a refill reloads `val` from it (no bit count, so the match path always refills)                             | −6%          | **+8–10%**           | −2%      | −2 to −4% / −3 to −5% | no |
+
+(The joint table first copied the literal table in, which cost Red Hat 3%
+and Source Code Pro 8%; building it in place fixed Red Hat only.) The bit
+position puts the refill's load on the dependency chain of `val`: its
+address now waits for every shift before it, where `pos` alone changed only
+at refills. Source Code Pro, the stream with the most literals and the most
+distances under 8, is the one that responds in the opposite direction to
+both rejected changes; why is not known.
+
 **AVX2 Adler-32.** On a stock SBCL (no sb-simd-512) the AVX-512 code is
 compiled out and the byte loop took 11% of a WOFF decode. With stock
 sb-simd's AVX2 (`u8.32-sad`, `s16.16-maddubs`, `s16.16-madd`; libdeflate's

@@ -8,6 +8,9 @@
 ;;;; order and the same canonical prefix codes, so the bit reader (reader.lisp),
 ;;;; the decode tables (huffman.lisp) and the back-reference copy (decoder.lisp)
 ;;;; are shared.  Errors are signalled as DEFLATE-ERROR.
+
+(declaim (optimize (speed 3) (debug 0) (safety 0)))
+
 (in-package #:decompress)
 
 ;;; ---- tables (RFC 1951 sec. 3.2.5) ----------------------------------------
@@ -15,6 +18,7 @@
 ;;; Length symbols 257..285 and distance symbols 0..29 -> base<<5 | extra bits.
 ;;; The two unused symbols of each alphabet (286, 287; 30, 31) map to 0, which
 ;;; the decoder rejects.
+
 (defglobal-table +length-tab+ u32vec
   (let ((base #(3 4 5 6 7 8 9 10 11 13 15 17 19 23 27 31 35 43 51 59 67 83 99 115 131 163 195 227 258))
         (extra #(0 0 0 0 0 0 0 0 1 1 1 1 2 2 2 2 3 3 3 3 4 4 4 4 5 5 5 5 0))
@@ -90,7 +94,7 @@ there are no strided stores.  KIND (:LITERAL, :DISTANCE or :CODE-LENGTH) picks
 the map; literal/length entries are made with COMBINE-LENGTH."
   (declare (type u8vec lens) (type index start n) (type counts count)
            (type (integer 5 11) root-bits)
-           (optimize speed (safety 0)))
+           (optimize speed (debug 0) (safety 0)))
   (let ((offs (make-array 17 :element-type '(unsigned-byte 16) :initial-element 0))
         (sorted (make-array 288 :element-type '(unsigned-byte 16)))
         (scratch (make-array #.(+ 2048 32768) :element-type '(unsigned-byte 32)))
@@ -264,6 +268,41 @@ distance code may be empty (an error only if a distance is ever needed)."
 
 ;;; ---- the block loop -------------------------------------------------------
 
+(defmacro copy-match (sap fp dist len)
+  "COPY-BACK-REFERENCE through the output's SAP alone, so the block loop
+needs no register for the output vector.  Same classes and overshoot."
+  `(let* ((%src (- ,fp ,dist)))
+     (declare (type index %src))
+     (flet ((words16 ()
+              (loop for %i of-type index from 0 below ,len by 16
+                    do (setf (sb-sys:sap-ref-64 ,sap (+ ,fp %i)) (sb-sys:sap-ref-64 ,sap (+ %src %i))
+                             (sb-sys:sap-ref-64 ,sap (+ ,fp %i 8)) (sb-sys:sap-ref-64 ,sap (+ %src %i 8))))))
+       (declare (inline words16))
+       (cond
+         ((and (>= ,dist 16) (<= ,len 16))
+          (let ((%a (sb-sys:sap-ref-64 ,sap %src)) (%b (sb-sys:sap-ref-64 ,sap (+ %src 8))))
+            (setf (sb-sys:sap-ref-64 ,sap ,fp) %a
+                  (sb-sys:sap-ref-64 ,sap (+ ,fp 8)) %b)))
+         ((>= ,dist ,len)
+          #+decompress-avx512
+          (if (>= ,dist 64)
+              (loop for %i of-type index from 0 below ,len by 64
+                    do (setf (sb-simd-avx512bw:u8.64-sap-ref ,sap (+ ,fp %i))
+                             (sb-simd-avx512bw:u8.64-sap-ref ,sap (+ %src %i))))
+              (words16))
+          #-decompress-avx512
+          (words16))
+         ((>= ,dist 8) (words16))
+         (t
+          (let ((%p (aref +copy-period+ ,dist)))
+            (declare (type index %p))
+            (dotimes (%i (min ,len %p))
+              (setf (sb-sys:sap-ref-8 ,sap (+ ,fp %i)) (sb-sys:sap-ref-8 ,sap (+ %src %i))))
+            (loop for %i of-type index from %p below ,len by 8
+                  do (setf (sb-sys:sap-ref-64 ,sap (+ ,fp %i))
+                           (sb-sys:sap-ref-64 ,sap (+ ,fp (- %i %p)))))))))
+     (incf ,fp ,len)))
+
 (defun inflate-block (r buf fp ltab dtab)
   "Decode one compressed block's symbols into BUF from FP.  Returns the new FP
 and :END at the end-of-block code, or :FULL when BUF needs to grow first (the
@@ -351,7 +390,7 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
                    (declare (type index dist))
                    (br-drop (logand d 15))
                    (when (> dist fp) (berr "distance too far back"))
-                   (copy-back-reference buf fp dist len))))
+                   (copy-match bs fp dist len))))
                (go top)
              done)))))))
     (when error (berr error))
