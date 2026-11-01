@@ -1,10 +1,12 @@
 # decompress
 
-**Brotli** (RFC 7932) and **deflate/zlib** (RFC 1951/1950) decoders in Common
-Lisp for SBCL — for WOFF2 and WOFF 1.0 fonts, `Content-Encoding: br` and
-`deflate`. No FFI: both decoders are written Lisp, with optional AVX-512 code
-through sb-simd. The 122,784-byte Brotli static dictionary is vendored in
-`data/`.
+**Brotli** ([RFC 7932](https://datatracker.ietf.org/doc/html/rfc7932 "RFC
+7932")) and **deflate/zlib** ([RFC
+1951/1950](https://datatracker.ietf.org/doc/html/rfc1951 "RFC 1951/1950"))
+decoders in Common Lisp for SBCL — for WOFF2 and WOFF 1.0 fonts,
+`Content-Encoding: br` and `deflate`. No FFI: both decoders are written Lisp,
+with optional AVX-512 code through sb-simd. The 122,784-byte Brotli static
+dictionary is vendored in `data/`.
 
 ```lisp
 (asdf:load-system "decompress")

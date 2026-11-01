@@ -1,7 +1,7 @@
 ;;;; decompress.asd
 (defsystem "decompress"
   :description "Brotli (RFC 7932) and deflate/zlib (RFC 1950/1951) decoders for
-                SBCL, with AVX-512 copies when sb-simd provides them.  Decodes
+                SBCL, with AVX-512 code when the CPU and sb-simd support it.  Decodes
                 WOFF2 and WOFF 1.0 font data, Content-Encoding: br and deflate.
                 The Brotli static dictionary is vendored."
   :version "1.0.0"

@@ -19,6 +19,7 @@
 ;;;; Needs SHRX/SHLX/BZHI and the sb-simd-512 assembler: compiled only with
 ;;;; :DECOMPRESS-AVX512.  Decode tables as in huffman.lisp: an 8-bit root,
 ;;;; entries sym<<5 | nbits, nbits >= 16 a subtable link.
+
 (in-package #:decompress)
 
 ;;; Word indices into ST.  The VOP reaches the distance tables and the ring
@@ -32,6 +33,7 @@
        +st-dtab+ +st-dtab1+ +st-dtab2+ +st-dtab3+ +st-window+ +st-ndirect+
        +st-npostfix+ +st-pmask+ +st-rb+ +st-rb1+ +st-rb2+ +st-rb3+ +st-rbidx+
        +st-ilen+ +st-clen+ +st-cmd+ +st-dist+ +st-end+ +st-dsci+))
+
 (defconstant +st-dscv+ (+ +st-dsci+ 16))
 (defconstant +st-size+ (+ +st-dscv+ 16))
 

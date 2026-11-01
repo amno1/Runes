@@ -11,7 +11,9 @@
 ;;;; The macros work on variables named IN LIMIT VAL BITS POS and the reader R.
 ;;;; Header code uses them on the struct slots (WITH-READER); the hot loop
 ;;;; copies the slots into locals and uses the same macros on those.
+
 (in-package #:decompress)
+
 (defmacro low-bits (val n)
   `(logand ,val (1- (the sb-ext:word (ash 1 (logand ,n 31))))))
 

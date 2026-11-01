@@ -14,8 +14,10 @@
 (define-condition decompression-error (error)
   ((message :initarg :message :reader decompression-error-message))
   (:report (lambda (c s) (format s "~a: ~a" (type-of c) (decompression-error-message c)))))
+
 (define-condition brotli-error (decompression-error) ()
   (:documentation "Malformed Brotli input."))
+
 (define-condition deflate-error (decompression-error) ()
   (:documentation "Malformed deflate or zlib input."))
 

@@ -1,4 +1,5 @@
 ;;;; src/decoder.lisp — meta-blocks, the command loop, and DECOMPRESS.
+
 (in-package #:decompress)
 
 (defconstant +out-slack+ 128

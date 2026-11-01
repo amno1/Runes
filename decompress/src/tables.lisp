@@ -58,18 +58,25 @@
 
 (defglobal-table +ins-bits+ simple-vector   ; insert length extra bits
   #(0 0 0 0 0 0 1 1 2 2 3 3 4 4 5 5 6 7 8 9 10 12 14 24))
+
 (defglobal-table +ins-base+ simple-vector   ; insert length base
   #(0 1 2 3 4 5 6 8 10 14 18 26 34 50 66 98 130 194 322 578 1090 2114 6210 22594))
+
 (defglobal-table +cpy-bits+ simple-vector   ; copy length extra bits
   #(0 0 0 0 0 0 0 0 1 1 2 2 3 3 4 4 5 5 6 7 8 9 10 24))
+
 (defglobal-table +cpy-base+ simple-vector   ; copy length base
   #(2 3 4 5 6 7 8 9 10 12 14 18 22 30 38 54 70 102 134 198 326 582 1094 2118))
+
 (defglobal-table +blen-bits+ simple-vector   ; block count extra bits
   #(2 2 2 2 3 3 3 3 4 4 4 4 5 5 5 5 6 6 7 8 9 10 11 12 13 24))
+
 (defglobal-table +blen-base+ simple-vector   ; block count base
   #(1 5 9 13 17 25 33 41 49 65 81 97 113 145 177 209 241 305 369 497 753 1265 2289 4337 8433
     16625))
+
 (defglobal-table +cmd-ins+ simple-vector #(0 0 0 0 8 8 0 16 8 16 16))   ; command cell -> first insert code
+
 (defglobal-table +cmd-cpy+ simple-vector #(0 8 0 8 0 8 16 0 16 8 16))   ; command cell -> first copy code
 
 ;;; Command symbol -> base<<5 | extra bits, for the insert and the copy length.
