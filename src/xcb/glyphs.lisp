@@ -68,8 +68,29 @@
     (setf (glyph-set-last-use set) (incf *glyph-set-clock*))
     set))
 
+(defun glyph-info (image)
+  "The RENDER glyph info of a glyph IMAGE."
+  (make-instance 'xcb-render:glyphinfo
+                 :width (glyph-image-width image)
+                 :height (glyph-image-height image)
+                 :x (glyph-image-x image)
+                 :y (glyph-image-y image)
+                 :x-off (round (glyph-image-advance image))
+                 :y-off 0))
+
+(defun glyph-images-data (images)
+  "The pixels of IMAGES, one after another."
+  (let ((data (make-array (reduce #'+ images :key (lambda (image) (length (glyph-image-data image))))
+                          :element-type '(unsigned-byte 8)))
+        (at 0))
+    (dolist (image images data)
+      (let ((d (glyph-image-data image)))
+        (replace data d :start1 at)
+        (incf at (length d))))))
+
 (defun %upload-glyphs (conn set layout)
-  "Upload to SET the glyphs of LAYOUT it does not hold yet."
+  "Upload to SET the glyphs of LAYOUT it does not hold yet, at most
++GLYPHS-PER-REQUEST+ in one request."
   (let ((uploaded (glyph-set-uploaded set))
         (pending '()))
     (loop for (index nil image) across layout
@@ -77,29 +98,12 @@
             do (setf (gethash index uploaded) t)
                (push (cons index image) pending))
     (loop while pending
-          do (let ((batch '()))
-               (loop repeat +glyphs-per-request+ while pending
-                     do (push (pop pending) batch))
-               (xcb-render:add-glyphs
-                conn (glyph-set-id set)
-                (mapcar #'car batch)
-                (mapcar (lambda (entry)
-                          (let ((image (cdr entry)))
-                            (make-instance 'xcb-render:glyphinfo
-                                           :width (glyph-image-width image)
-                                           :height (glyph-image-height image)
-                                           :x (glyph-image-x image)
-                                           :y (glyph-image-y image)
-                                           :x-off (round (glyph-image-advance image))
-                                           :y-off 0)))
-                        batch)
-                (let ((data (make-array (reduce #'+ batch :key (lambda (e) (length (glyph-image-data (cdr e)))))
-                                        :element-type '(unsigned-byte 8)))
-                      (at 0))
-                  (dolist (entry batch data)
-                    (let ((d (glyph-image-data (cdr entry))))
-                      (replace data d :start1 at)
-                      (incf at (length d))))))))))
+          do (let ((batch (loop repeat +glyphs-per-request+ while pending
+                                collect (pop pending))))
+               (xcb-render:add-glyphs conn (glyph-set-id set)
+                                      (mapcar #'car batch)
+                                      (mapcar (lambda (entry) (glyph-info (cdr entry))) batch)
+                                      (glyph-images-data (mapcar #'cdr batch)))))))
 
 (defun %glyph-commands (conn layout start end x y)
   "Encode the glyphs of LAYOUT from START below END as CompositeGlyphs16
