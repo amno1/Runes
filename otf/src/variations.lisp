@@ -240,7 +240,9 @@ the change keep their old outlines; find them again.")
   ;; Outlines, bounding boxes and subfonts depend on the instance.
   (when (glyph-cache loader)
     (fill (glyph-cache loader) nil))
-  (clrhash (cff-subfonts loader)))
+  (clrhash (cff-subfonts loader))
+  ;; Kerning varies too ('GPOS' with GDEF deltas).
+  (clrhash (gpos-kerning-cache loader)))
 
 (defun metrics-delta (loader tag reader store-reader map-reader gid &key direct)
   "Change at the loader's instance, in font units, of a metric of GID from

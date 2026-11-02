@@ -6,9 +6,11 @@
 ;;; 'kern' feature, and many have no 'kern' table at all.  KERNING-OFFSET
 ;;; uses them as HarfBuzz does for a pair of glyphs: the lookups of every
 ;;; 'kern' feature, in lookup order, each adding the x advance adjustment
-;;; of the first subtable that covers the pair.  The result is the font's
-;;; static kerning: device tables and variation deltas are not applied, and
-;;; the lookup flags are not, since a pair has no glyphs to skip.
+;;; of the first subtable that covers the pair.  In a variable font each
+;;; adjustment moves by its delta from GDEF's ItemVariationStore at the
+;;; loader's instance.  Device tables, which correct kerning for single
+;;; pixel sizes, are not applied, as HarfBuzz does not without a pixel
+;;; size; nor are the lookup flags, since a pair has no glyphs to skip.
 ;;;
 ;;; The structures are read in place: a lookup for every pair of every
 ;;; string must not allocate.  Offsets are relative to the start of the
@@ -75,6 +77,19 @@ subtables, in lookup order, their positions; NIL when there are none."
                                fd (+ lookup-list (gpos-u16 fd (+ lookup-list 2 (* 2 index)))) end))
             when subtables
               collect subtables))))
+
+(defun gdef-variation-store (loader)
+  "The ItemVariationStore of LOADER's 'GDEF', found once; NIL without one."
+  (let ((store (%gdef-variation-store loader)))
+    (if (eq store :unknown)
+        (setf (%gdef-variation-store loader)
+              (let ((info (table-info "GDEF" loader)))
+                (when info
+                  (handler-case
+                      (runes/otf:gdef-item-var-store-offset
+                       (runes/otf:read-gdef (font-data loader) (offset info) (size info)))
+                    (runes/otf:font-error () nil)))))
+        store)))
 
 (defun gpos-kern-lookups (loader)
   "GPOS-KERN-SUBTABLES of LOADER, found once.  A 'GPOS' that cannot be read
@@ -168,11 +183,38 @@ follows XPlacement and YPlacement, when those are present."
       (runes/otf:font-data-read-i16 fd (+ pos (* 2 (logcount (logand format 3)))))
       0))
 
-(defun pair-pos-adjustment (fd sub left right)
-  "The x advance adjustment of LEFT before RIGHT from the PairPos subtable
-at SUB, or NIL when the subtable does not cover the pair."
+(defun variation-index-delta (fd table variation)
+  "The delta, in font units, of the VariationIndex table at TABLE at
+VARIATION, (store . coordinates): 16.16 rounded with halves up, as HarfBuzz
+does, and kept within 32 bits whatever the store holds."
+  (declare (type runes/otf:font-data fd) (type table-position table) (type cons variation))
+  (let ((delta (runes/otf/charstring:item-variation-delta
+                (car variation) (gpos-u16 fd table) (gpos-u16 fd (+ table 2)) (cdr variation))))
+    (max #x-80000000 (min #x7FFFFFFF (floor (+ delta #x8000) 65536)))))
+
+(defun x-advance-delta (fd pos format base variation)
+  "The change at VARIATION, (store . coordinates) or NIL, of the XAdvance of
+the ValueRecord at POS: 0 unless its XAdvDevice offset, from BASE, names a
+VariationIndex table rather than a Device table."
   (declare (optimize (speed 3) (safety 0))
-           (type runes/otf:font-data fd) (type table-position sub) (type glyph-index left right))
+           (type runes/otf:font-data fd) (type table-position pos base)
+           (type (unsigned-byte 16) format) (type (or null cons) variation))
+  (let* ((offset (if (and variation (logbitp 6 format))
+                     ;; After the four values and the two placement device offsets.
+                     (gpos-u16 fd (+ pos (* 2 (logcount (logand format #x3F)))))
+                     0))
+         (table (+ base offset)))
+    (if (or (zerop offset) (/= (gpos-u16 fd (+ table 4)) #x8000))
+        0
+        (the (signed-byte 32) (variation-index-delta fd table variation)))))
+
+(defun pair-pos-adjustment (fd sub left right variation)
+  "The x advance adjustment of LEFT before RIGHT from the PairPos subtable
+at SUB, at VARIATION (see X-ADVANCE-DELTA), or NIL when the subtable does
+not cover the pair."
+  (declare (optimize (speed 3) (safety 0))
+           (type runes/otf:font-data fd) (type table-position sub) (type glyph-index left right)
+           (type (or null cons) variation))
   (let ((index (coverage-index fd (+ sub (gpos-u16 fd (+ sub 2))) left))
         (format1 (gpos-u16 fd (+ sub 4)))
         (format2 (gpos-u16 fd (+ sub 6))))
@@ -185,7 +227,9 @@ at SUB, or NIL when the subtable does not cover the pair."
                     (record-size (+ 2 (value-record-size format1) (value-record-size format2)))
                     (record (find-glyph-record fd (+ set 2) (gpos-u16 fd set) record-size right)))
                (when record
-                 (value-record-x-advance fd (+ record 2) format1)))))
+                 ;; Device offsets here are from the PairSet, as in HarfBuzz.
+                 (+ (value-record-x-advance fd (+ record 2) format1)
+                    (x-advance-delta fd (+ record 2) format1 set variation))))))
         ;; Format 2: two ValueRecords for each class of the first glyph and
         ;; class of the second.
         (2 (let ((class1 (glyph-class fd (+ sub (gpos-u16 fd (+ sub 8))) left))
@@ -193,16 +237,20 @@ at SUB, or NIL when the subtable does not cover the pair."
                  (class2-count (gpos-u16 fd (+ sub 14)))
                  (record-size (+ (value-record-size format1) (value-record-size format2))))
              (when (and (< class1 (gpos-u16 fd (+ sub 12))) (< class2 class2-count))
-               (value-record-x-advance
-                fd (+ sub 16 (* record-size (+ (* class1 class2-count) class2))) format1))))))))
+               (let ((record (+ sub 16 (* record-size (+ (* class1 class2-count) class2)))))
+                 (+ (value-record-x-advance fd record format1)
+                    (x-advance-delta fd record format1 sub variation))))))))))
 
 (defun gpos-kerning (loader left right)
   "The kerning of glyph indices LEFT and RIGHT from LOADER's 'GPOS' table,
 in font units."
   (declare (type glyph-index left right))
   (loop with fd = (font-data loader)
+        with coords = (normalized-coordinates loader)
+        with store = (and coords (gdef-variation-store loader))
+        with variation = (and store (cons store coords))
         for subtables in (gpos-kern-lookups loader)
         sum (or (loop for sub in subtables
-                      thereis (pair-pos-adjustment fd sub left right))
+                      thereis (pair-pos-adjustment fd sub left right variation))
                 0)
           of-type fixnum))

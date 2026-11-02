@@ -299,6 +299,16 @@
     (test-assert (= (zpb-ttf:kerning-offset #\A #\V loader) -152) "GPOS kerning of AV is -152")
     (test-assert (= (zpb-ttf:kerning-offset #\T #\o loader) -227) "GPOS kerning of To is -227")
     (test-assert (= (zpb-ttf:kerning-offset #\o #\o loader) 0) "an unkerned pair gives 0")
+    ;; A variable font whose GPOS kerning moves with GDEF deltas; HarfBuzz's values.
+    (zpb-ttf:with-font-loader (vf (test-font-path "NotoSansJP-VF.subset.otf"))
+      (setf (zpb-ttf:variation-coordinates vf) '(("wght" . 100)))
+      (test-assert (and (= (zpb-ttf:kerning-offset #\P #\Z vf) -109)
+                        (= (zpb-ttf:kerning-offset #\C #\C vf) -24))
+                   "variable GPOS kerning at wght 100")
+      (setf (zpb-ttf:variation-coordinates vf) '(("wght" . 900)))
+      (test-assert (and (= (zpb-ttf:kerning-offset #\P #\Z vf) -54)
+                        (= (zpb-ttf:kerning-offset #\C #\C vf) -43))
+                   "variable GPOS kerning follows a change of instance"))
 
     ;; Glyph A
     (let ((glyph (zpb-ttf:find-glyph #\A loader)))
