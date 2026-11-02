@@ -64,7 +64,8 @@ Load the system and build the font cache:
 `cache-fonts` scans `*font-dirs*` (by default `/usr/share/fonts/`,
 `/usr/local/share/fonts/`, `~/.local/share/fonts/`, `~/.fonts/`, and on
 macOS also `/Library/Fonts/` and `/System/Library/Fonts/`) and indexes
-every `.ttf` it finds.  It only needs to be called once per image, or again after
+every font it finds: TrueType and OpenType files, collections, WOFF and
+WOFF2.  It only needs to be called once per image, or again after
 installing a new font.
 
 Wrap an XCB window or pixmap in a `window` or `pixmap` object, and

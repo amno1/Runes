@@ -38,7 +38,7 @@
    Guarded by RUNES's font-loader lock, which rasterizing needs anyway.")
 
 (defun face-key (font dpi-x dpi-y)
-  (list (get-font-pathname font) (font-size font) dpi-x dpi-y
+  (list (font-source font) (font-size font) dpi-x dpi-y
         (and (font-antialias font) t)))
 
 (defun layout-styled-glyphs (font string &key (dpi-x 96) (dpi-y 96)

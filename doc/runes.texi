@@ -234,22 +234,26 @@ The directories searched for fonts.  By default
 
 @defvar *font-cache*
 A hash table of family name to a hash table of subfamily name to
-pathname.  Guarded by a lock.
+source: the font's pathname, or @code{(@var{pathname} . @var{index})}
+for a font in a collection.  Guarded by a lock.
 @end defvar
 
 @defun cache-fonts
-Scan @code{*font-dirs*} for @file{.ttf} files and replace
-@code{*font-cache*} with what is found.  The scan builds a new table
-and swaps it in when done, so other threads go on finding fonts
-meanwhile.  Call it once per image, and again after installing fonts.
-Only files with the type @file{ttf} are indexed, although the loader
-also opens @file{.otf}, @file{.ttc}, @file{.woff} and @file{.woff2}
-files given by pathname.
+Scan @code{*font-dirs*} and their subdirectories for font files and
+replace @code{*font-cache*} with what is found.  Every font of a
+collection is indexed.  The scan builds a new table and swaps it in
+when done, so other threads go on finding fonts meanwhile.  Call it
+once per image, and again after installing fonts.
 @end defun
 
+@defvar *font-file-types*
+The file types @code{cache-fonts} reads: @file{ttf}, @file{otf},
+@file{ttc}, @file{otc}, @file{woff} and @file{woff2}.
+@end defvar
+
 @defun cache-font-file pathname
-Add the font in @var{pathname} to @code{*font-cache*}.  A file the
-loader cannot read is skipped.
+Add the font in @var{pathname}, or every font of a collection, to
+@code{*font-cache*}.  A file the loader cannot read is skipped.
 @end defun
 
 @defun get-font-families
@@ -268,6 +272,12 @@ cache, calling @code{cache-fonts} first if the cache is empty.
 
 @defun get-font-pathname font
 Return the pathname of the file @var{font} is read from.
+@end defun
+
+@defun font-source font
+Return where @var{font} is read from: its pathname, or
+@code{(@var{pathname} . @var{index})} for a font in a collection.
+@code{nil} if the font is not in the cache.
 @end defun
 
 @node Fonts

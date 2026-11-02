@@ -12,13 +12,21 @@
                 font-overline))
 
 ;;; ZPB-TTF font objects cache
-(defun get-font-pathname (font)
+(defun font-source (font)
+  "Where FONT is read from: its pathname, or (PATHNAME . INDEX) for a font
+   in a collection.  NIL if FONT is not in *FONT-CACHE*."
   (bt:with-recursive-lock-held (*font-cache-lock*)
     (let ((subfamilies (gethash (font-family font) *font-cache*)))
       (and subfamilies (gethash (font-subfamily font) subfamilies)))))
 
+(defun get-font-pathname (font)
+  "The pathname of the file FONT is read from, or NIL.  See FONT-SOURCE
+   for which font of a collection it is."
+  (let ((source (font-source font)))
+    (if (consp source) (car source) source)))
+
 (defvar *font-loader-cache* (make-hash-table :test 'equal)
-  "Caches opened ZPB-TTF font loader objects keyed by font pathname.
+  "Caches opened ZPB-TTF font loader objects keyed by FONT-SOURCE.
    Retains one open file handle per font file for the lifetime of the image
    to avoid repeated disk I/O and font header parsing on every text layout.
    Call CLOSE-FONT-LOADERS to explicitly close all open loaders and clear
@@ -44,15 +52,21 @@
   "Run BODY with LOADER bound to FONT's cached ZPB-TTF loader, opening it
    the first time, holding *FONT-LOADER-LOCK*."
   (let ((exists-p (gensym))
-        (font-path (gensym)))
+        (source (gensym)))
     `(bt:with-recursive-lock-held (*font-loader-lock*)
-       (let ((,font-path (get-font-pathname ,font)))
+       (let ((,source (font-source ,font)))
          (multiple-value-bind (,loader ,exists-p)
-             (gethash ,font-path *font-loader-cache*)
+             (gethash ,source *font-loader-cache*)
            (unless ,exists-p
-             (setf ,loader (setf (gethash ,font-path *font-loader-cache*)
-                                 (zpb-ttf:open-font-loader ,font-path))))
+             (setf ,loader (setf (gethash ,source *font-loader-cache*)
+                                 (open-font-source ,source))))
            ,@body)))))
+
+(defun open-font-source (source)
+  "Open a font loader for SOURCE, as FONT-SOURCE returns it."
+  (if (consp source)
+      (zpb-ttf:open-font-loader (car source) :collection-index (cdr source))
+      (zpb-ttf:open-font-loader source)))
 
 (defun font-cache-fetch (cache dpi string)
   (cacle:cache-fetch (cacle:cache-fetch cache dpi) string))

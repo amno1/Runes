@@ -66,6 +66,7 @@
    ;; For backends
    #:with-font-loader
    #:get-font-pathname
+   #:font-source
    #:font-units->pixels-x
    #:font-units->pixels-y
    #:font-cache-fetch

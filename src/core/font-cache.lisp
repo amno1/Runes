@@ -1,4 +1,4 @@
-;;;; font-cache.lisp — discovery and in-memory cache of TrueType font files
+;;;; font-cache.lisp — discovery and in-memory cache of font files
 ;;;; Copyright (C) 2012–2014 Michael Filonenko
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
@@ -18,7 +18,7 @@
   (list (namestring
          (merge-pathnames "fonts/" 
                           (pathname (concatenate 'string (or (uiop:getenv "WINDIR") "C:/Windows") "/")))))
-  "List of directories, which contain TrueType fonts.")
+  "List of directories, which contain fonts.")
 
 (defvar *font-cache* (make-hash-table :test 'equal)
   "Hashmap for caching font families, subfamilies and files.  Guarded by
@@ -35,24 +35,49 @@
     (%cache-font-file pathname *font-cache*)))
 
 (defun %cache-font-file (pathname cache)
-  "Add the font in PATHNAME to CACHE, a table like *FONT-CACHE*."
-  (handler-case 
-      (zpb-ttf:with-font-loader (font pathname)
-        (multiple-value-bind (hash-table exists-p)
-            (gethash (zpb-ttf:family-name font) cache
-                     (make-hash-table :test 'equal))
-          (setf (gethash (zpb-ttf:subfamily-name font) hash-table)
-                pathname)
-          (unless exists-p
-            (setf (gethash (zpb-ttf:family-name font) cache)
-                  hash-table))))
-    ;; A file that is not a font zpb-ttf can read is skipped; warnings
-    ;; are not errors, and go on to the caller.
-    (error () (return-from %cache-font-file))))
+  "Add the fonts in PATHNAME to CACHE, a table like *FONT-CACHE*: one font,
+   or every font of a collection.  The file is read, and a WOFF or WOFF2
+   file decoded, once for all of them.  A font in a collection is cached
+   as (PATHNAME . INDEX), any other as PATHNAME."
+  (flet ((add (font source)
+           (let ((subfamilies (or (gethash (zpb-ttf:family-name font) cache)
+                                  (setf (gethash (zpb-ttf:family-name font) cache)
+                                        (make-hash-table :test 'equal)))))
+             (setf (gethash (zpb-ttf:subfamily-name font) subfamilies) source))))
+    ;; A file or a font that zpb-ttf cannot read is skipped; warnings are
+    ;; not errors, and go on to the caller.
+    (let ((data (handler-case (%sfnt-data pathname)
+                  (error () (return-from %cache-font-file)))))
+      (let ((count (handler-case
+                       (zpb-ttf:with-font-loader (font data)
+                         (let ((count (zpb-ttf:collection-font-count font)))
+                           (unless count (add font pathname))
+                           count))
+                     (error () nil))))
+        (when count
+          (dotimes (i count)
+            (handler-case
+                (zpb-ttf:with-font-loader (font data :collection-index i)
+                  (add font (cons pathname i)))
+              (error () nil))))))))
 
-(defun ttf-pathname-test (pathname)
+(defun %sfnt-data (pathname)
+  "The font data of PATHNAME, a WOFF or WOFF2 file decoded to an sfnt."
+  (let ((data (runes/otf:ensure-font-data pathname)))
+    (if (< (runes/otf:font-data-length data) 4)
+        data
+        (case (runes/otf:font-data-read-u32 data 0)
+          (#x774F4646 (runes/otf:decode-woff1 data)) ; 'wOFF'
+          (#x774F4632 (runes/otf:decode-woff2 data)) ; 'wOF2'
+          (t data)))))
+
+(defparameter *font-file-types* '("ttf" "otf" "ttc" "otc" "woff" "woff2")
+  "The file types CACHE-FONTS reads.")
+
+(defun font-pathname-test (pathname)
   (let ((type (pathname-type pathname)))
-    (and (stringp type) (string-equal "ttf" type))))
+    (and (stringp type)
+         (member type *font-file-types* :test #'string-equal))))
 
 (defun cache-fonts ()
   "Cache the fonts in the *FONT-DIRS* directories, replacing *FONT-CACHE*.
@@ -68,7 +93,7 @@
     (labels ((scan-dir (dir)
                (when (probe-file dir)
                  (dolist (file (uiop:directory-files dir))
-                   (when (ttf-pathname-test file)
+                   (when (font-pathname-test file)
                      (%cache-font-file file cache)))
                  (dolist (subdir (uiop:subdirectories dir))
                    (scan-dir subdir)))))
