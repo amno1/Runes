@@ -2,3 +2,6 @@
 
 # Comparison images written by tests/glyphs-vs-masks.lisp
 tests/cmp-*.pgm
+doc/runes.info
+doc/runes.html
+doc/runes.pdf
