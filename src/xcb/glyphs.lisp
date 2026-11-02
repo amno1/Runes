@@ -111,10 +111,13 @@
    element is a run of glyphs that each start where the one before ended
    -- its origin plus its rounded advance -- and gives the offset to its
    first glyph from where the previous run ended."
+  ;; X and Y are pixel positions: integers, as CARD16 needs.
+  (declare (fixnum start end x y))
   (let ((out (make-array 64 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0))
         (msb (= (xcb:buffer-byte-order (xcb:conn-send-buffer conn)) xcb:+msb+))
         (pen-x 0) (pen-y 0)              ; where the server's pen is
         (run-start nil) (run-length 0))
+    (declare (fixnum pen-x pen-y run-length))
     (labels ((byte8 (n) (vector-push-extend (ldb (byte 8 0) n) out))
              (card16 (n)
                (let ((n (logand n #xffff)))

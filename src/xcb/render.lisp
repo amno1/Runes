@@ -22,6 +22,7 @@
    a HEIGHT x WIDTH array) to PIXMAP at depth 8.  PUT-IMAGE requires each
    row padded to a 4-byte boundary; DATA is sent as-is when WIDTH already
    is a multiple of 4 and copied into a padded buffer otherwise."
+  (declare (type (unsigned-byte 16) width height))
   (let ((gc (mask-gc-for conn pixmap root)))
     (if (zerop (mod width 4))
         (put-image-chunked conn 2 pixmap gc width height 0 0 0 8 data)
