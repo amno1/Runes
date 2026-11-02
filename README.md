@@ -1,41 +1,52 @@
 # Runes
 
-Pure Common Lisp TrueType and OpenType font engine, metrics, discovery, and rasterization (formerly *clxcb-truetype*).
+Pure Common Lisp TrueType and OpenType font management: finding the
+installed fonts, loading and caching them, metrics, and line layout
+(formerly *clxcb-truetype*).
 
 ## Systems & Packages
 
-- **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`): Backend-neutral font discovery, metrics, layout, and antialiased glyph rasterization. Completely independent of X11/XCB, used by Wayland (Wayflan), Vulkan (Antron), and CPU renderers.
-- **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`): XCB RENDER drawing backend.
-- Backward compatibility: `cl-truetype.asd` and `clxcb-truetype.asd` are provided as aliases.
+- **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`, in `src/core/`): the font manager.  Font discovery, the `FONT` class, open font loaders, metrics, and glyph positions along a line (`layout-string`, `font-decorations`).  It draws nothing and rasterizes nothing, and depends on no graphics library.
+- **`runes/raster`** (package `RUNES/RASTER`, in `src/raster/`): rasterizes strings and single glyphs to A8 alpha maps with CL-VECTORS and CL-AA (`text-pixarray`, `layout-glyphs`, `glyph-image`).  A simple CPU text renderer, which the two bridges draw with.
+- **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`, in `src/xcb/`): text bridge for X11, drawing through XCB and RENDER glyph sets.
+- **`runes/wayland`** (package `RUNES/WAYLAND`, in `src/wayland/`): text bridge for client-side rendering, as on Wayland: cached glyph runs blended into the client's own pixels, through blend and fill functions the client passes, or into a plain `#x00RRGGBB` buffer.
+- Backward compatibility: `cl-truetype.asd` (now `runes` plus `runes/raster`) and `clxcb-truetype.asd` (`runes/xcb`) are provided as aliases.
 - **`runes/otf`** (package `RUNES/OTF`, nickname `OTF`, in `otf/`): the OpenType loader, formerly zpb-otf. Bounds-checked readers for ~50 OpenType tables, CFF/CFF2 charstrings (`runes/otf/charstring`), variable fonts, WOFF and WOFF2. MIT licensed; see `otf/README.md`.
 - **`zpb-ttf`** (`zpb-ttf.asd`, sources in `otf/src/`): the zpb-ttf API on top of `runes/otf`, kept so existing zpb-ttf programs work unchanged. BSD 2-Clause.
 - **`decompress`** (in `decompress/`): Brotli, zlib and raw deflate decoders with no dependencies, usable on their own. MIT licensed; see `decompress/README.md`.
 
+Antron renders text from `runes` alone: it takes fonts, metrics and
+layout from it and rasterizes the glyph outlines itself, so it does not
+use `runes/raster`.  The two bridges draw text for programs that do not
+use Antron.
+
 ## Overview
 
-clxcb-truetype renders antialiased TrueType text onto X11 drawables,
-windows and pixmaps, using XCB and the RENDER extension.  Glyph
-outlines are read from TTF files by ZPB-TTF and rasterized to 8-bit
-coverage masks by CL-VECTORS and CL-AA, one glyph at a time.  Each glyph
-is uploaded once per connection into a RENDER glyph set, and a string is
-drawn with one small request naming its glyphs -- the way Xft draws
-text.
+`runes` finds and opens fonts and answers questions about them: which
+families are installed, how big a string is, where each glyph of a line
+goes.  A renderer asks it for a line's layout -- each glyph index at its
+pen position -- and draws the glyphs itself, adding `RUNES:TARGET-DPI`
+methods for its own drawables.
 
-This is a port of [clx-truetype][clx-truetype] from CLX to XCB.  The
-rasterization pipeline (ZPB-TTF → CL-VECTORS → CL-AA) is reused
-unchanged; the X-specific code was rewritten against clxcb-truetype's
-own drawable wrappers, and the CLX cache layers were replaced with
-hash tables keyed on the connection.
+`runes/raster` is a simple CPU text renderer: it turns glyph outlines,
+read by ZPB-TTF, into 8-bit coverage masks with CL-VECTORS and CL-AA, one
+glyph at a time and cached per face, and the bridges put them on screen:
 
-The backend-neutral part -- font discovery, the FONT class, metrics,
-and rasterizing strings and single glyphs to alpha maps -- is its own
-system, `cl-truetype` (package `TRUETYPE`, in `src/core/`), which
-depends on nothing X.  clxcb-truetype `:USE`s it and re-exports its
-API, so code written against `XCB-TRUETYPE` is unchanged.  A backend
-that draws on the client side (a Wayland one, say) uses `cl-truetype`
-alone: it lays a string out with `TRUETYPE:LAYOUT-GLYPHS` and blends
-each `GLYPH-IMAGE` into its own pixels, and adds `TRUETYPE:TARGET-DPI`
-methods for its drawables.
+- `runes/xcb` uploads each glyph once per connection into a RENDER
+  glyph set, and draws a string with one small request naming its
+  glyphs -- the way Xft draws text.  It re-exports the `RUNES` and
+  `RUNES/RASTER` API, so code written against `XCB-TRUETYPE` is
+  unchanged.
+- `runes/wayland` blends each glyph image into pixels the client owns,
+  and paints underlines, strikethroughs and overlines, through the
+  client's own blend and fill functions, so the client keeps its clipping
+  and its fast paths.
+
+The X11 bridge is a port of [clx-truetype][clx-truetype] from CLX to
+XCB.  The rasterization pipeline (ZPB-TTF → CL-VECTORS → CL-AA) is
+reused unchanged; the X-specific code was rewritten against its own
+drawable wrappers, and the CLX cache layers were replaced with hash
+tables keyed on the connection.
 
 [clx-truetype]: https://github.com/stumpwm/clx-truetype
 
@@ -46,14 +57,15 @@ methods for its drawables.
   other implementations, but I haven't tested them myself.
 - ASDF 3.x for building the library
 - UIOP for portable getenv and directory/file listing
-- [clxcb][clxcb] — the XCB binding this library draws through
-- [zpb-ttf][zpb-ttf] — TrueType font parser
-- [cl-vectors][cl-vectors], [cl-paths-ttf][cl-paths-ttf], [cl-aa][cl-aa]
-  for path representation and rasterization
+- [zpb-ttf][zpb-ttf] — TrueType font parser (included, on top of `runes/otf`)
 - [cacle][cacle] — LFU caches for string metrics and alpha maps
-- [trivial-garbage][trivial-garbage] for portable finalizers
-- [bordeaux-threads][bordeaux-threads] for the locks around the finalizer
-  queue, the font loaders and the font cache
+- [bordeaux-threads][bordeaux-threads] for the locks around the font
+  loaders, the font cache and the bridges' caches
+- `runes/raster` only: [cl-vectors][cl-vectors], [cl-paths-ttf][cl-paths-ttf],
+  [cl-aa][cl-aa] for path representation and rasterization, and
+  [trivial-garbage][trivial-garbage] for its per-font caches
+- `runes/xcb` only: [clxcb][clxcb], the XCB binding it draws through,
+  and trivial-garbage for portable finalizers
 
 ## Quick start
 
@@ -120,6 +132,30 @@ font's string caches, so a font can be reused and reconfigured.
 `cache-fonts` repopulates `*font-cache*` from `*font-dirs*`.  Use
 `get-font-families` and `get-font-subfamilies` to enumerate what's
 installed.
+
+### Layout
+
+    (layout-string    font string &key dpi-x letter-spacing word-spacing kerning-table)
+    (font-decorations font string x y dpi-x dpi-y line-p)
+
+`layout-string` returns a vector of `(glyph-index pen-x)`, the pen
+positions exact and in pixels from the start of the line, and the
+line's total advance.  `font-decorations` returns the font's underline,
+strikethrough and overline for a string drawn at baseline (x, y), as
+rectangles `(left top width height)`.
+
+### Drawing on the client (`runes/wayland`)
+
+    (draw-text      font string x y &key dpi blend fill)
+    (draw-text-line font string x y &key dpi blend fill)
+    (draw-text-into-buffer pixels width height font string x y colour &key dpi line-p)
+
+`draw-text` calls `(blend left top width height data stride)` for each
+glyph's alpha map and `(fill left top width height)` for each
+decoration; the caller blends its text colour into its own surface.
+`draw-text-into-buffer` does both into a vector of `#x00RRGGBB` pixels.
+Glyph runs are cached per font, string and DPI; `flush-glyph-runs`
+forgets them, as `flush-font-caches` does for one font.
 
 ### Drawables
 
@@ -197,8 +233,9 @@ call `close-font-loaders` to close them.
 `cache-fonts` scans into a new table and swaps it in when done, so
 other threads go on finding fonts while it runs.
 
-Each glyph, rasterized for one face at one size and DPI, is kept on
-the client (at most 256 faces' worth) and uploaded once per connection
+Each glyph, rasterized by `runes/raster` for one face at one size and
+DPI, is kept on the client (at most 256 faces' worth) and, by
+`runes/xcb`, uploaded once per connection
 into a glyph set.  A connection keeps at most 64 glyph sets, one per
 face, size, DPI and antialiasing, freeing the least recently used.
 

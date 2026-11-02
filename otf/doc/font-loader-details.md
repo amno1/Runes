@@ -158,4 +158,3 @@ Fontations does **not** provide a structured JSTF reader. Its `read-fonts` crate
 ##### Summary for runes/otf
 
 Leaving JSTF out of the 52 schemas is the correct, honest choice. It is a table with no consumer, no meaningful font coverage, and no shaper support—including in Fontations. If you ever wanted to expose it, a raw `font-data-slice` on the JSTF tag would be sufficient until a justification engine actually appears.
-
