@@ -82,22 +82,26 @@
 
 (defconstant +fixed-max+ #x7FFFFFFF)
 
-(declaim (inline s32 fixed-from-int fixed+ fixed- fixed-neg))
+(deftype s32 () '(signed-byte 32))
+
+(declaim (inline s32 fixed-from-int fixed+ fixed- fixed-neg fixed*))
 (defun s32 (x)
   "X reduced to a signed 32-bit integer, wrapping."
-  (let ((u (ldb (byte 32 0) x)))
-    (if (logbitp 31 u) (- u #x100000000) u)))
+  (declare (integer x))
+  (sb-c::mask-signed-field 32 (ldb (byte 32 0) x)))
 
 (defun fixed-from-int (i)
   "The fixed point value of the integer I (shifted, wrapping like Rust's i << 16)."
-  (s32 (ash i 16)))
+  (declare (integer i))
+  (s32 (ash (ldb (byte 16 0) i) 16)))
 
-(defun fixed+ (a b) (s32 (+ a b)))
-(defun fixed- (a b) (s32 (- a b)))
-(defun fixed-neg (a) (s32 (- a)))
+(defun fixed+ (a b) (declare (s32 a b)) (s32 (+ a b)))
+(defun fixed- (a b) (declare (s32 a b)) (s32 (- a b)))
+(defun fixed-neg (a) (declare (s32 a)) (s32 (- a)))
 
 (defun fixed* (a b)
   "Product of two fixed values, rounded like FreeType's FT_MulFix."
+  (declare (s32 a b))
   (let ((ab (* a b)))
     (s32 (ash (+ ab #x8000 (if (minusp ab) -1 0)) -16))))
 
@@ -147,19 +151,23 @@ not positive."
    :type simple-bit-vector)
   (top 0 :type fixnum))
 
+(declaim (inline stack-len stack-clear stack-push-raw stack-push-int stack-push-fixed
+                 stack-pop-index stack-get-int stack-get-fixed stack-pop-int stack-pop-fixed))
+
 (defun stack-len (s) (stack-top s))
 
 (defun stack-clear (s) (setf (stack-top s) 0))
 
 (defun stack-push-raw (s value fixedp)
+  (declare (stack s) (s32 value))
   (when (= (stack-top s) +max-stack+)
     (fail 'charstring-limit-exceeded "operand stack is full"))
   (setf (aref (stack-values s) (stack-top s)) value
         (aref (stack-fixedp s) (stack-top s)) (if fixedp 1 0))
   (incf (stack-top s)))
 
-(defun stack-push-int (s value) (stack-push-raw s (s32 value) nil))
-(defun stack-push-fixed (s value) (stack-push-raw s (s32 value) t))
+(defun stack-push-int (s value) (declare (integer value)) (stack-push-raw s (s32 value) nil))
+(defun stack-push-fixed (s value) (declare (integer value)) (stack-push-raw s (s32 value) t))
 
 (defun stack-set-fixed (s index value)
   (when (>= index (stack-top s))
@@ -169,12 +177,14 @@ not positive."
 
 (defun stack-pop-index (s)
   "Index of the popped value; 0 when the stack is already empty."
+  (declare (stack s))
   (if (plusp (stack-top s))
       (decf (stack-top s))
       0))
 
 (defun stack-get-int (s index)
   "The integer at INDEX; 0 past the array, an error if it holds a fixed value."
+  (declare (stack s) (fixnum index))
   (cond ((>= index +max-stack+) 0)
         ((= 1 (aref (stack-fixedp s) index))
          (fail 'charstring-invalid-operation "expected an integer operand"))
@@ -182,12 +192,20 @@ not positive."
 
 (defun stack-get-fixed (s index)
   "The value at INDEX as fixed point, converting an integer; 0 past the array."
+  (declare (stack s) (fixnum index))
   (cond ((>= index +max-stack+) 0)
         ((= 1 (aref (stack-fixedp s) index)) (aref (stack-values s) index))
         (t (fixed-from-int (aref (stack-values s) index)))))
 
 (defun stack-pop-int (s) (stack-get-int s (stack-pop-index s)))
 (defun stack-pop-fixed (s) (stack-get-fixed s (stack-pop-index s)))
+
+(declaim (inline stack-fixed-or-zero))
+(defun stack-fixed-or-zero (s index)
+  "The value at INDEX as fixed point, or 0 past the top (STACK-FIXED-ARRAY's
+padding, for one value)."
+  (declare (stack s) (fixnum index))
+  (if (< index (stack-top s)) (stack-get-fixed s index) 0))
 
 (defun stack-fixed-array (s first n)
   "List of N fixed values starting at FIRST, padded with zeros past the top."
@@ -404,61 +422,157 @@ the CFF subroutine bias. A NIL sequence means the font has none."))
 ;;; with nothing drawn after them, lines to the current point and a closing
 ;;; line back to the start of the contour are dropped, as FreeType does.
 ;;; Each command is held back until the next one shows whether it counts.
+;;;
+;;; The filter is a structure, OUTLINE-FILTER, so that the evaluator can
+;;; call it without a generic function dispatch; NOP-FILTER-SINK wraps one
+;;; for use as an ordinary sink.  OUTLINE-FILTER can also map points from
+;;; charstring space to font units first, as CFF-DRAW-GLYPH needs (see
+;;; TRANSFORM-POINT).
+
+(defstruct (outline-filter (:conc-name of-) (:constructor make-outline-filter (inner &key transform-p matrix scale)))
+  inner
+  (open-p nil)
+  (start-x 0 :type s32) (start-y 0 :type s32)
+  ;; The command held back: 0 none, 1 move, 2 line, 3 curve, with its points.
+  (kind 0 :type (integer 0 3))
+  (p0 0 :type s32) (p1 0 :type s32) (p2 0 :type s32)
+  (p3 0 :type s32) (p4 0 :type s32) (p5 0 :type s32)
+  ;; The transform, when TRANSFORM-P: matrix elements or NIL, scale or NIL.
+  (transform-p nil)
+  (matrix nil :type (or null simple-vector))
+  (scale nil :type (or null s32)))
+
+(declaim (inline transform-point))
+(defun transform-point (f x y)
+  "Map charstring X, Y to font units exactly as FreeType does, or return
+them unchanged when F has no transform."
+  (declare (outline-filter f) (s32 x y))
+  (if (not (of-transform-p f))
+      (values x y)
+      (let* ((matrix (of-matrix f))
+             (scale (of-scale f))
+             ;; Multiply by 1/64 and drop the bottom 10 bits: integer font units.
+             (bx (ash (fixed* x #x400) -10))
+             (by (ash (fixed* y #x400) -10)))
+        (multiple-value-bind (cx cy)
+            (if matrix
+                (values (fixed+ (fixed+ (fixed* (svref matrix 0) bx) (fixed* (svref matrix 2) by)) (svref matrix 4))
+                        (fixed+ (fixed+ (fixed* (svref matrix 1) bx) (fixed* (svref matrix 3) by)) (svref matrix 5)))
+                (values bx by))
+          (if scale
+              ;; To 26.6, then to 16.16.
+              (values (s32 (ash (fixed* cx scale) 10)) (s32 (ash (fixed* cy scale) 10)))
+              (values (s32 (ash cx 16)) (s32 (ash cy 16))))))))
+
+(defun of-flush (f for-close)
+  (declare (outline-filter f))
+  (let ((kind (of-kind f)))
+    (setf (of-kind f) 0)
+    (case kind
+      (1 (unless for-close
+           (setf (of-open-p f) t
+                 (of-start-x f) (of-p0 f)
+                 (of-start-y f) (of-p1 f))
+           (sink-move-to (of-inner f) (of-p0 f) (of-p1 f))))
+      (2 (unless (and for-close
+                      (= (of-start-x f) (of-p0 f))
+                      (= (of-start-y f) (of-p1 f)))
+           (sink-line-to (of-inner f) (of-p0 f) (of-p1 f))))
+      (3 (sink-curve-to (of-inner f) (of-p0 f) (of-p1 f) (of-p2 f) (of-p3 f) (of-p4 f) (of-p5 f))))))
+
+(defun of-move-to (f x y)
+  (declare (outline-filter f))
+  (multiple-value-bind (x y) (transform-point f x y)
+    (setf (of-kind f) 1 (of-p0 f) x (of-p1 f) y)))
+
+(defun of-line-to (f x y)
+  (declare (outline-filter f))
+  (multiple-value-bind (x y) (transform-point f x y)
+    ;; A line to where we already are draws nothing.
+    (let ((kind (of-kind f)))
+      (unless (and (/= kind 0)
+                   (if (= kind 3)
+                       (and (= x (of-p4 f)) (= y (of-p5 f)))
+                       (and (= x (of-p0 f)) (= y (of-p1 f)))))
+        (of-flush f nil)
+        (setf (of-kind f) 2 (of-p0 f) x (of-p1 f) y)))))
+
+(defun of-curve-to (f cx0 cy0 cx1 cy1 x y)
+  (declare (outline-filter f))
+  (multiple-value-bind (cx0 cy0) (transform-point f cx0 cy0)
+    (multiple-value-bind (cx1 cy1) (transform-point f cx1 cy1)
+      (multiple-value-bind (x y) (transform-point f x y)
+        (of-flush f nil)
+        (setf (of-kind f) 3
+              (of-p0 f) cx0 (of-p1 f) cy0 (of-p2 f) cx1
+              (of-p3 f) cy1 (of-p4 f) x (of-p5 f) y)))))
+
+(defun of-close (f)
+  (declare (outline-filter f))
+  (of-flush f t)
+  (when (of-open-p f)
+    (sink-close (of-inner f))
+    (setf (of-open-p f) nil)))
+
+(defmethod sink-move-to ((f outline-filter) x y) (of-move-to f x y))
+(defmethod sink-line-to ((f outline-filter) x y) (of-line-to f x y))
+(defmethod sink-curve-to ((f outline-filter) cx0 cy0 cx1 cy1 x y)
+  (of-curve-to f cx0 cy0 cx1 cy1 x y))
+(defmethod sink-close ((f outline-filter)) (of-close f))
+(defmethod sink-finish ((f outline-filter))
+  (of-close f)
+  (sink-finish (of-inner f)))
+;; Hints are passed on only without a transform: CFF-DRAW-GLYPH drops them.
+(defmethod sink-hstem ((f outline-filter) y dy)
+  (unless (of-transform-p f) (sink-hstem (of-inner f) y dy)))
+(defmethod sink-vstem ((f outline-filter) x dx)
+  (unless (of-transform-p f) (sink-vstem (of-inner f) x dx)))
+(defmethod sink-hint-mask ((f outline-filter) mask)
+  (unless (of-transform-p f) (sink-hint-mask (of-inner f) mask)))
+(defmethod sink-counter-mask ((f outline-filter) mask)
+  (unless (of-transform-p f) (sink-counter-mask (of-inner f) mask)))
+(defmethod sink-clear-hints ((f outline-filter))
+  (unless (of-transform-p f) (sink-clear-hints (of-inner f))))
 
 (defclass nop-filter-sink ()
-  ((inner :initarg :inner)
-   (open-p :initform nil)
-   (start :initform nil)
-   ;; (:move x y), (:line x y), (:curve cx0 cy0 cx1 cy1 x y) or NIL
-   (pending :initform nil))
+  ((filter))
   (:documentation "Sink dropping degenerate commands before passing the rest on."))
 
-(defun pending-target (pending)
-  (last pending 2))
+(defmethod initialize-instance :after ((s nop-filter-sink) &key inner)
+  (setf (slot-value s 'filter) (make-outline-filter inner)))
 
-(defun flush-pending (s for-close)
-  (with-slots (inner open-p start pending) s
-    (when pending
-      (destructuring-bind (kind &rest args) pending
-        (setf pending nil)
-        (ecase kind
-          (:move (unless for-close
-                   (setf open-p t start args)
-                   (apply #'sink-move-to inner args)))
-          (:line (unless (and for-close (equal start args))
-                   (apply #'sink-line-to inner args)))
-          (:curve (apply #'sink-curve-to inner args)))))))
+(macrolet ((pass (name &rest args)
+             `(defmethod ,name ((s nop-filter-sink) ,@args)
+                (,name (slot-value s 'filter) ,@args))))
+  (pass sink-move-to x y)
+  (pass sink-line-to x y)
+  (pass sink-curve-to cx0 cy0 cx1 cy1 x y)
+  (pass sink-close)
+  (pass sink-finish)
+  (pass sink-hstem y dy)
+  (pass sink-vstem x dx)
+  (pass sink-hint-mask mask)
+  (pass sink-counter-mask mask)
+  (pass sink-clear-hints))
 
-(defmethod sink-move-to ((s nop-filter-sink) x y)
-  (setf (slot-value s 'pending) (list :move x y)))
+;;; The evaluator calls these: an OUTLINE-FILTER directly, any other sink
+;;; through the generic functions.
 
-(defmethod sink-line-to ((s nop-filter-sink) x y)
-  (with-slots (pending) s
-    ;; A line to where we already are draws nothing.
-    (unless (and pending (equal (pending-target pending) (list x y)))
-      (flush-pending s nil)
-      (setf pending (list :line x y)))))
+(declaim (inline hints-dropped-p))
+(defun hints-dropped-p (sink)
+  (and (outline-filter-p sink) (of-transform-p sink)))
 
-(defmethod sink-curve-to ((s nop-filter-sink) cx0 cy0 cx1 cy1 x y)
-  (flush-pending s nil)
-  (setf (slot-value s 'pending) (list :curve cx0 cy0 cx1 cy1 x y)))
-
-(defmethod sink-close ((s nop-filter-sink))
-  (flush-pending s t)
-  (with-slots (inner open-p) s
-    (when open-p
-      (sink-close inner)
-      (setf open-p nil))))
-
-(defmethod sink-finish ((s nop-filter-sink))
-  (sink-close s)
-  (sink-finish (slot-value s 'inner)))
-
-(defmethod sink-hstem ((s nop-filter-sink) y dy) (sink-hstem (slot-value s 'inner) y dy))
-(defmethod sink-vstem ((s nop-filter-sink) x dx) (sink-vstem (slot-value s 'inner) x dx))
-(defmethod sink-hint-mask ((s nop-filter-sink) mask) (sink-hint-mask (slot-value s 'inner) mask))
-(defmethod sink-counter-mask ((s nop-filter-sink) mask) (sink-counter-mask (slot-value s 'inner) mask))
-(defmethod sink-clear-hints ((s nop-filter-sink)) (sink-clear-hints (slot-value s 'inner)))
+(defmacro %sink-move-to (sink x y)
+  `(let ((s ,sink)) (if (outline-filter-p s) (of-move-to s ,x ,y) (sink-move-to s ,x ,y))))
+(defmacro %sink-line-to (sink x y)
+  `(let ((s ,sink)) (if (outline-filter-p s) (of-line-to s ,x ,y) (sink-line-to s ,x ,y))))
+(defmacro %sink-curve-to (sink cx0 cy0 cx1 cy1 x y)
+  `(let ((s ,sink))
+     (if (outline-filter-p s)
+         (of-curve-to s ,cx0 ,cy0 ,cx1 ,cy1 ,x ,y)
+         (sink-curve-to s ,cx0 ,cy0 ,cx1 ,cy1 ,x ,y))))
+(defmacro %sink-close (sink)
+  `(let ((s ,sink)) (if (outline-filter-p s) (of-close s) (sink-close s))))
 
 ;;; Reading charstring bytes
 
@@ -484,9 +598,12 @@ such as an adjustable one, is copied first."
 (defun empty-cursor ()
   (make-cursor (make-array 0 :element-type '(unsigned-byte 8)) 0 0))
 
+(declaim (inline cursor-remaining cursor-u8 cursor-int parse-int))
+
 (defun cursor-remaining (c) (- (cursor-end c) (cursor-pos c)))
 
 (defun cursor-u8 (c)
+  (declare (cursor c))
   (when (>= (cursor-pos c) (cursor-end c))
     (fail 'charstring-read-error "charstring ends early"))
   (prog1 (aref (cursor-bytes c) (cursor-pos c))
@@ -494,7 +611,9 @@ such as an adjustable one, is copied first."
 
 (defun cursor-int (c bytes)
   "Signed big-endian integer of BYTES bytes."
+  (declare (cursor c) (type (integer 1 4) bytes))
   (let ((u 0))
+    (declare (type (unsigned-byte 32) u))
     (dotimes (i bytes)
       (setf u (logior (ash u 8) (cursor-u8 c))))
     (if (logbitp (1- (* 8 bytes)) u) (- u (ash 1 (* 8 bytes))) u)))
@@ -507,6 +626,7 @@ such as an adjustable one, is copied first."
 
 (defun parse-int (c b0)
   "The integer encoded by B0 and the bytes after it (num.rs parse_int)."
+  (declare (cursor c) (type (unsigned-byte 8) b0))
   (cond
     ((<= 32 b0 246) (- b0 139))
     ((<= 247 b0 250) (+ (* (- b0 247) 256) (cursor-u8 c) 108))
@@ -517,7 +637,7 @@ such as an adjustable one, is copied first."
 
 ;;; Operators
 
-(defparameter *one-byte-operators*
+(sb-ext:defglobal **one-byte-operators**
   (let ((table (make-array 32 :initial-element nil)))
     (loop for (code name) on '(1 :hstem 3 :vstem 4 :vmoveto 5 :rlineto 6 :hlineto
                                7 :vlineto 8 :rrcurveto 10 :callsubr 11 :return
@@ -530,7 +650,7 @@ such as an adjustable one, is copied first."
           do (setf (aref table code) name))
     table))
 
-(defparameter *two-byte-operators*
+(sb-ext:defglobal **two-byte-operators**
   ;; `random' (12 23) is deliberately absent, as in Fontations.
   (let ((table (make-array 38 :initial-element nil)))
     (loop for (code name) on '(0 :dotsection 1 :vstem3 2 :hstem3 3 :and 4 :or 5 :not
@@ -544,16 +664,20 @@ such as an adjustable one, is copied first."
           do (setf (aref table code) name))
     table))
 
+(declaim (type simple-vector **one-byte-operators** **two-byte-operators**))
+
+(declaim (inline read-operator))
 (defun read-operator (c b0)
   "The operator starting with B0, or NIL for a reserved one."
+  (declare (cursor c) (type (unsigned-byte 8) b0))
   (if (= b0 12)
       (if (plusp (cursor-remaining c))
           (let ((b1 (cursor-u8 c)))
-            (when (< b1 (length *two-byte-operators*))
-              (aref *two-byte-operators* b1)))
+            (when (< b1 (length **two-byte-operators**))
+              (svref **two-byte-operators** b1)))
           nil)
-      (when (< b0 (length *one-byte-operators*))
-        (aref *one-byte-operators* b0))))
+      (when (< b0 (length **one-byte-operators**))
+        (svref **one-byte-operators** b0))))
 
 ;;; Evaluator
 
@@ -570,16 +694,21 @@ such as an adjustable one, is copied first."
   (width-only nil)
   (have-read-width nil)
   (stem-count 0 :type fixnum)
-  (x 0) (y 0)
-  (sbx 0)
-  (wx 0)
-  (stack (make-stack))
+  (x 0 :type s32) (y 0 :type s32)
+  (sbx 0 :type s32)
+  (wx 0 :type s32)
+  (stack (make-stack) :type stack)
   (stack-ix 0 :type fixnum)
   (in-seac nil)
   (ops-done 0 :type fixnum)
-  (storage (make-array +storage-size+ :initial-element 0))
-  ;; A multiple master font's BuildCharArray, sized on first use.
-  (build-char (make-array 0 :adjustable t :initial-element 0)))
+  ;; The transient array of `put' and `get', and a multiple master font's
+  ;; BuildCharArray, made on first use: few charstrings need them.
+  (%storage nil)
+  (build-char nil))
+
+(defun ev-storage (ev)
+  (or (ev-%storage ev)
+      (setf (ev-%storage ev) (make-array +storage-size+ :initial-element 0))))
 
 (defun make-evaluator-for (context blend-state sink)
   (make-evaluator :context context
@@ -619,6 +748,7 @@ Evaluation stops at the first stack-clearing operator."
 
 (defun evaluate-impl (ev c depth)
   "Evaluate from cursor C. Return true if an endchar was seen."
+  (declare (evaluator ev) (cursor c) (fixnum depth))
   (when (> depth +nesting-depth-limit+)
     (fail 'charstring-limit-exceeded "subroutines nested too deeply"))
   (let ((stack (ev-stack ev))
@@ -652,93 +782,112 @@ Evaluation stops at the first stack-clearing operator."
                          (return)))))))))
     seen-endchar))
 
+(declaim (inline reset-stack ensure-open emit-line coords-remaining stack-arg))
+
 (defun reset-stack (ev)
+  (declare (evaluator ev))
   (stack-clear (ev-stack ev))
   (setf (ev-stack-ix ev) 0))
 
 (defun read-width (ev)
+  (declare (evaluator ev))
   (setf (ev-wx ev) (stack-get-fixed (ev-stack ev) 0)
         (ev-seen-width-command ev) t
         (ev-have-read-width ev) t))
 
 (defun ensure-open (ev)
+  (declare (evaluator ev))
   (unless (ev-open-p ev)
-    (sink-move-to (ev-sink ev) 0 0)
+    (%sink-move-to (ev-sink ev) 0 0)
     (setf (ev-open-p ev) t)))
 
 (defun emit-line (ev)
+  (declare (evaluator ev))
   (ensure-open ev)
-  (sink-line-to (ev-sink ev) (ev-x ev) (ev-y ev)))
+  (%sink-line-to (ev-sink ev) (ev-x ev) (ev-y ev)))
 
 (defun move-to (ev)
   "Start a subpath at the current point, closing the previous one."
+  (declare (evaluator ev))
   (if (ev-open-p ev)
-      (sink-close (ev-sink ev))
+      (%sink-close (ev-sink ev))
       (setf (ev-open-p ev) t))
-  (sink-move-to (ev-sink ev) (ev-x ev) (ev-y ev)))
+  (%sink-move-to (ev-sink ev) (ev-x ev) (ev-y ev)))
 
 (defun coords-remaining (ev)
+  (declare (evaluator ev))
   (max 0 (- (stack-len (ev-stack ev)) (ev-stack-ix ev))))
 
 (defun stack-arg (ev offset)
+  (declare (evaluator ev) (fixnum offset))
   (stack-get-fixed (ev-stack ev) (+ (ev-stack-ix ev) offset)))
 
-(defun emit-curves (ev &rest modes)
-  "Emit curves whose points are computed from the stack by MODES, a list of
-:DX-DY, :X-DY, :DX-Y, :DX-INITIAL-Y, :D-LARGER-COORD-DIST, or
-(:DX-MAYBE-DY flag) / (:MAYBE-DX-DY flag); every three points make a curve."
-  (let ((initial-x (ev-x ev))
-        (initial-y (ev-y ev))
-        (count 0)
-        (cx0 0) (cy0 0) (cx1 0) (cy1 0))
-    (ensure-open ev)
-    (dolist (mode modes)
-      (let ((used
-              (destructuring-bind (kind &optional flag) (if (consp mode) mode (list mode))
-                (ecase kind
-                  (:dx-dy
-                   (setf (ev-x ev) (fixed+ (ev-x ev) (stack-arg ev 0))
-                         (ev-y ev) (fixed+ (ev-y ev) (stack-arg ev 1)))
-                   2)
-                  (:x-dy
-                   (setf (ev-y ev) (fixed+ (ev-y ev) (stack-arg ev 0)))
-                   1)
-                  (:dx-y
-                   (setf (ev-x ev) (fixed+ (ev-x ev) (stack-arg ev 0)))
-                   1)
-                  (:dx-initial-y
-                   (setf (ev-x ev) (fixed+ (ev-x ev) (stack-arg ev 0))
-                         (ev-y ev) initial-y)
-                   1)
-                  ;; Delta for the coordinate further from where we started;
-                  ;; the other returns to its starting value.
-                  (:d-larger-coord-dist
-                   (let ((delta (stack-arg ev 0)))
-                     (if (> (abs (fixed- (ev-x ev) initial-x))
-                            (abs (fixed- (ev-y ev) initial-y)))
-                         (setf (ev-x ev) (fixed+ (ev-x ev) delta)
-                               (ev-y ev) initial-y)
-                         (setf (ev-y ev) (fixed+ (ev-y ev) delta)
-                               (ev-x ev) initial-x)))
-                   1)
-                  (:dx-maybe-dy
-                   (setf (ev-x ev) (fixed+ (ev-x ev) (stack-arg ev 0)))
-                   (cond (flag (setf (ev-y ev) (fixed+ (ev-y ev) (stack-arg ev 1))) 2)
-                         (t 1)))
-                  (:maybe-dx-dy
-                   (setf (ev-y ev) (fixed+ (ev-y ev) (stack-arg ev 0)))
-                   (cond (flag (setf (ev-x ev) (fixed+ (ev-x ev) (stack-arg ev 1))) 2)
-                         (t 1)))))))
-        (incf (ev-stack-ix ev) used)
-        (case count
-          (0 (setf cx0 (ev-x ev) cy0 (ev-y ev) count 1))
-          (1 (setf cx1 (ev-x ev) cy1 (ev-y ev) count 2))
-          (t (sink-curve-to (ev-sink ev) cx0 cy0 cx1 cy1 (ev-x ev) (ev-y ev))
-             (setf count 0)))))))
+;;; EMIT-CURVES is a macro: every call names its modes, so the curve's
+;;; points are computed by straight-line code, without a list of modes to
+;;; walk at run time.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun curve-mode-code (ev mode initial-x initial-y)
+    "Code that moves EV's current point for MODE and returns the number of
+operands it used."
+    (destructuring-bind (kind &optional flag) (if (consp mode) mode (list mode))
+      (ecase kind
+        (:dx-dy
+         `(progn (setf (ev-x ,ev) (fixed+ (ev-x ,ev) (stack-arg ,ev 0))
+                       (ev-y ,ev) (fixed+ (ev-y ,ev) (stack-arg ,ev 1)))
+                 2))
+        (:x-dy
+         `(progn (setf (ev-y ,ev) (fixed+ (ev-y ,ev) (stack-arg ,ev 0))) 1))
+        (:dx-y
+         `(progn (setf (ev-x ,ev) (fixed+ (ev-x ,ev) (stack-arg ,ev 0))) 1))
+        (:dx-initial-y
+         `(progn (setf (ev-x ,ev) (fixed+ (ev-x ,ev) (stack-arg ,ev 0))
+                       (ev-y ,ev) ,initial-y)
+                 1))
+        ;; Delta for the coordinate further from where we started; the
+        ;; other returns to its starting value.
+        (:d-larger-coord-dist
+         `(let ((delta (stack-arg ,ev 0)))
+            (if (> (abs (fixed- (ev-x ,ev) ,initial-x))
+                   (abs (fixed- (ev-y ,ev) ,initial-y)))
+                (setf (ev-x ,ev) (fixed+ (ev-x ,ev) delta)
+                      (ev-y ,ev) ,initial-y)
+                (setf (ev-y ,ev) (fixed+ (ev-y ,ev) delta)
+                      (ev-x ,ev) ,initial-x))
+            1))
+        (:dx-maybe-dy
+         `(progn (setf (ev-x ,ev) (fixed+ (ev-x ,ev) (stack-arg ,ev 0)))
+                 (cond (,flag (setf (ev-y ,ev) (fixed+ (ev-y ,ev) (stack-arg ,ev 1))) 2)
+                       (t 1))))
+        (:maybe-dx-dy
+         `(progn (setf (ev-y ,ev) (fixed+ (ev-y ,ev) (stack-arg ,ev 0)))
+                 (cond (,flag (setf (ev-x ,ev) (fixed+ (ev-x ,ev) (stack-arg ,ev 1))) 2)
+                       (t 1))))))))
+
+(defmacro emit-curves (ev &rest modes)
+  "Emit curves whose points are computed from the stack by MODES: :DX-DY,
+:X-DY, :DX-Y, :DX-INITIAL-Y, :D-LARGER-COORD-DIST, or (:DX-MAYBE-DY flag)
+/ (:MAYBE-DX-DY flag), FLAG a form; every three points make a curve."
+  (let ((e (gensym "EV")) (initial-x (gensym "X0")) (initial-y (gensym "Y0"))
+        (cx0 (gensym)) (cy0 (gensym)) (cx1 (gensym)) (cy1 (gensym)))
+    `(let* ((,e ,ev)
+            (,initial-x (ev-x ,e))
+            (,initial-y (ev-y ,e))
+            (,cx0 0) (,cy0 0) (,cx1 0) (,cy1 0))
+       (declare (ignorable ,initial-x ,initial-y) (s32 ,cx0 ,cy0 ,cx1 ,cy1))
+       (ensure-open ,e)
+       ,@(loop for mode in modes
+               for k from 0
+               collect `(incf (ev-stack-ix ,e) ,(curve-mode-code e mode initial-x initial-y))
+               collect (case (mod k 3)
+                         (0 `(setf ,cx0 (ev-x ,e) ,cy0 (ev-y ,e)))
+                         (1 `(setf ,cx1 (ev-x ,e) ,cy1 (ev-y ,e)))
+                         (t `(%sink-curve-to (ev-sink ,e) ,cx0 ,cy0 ,cx1 ,cy1 (ev-x ,e) (ev-y ,e)))))
+       nil)))
 
 (defun stem-operands (ev sink-fn)
   "Read the stem hints on the stack, after an odd leading width; call
-SINK-FN with each hint's two edges and return the number of operands used."
+SINK-FN, unless NIL, with each hint's two edges and return the number of
+operands used."
   (let* ((stack (ev-stack ev))
          (i 0)
          (len (if (and (oddp (stack-len stack)) (not (ev-seen-width-command ev)))
@@ -747,16 +896,18 @@ SINK-FN with each hint's two edges and return the number of operands used."
          (u 0))
     (setf (ev-seen-width-command ev) t)
     (loop while (< i (stack-len stack))
-          do (destructuring-bind (du w) (stack-fixed-array stack i 2)
+          do (let ((du (stack-fixed-or-zero stack i))
+                   (w (stack-fixed-or-zero stack (1+ i))))
                (setf u (fixed+ u du))
                (let ((v (fixed+ u w)))
-                 (funcall sink-fn u v)
+                 (when sink-fn (funcall sink-fn u v))
                  (setf u v)))
              (incf i 2))
     len))
 
 (defun evaluate-operator (ev op c depth)
   "Evaluate operator OP. Return true if evaluation should continue."
+  (declare (evaluator ev) (symbol op) (cursor c) (fixnum depth))
   (let ((stack (ev-stack ev))
         (sink (ev-sink ev)))
     (case op
@@ -798,21 +949,29 @@ SINK-FN with each hint's two edges and return the number of operands used."
            (handle-seac ev :implicit depth)))
        (return-from evaluate-operator nil))
 
+      ;; A transforming OUTLINE-FILTER drops hints, so they are not sent to it.
       ((:hstem :vstem :hstemhm :vstemhm)
-       (let ((len (stem-operands ev (if (member op '(:hstem :hstemhm))
-                                        (lambda (u v) (sink-hstem sink u v))
-                                        (lambda (u v) (sink-vstem sink u v))))))
+       (let ((len (stem-operands ev (cond ((hints-dropped-p sink) nil)
+                                          ((member op '(:hstem :hstemhm))
+                                           (lambda (u v) (sink-hstem sink u v)))
+                                          (t (lambda (u v) (sink-vstem sink u v)))))))
          (incf (ev-stem-count ev) (floor len 2))
          (reset-stack ev)))
 
       ;; Operands before a mask are an implied vstemhm.
       ((:hintmask :cntrmask)
-       (let ((len (stem-operands ev (lambda (u v) (sink-vstem sink u v)))))
+       (let ((len (stem-operands ev (unless (hints-dropped-p sink)
+                                      (lambda (u v) (sink-vstem sink u v))))))
          (incf (ev-stem-count ev) (floor len 2))
-         (let ((mask (cursor-octets c (ceiling (ev-stem-count ev) 8))))
-           (if (eq op :hintmask)
-               (sink-hint-mask sink mask)
-               (sink-counter-mask sink mask))))
+         (let ((count (ceiling (ev-stem-count ev) 8)))
+           (cond ((not (hints-dropped-p sink))
+                  (let ((mask (cursor-octets c count)))
+                    (if (eq op :hintmask)
+                        (sink-hint-mask sink mask)
+                        (sink-counter-mask sink mask))))
+                 ((> count (cursor-remaining c))
+                  (fail 'charstring-read-error "hint mask runs past the charstring"))
+                 (t (incf (cursor-pos c) count)))))
        (reset-stack ev))
 
       (:rmoveto
@@ -845,11 +1004,10 @@ SINK-FN with each hint's two edges and return the number of operands used."
              (reset-stack ev))))
 
       (:rlineto
-       (loop for i from 0 below (stack-len stack) by 2
-             do (destructuring-bind (dx dy) (stack-fixed-array stack i 2)
-                  (setf (ev-x ev) (fixed+ (ev-x ev) dx)
-                        (ev-y ev) (fixed+ (ev-y ev) dy))
-                  (emit-line ev)))
+       (loop for i of-type fixnum from 0 below (stack-len stack) by 2
+             do (setf (ev-x ev) (fixed+ (ev-x ev) (stack-fixed-or-zero stack i))
+                      (ev-y ev) (fixed+ (ev-y ev) (stack-fixed-or-zero stack (1+ i))))
+                (emit-line ev))
        (reset-stack ev))
 
       ((:hlineto :vlineto)
@@ -894,8 +1052,8 @@ SINK-FN with each hint's two edges and return the number of operands used."
          (loop while (< (ev-stack-ix ev) count)
                do (let ((last-delta-p (= (- count (ev-stack-ix ev)) 5)))
                     (if horizontal-p
-                        (emit-curves ev :dx-y :dx-dy (list :maybe-dx-dy last-delta-p))
-                        (emit-curves ev :x-dy :dx-dy (list :dx-maybe-dy last-delta-p))))
+                        (emit-curves ev :dx-y :dx-dy (:maybe-dx-dy last-delta-p))
+                        (emit-curves ev :x-dy :dx-dy (:dx-maybe-dy last-delta-p))))
                   (setf horizontal-p (not horizontal-p))))
        (reset-stack ev))
 
@@ -903,17 +1061,17 @@ SINK-FN with each hint's two edges and return the number of operands used."
        (loop while (>= (coords-remaining ev) 6)
              do (emit-curves ev :dx-dy :dx-dy :dx-dy))
        (when (eq op :rcurveline)
-         (destructuring-bind (dx dy) (stack-fixed-array stack (ev-stack-ix ev) 2)
-           (setf (ev-x ev) (fixed+ (ev-x ev) dx)
-                 (ev-y ev) (fixed+ (ev-y ev) dy))
+         (let ((i (ev-stack-ix ev)))
+           (setf (ev-x ev) (fixed+ (ev-x ev) (stack-fixed-or-zero stack i))
+                 (ev-y ev) (fixed+ (ev-y ev) (stack-fixed-or-zero stack (1+ i))))
            (emit-line ev)))
        (reset-stack ev))
 
       (:rlinecurve
        (loop while (> (coords-remaining ev) 6)
-             do (destructuring-bind (dx dy) (stack-fixed-array stack (ev-stack-ix ev) 2)
-                  (setf (ev-x ev) (fixed+ (ev-x ev) dx)
-                        (ev-y ev) (fixed+ (ev-y ev) dy))
+             do (let ((i (ev-stack-ix ev)))
+                  (setf (ev-x ev) (fixed+ (ev-x ev) (stack-fixed-or-zero stack i))
+                        (ev-y ev) (fixed+ (ev-y ev) (stack-fixed-or-zero stack (1+ i))))
                   (emit-line ev)
                   (incf (ev-stack-ix ev) 2)))
        (loop while (>= (coords-remaining ev) 6)
@@ -1176,7 +1334,8 @@ extra operands."
 
 (defun build-char-array (ev len)
   "The BuildCharArray, sized to LEN zeroed elements on first use."
-  (let ((array (ev-build-char ev)))
+  (let ((array (or (ev-build-char ev)
+                   (setf (ev-build-char ev) (make-array 0 :adjustable t :initial-element 0)))))
     (unless (= (length array) len)
       (setf array (adjust-array array len :initial-element 0)
             (ev-build-char ev) array))

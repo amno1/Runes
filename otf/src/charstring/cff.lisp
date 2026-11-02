@@ -11,16 +11,23 @@
 
 (in-package #:runes/otf/charstring)
 
+(declaim (inline cff-u8 cff-uint))
 (defun cff-u8 (fd pos) (runes/otf:font-data-read-u8 fd pos))
 (defun cff-uint (fd pos size)
-  (let ((v 0))
-    (dotimes (i size v)
-      (setf v (logior (ash v 8) (cff-u8 fd (+ pos i)))))))
+  "The SIZE byte big-endian unsigned integer at POS, SIZE 1 to 4."
+  (ecase size
+    (1 (runes/otf:font-data-read-u8 fd pos))
+    (2 (runes/otf:font-data-read-u16 fd pos))
+    (3 (runes/otf:font-data-read-u24 fd pos))
+    (4 (runes/otf:font-data-read-u32 fd pos))))
 
 ;;; INDEX (index.rs)
 
 (defstruct (cff-index (:constructor %make-cff-index))
-  (data nil) (count 0) (off-size 0) (offsets-pos 0)
+  (data nil :type runes/otf:font-data)
+  (count 0 :type (unsigned-byte 32))
+  (off-size 0 :type (integer 0 4))
+  (offsets-pos 0 :type fixnum)
   ;; Position of the byte before the first object: offsets are relative to it.
   (base 0))
 
@@ -117,7 +124,11 @@
   (nominal-width 0)
   ;; Font DICT FontMatrix (not normalized), or NIL.
   (matrix nil)
-  (vs-index 0))
+  (vs-index 0)
+  ;; Made by CFF-DRAW-GLYPH on first use, for all the subfont's glyphs: the
+  ;; charstring context, and the transform as (matrix . scale).
+  (context nil)
+  (transform nil))
 
 (defun open-cff-font (table-data &key upem)
   "Read the CFF or CFF2 table in the FONT-DATA window TABLE-DATA. UPEM is
@@ -239,7 +250,8 @@ it needs the charset and Standard Encoding."))
   (cff-subr (slot-value c 'global-subrs) i "no global subroutines"))
 
 ;;; Transform from charstring space to font units (font.rs transform and
-;;; the TransformSink of charstring.rs), for unscaled outlines.
+;;; the TransformSink of charstring.rs), for unscaled outlines.  The points
+;;; are mapped by TRANSFORM-POINT in charstring.lisp.
 
 (defun cff-transform (font subfont)
   "The matrix elements (or NIL for the identity) and the fixed point scale
@@ -257,59 +269,27 @@ it needs the charset and Standard Encoding."))
               (font-matrix-elements matrix))
             scale)))
 
-(defclass transform-sink ()
-  ((inner :initarg :inner)
-   (matrix :initarg :matrix)
-   (scale :initarg :scale))
-  (:documentation "Sink applying a CFF transform before passing commands on."))
-
-(defun transform-point (sink x y)
-  "Map charstring X, Y to font units exactly as FreeType does."
-  (with-slots (matrix scale) sink
-    ;; Multiply by 1/64 and drop the bottom 10 bits: integer font units.
-    (let ((bx (ash (fixed* x #x400) -10))
-          (by (ash (fixed* y #x400) -10)))
-      (multiple-value-bind (cx cy)
-          (if matrix
-              (values (fixed+ (fixed+ (fixed* (aref matrix 0) bx) (fixed* (aref matrix 2) by)) (aref matrix 4))
-                      (fixed+ (fixed+ (fixed* (aref matrix 1) bx) (fixed* (aref matrix 3) by)) (aref matrix 5)))
-              (values bx by))
-        (if scale
-            ;; To 26.6, then to 16.16.
-            (values (s32 (ash (fixed* cx scale) 10)) (s32 (ash (fixed* cy scale) 10)))
-            (values (s32 (ash cx 16)) (s32 (ash cy 16))))))))
-
-(defmethod sink-move-to ((s transform-sink) x y)
-  (multiple-value-bind (x y) (transform-point s x y)
-    (sink-move-to (slot-value s 'inner) x y)))
-(defmethod sink-line-to ((s transform-sink) x y)
-  (multiple-value-bind (x y) (transform-point s x y)
-    (sink-line-to (slot-value s 'inner) x y)))
-(defmethod sink-curve-to ((s transform-sink) cx0 cy0 cx1 cy1 x y)
-  (multiple-value-bind (cx0 cy0) (transform-point s cx0 cy0)
-    (multiple-value-bind (cx1 cy1) (transform-point s cx1 cy1)
-      (multiple-value-bind (x y) (transform-point s x y)
-        (sink-curve-to (slot-value s 'inner) cx0 cy0 cx1 cy1 x y)))))
-(defmethod sink-close ((s transform-sink)) (sink-close (slot-value s 'inner)))
-(defmethod sink-finish ((s transform-sink)) (sink-finish (slot-value s 'inner)))
-
 (defun cff-draw-glyph (font subfont gid sink &optional (coords #()))
   "Evaluate glyph GID of SUBFONT, sending its outline in font units (fixed
 point) to SINK, without degenerate commands. Return the charstring's
 advance width in charstring units: the stated width plus nominalWidthX,
 or defaultWidthX. COORDS are normalized coordinates of a CFF2 instance."
-  (let* ((context (make-instance 'cff-charstring-context
-                                 :global-subrs (cff-font-global-subrs font)
-                                 :local-subrs (cff-subfont-subrs subfont)))
+  (let* ((context (or (cff-subfont-context subfont)
+                      (setf (cff-subfont-context subfont)
+                            (make-instance 'cff-charstring-context
+                                           :global-subrs (cff-font-global-subrs font)
+                                           :local-subrs (cff-subfont-subrs subfont)))))
+         (transform (or (cff-subfont-transform subfont)
+                        (setf (cff-subfont-transform subfont)
+                              (multiple-value-call #'cons (cff-transform font subfont)))))
          (charstring (cff-index-ref (cff-font-charstrings font) gid))
          (blend (cff-blend-state font (cff-subfont-vs-index subfont) coords))
-         (width (multiple-value-bind (matrix scale) (cff-transform font subfont)
-                  ;; As in Fontations' draw: transform, then filter.
-                  (evaluate-charstring context charstring
-                                       (make-instance 'transform-sink
-                                                      :inner (make-instance 'nop-filter-sink :inner sink)
-                                                      :matrix matrix :scale scale)
-                                       :blend-state blend))))
+         ;; As in Fontations' draw: transform, then filter.
+         (width (evaluate-charstring context charstring
+                                     (make-outline-filter sink :transform-p t
+                                                               :matrix (car transform)
+                                                               :scale (cdr transform))
+                                     :blend-state blend)))
     (if width
         (fixed+ width (cff-subfont-nominal-width subfont))
         (cff-subfont-default-width subfont))))
