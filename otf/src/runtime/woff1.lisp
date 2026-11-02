@@ -86,6 +86,7 @@
 (defun read-woff1-directory (fd num-tables dir-end)
   "The table directory of the WOFF font FD, each entry with its offset in
 the SFNT, in directory order; and the SFNT's size."
+  (declare (type font-data fd) (type (unsigned-byte 16) num-tables) (fixnum dir-end))
   (let ((dst-offset (+ 12 (* 16 num-tables))))
     (declare (type (unsigned-byte 64) dst-offset))
     (values

@@ -229,6 +229,7 @@
     sum))
 
 (defun sfnt-search-params (num-tables)
+  (declare (type (unsigned-byte 16) num-tables))
   (let* ((max-pow2 (if (plusp num-tables)
                        (ash 1 (1- (integer-length num-tables)))
                        1))
@@ -452,11 +453,13 @@ Return (VALUES byte-length have-instructions-p) and advance COMP-BS."
 
 (defun out-pad (out glyph-start)
   "Zero bytes up to a multiple of 4 from GLYPH-START."
+  (declare (glyf-out out) (fixnum glyph-start))
   (loop repeat (- (round4 (- (out-pos out) glyph-start)) (- (out-pos out) glyph-start))
         do (out-u8 out 0)))
 
 (defun write-composite-glyph (s out gid has-bbox)
   "Write composite glyph GID; return its xMin."
+  (declare (glyf-streams s) (glyf-out out) (type (unsigned-byte 16) gid))
   (unless has-bbox
     (woff-fail "glyf" "composite glyph ~D missing explicit bbox" gid))
   (let* ((bbox (gs-bbox s))
@@ -480,6 +483,7 @@ Return (VALUES byte-length have-instructions-p) and advance COMP-BS."
 (defun read-contour-ends (s gid n-contours)
   "Read the point counts of the N-CONTOURS contours of glyph GID into the
 end point buffer; return the total number of points."
+  (declare (glyf-streams s) (type (integer 1 32767) n-contours))
   (when (> n-contours (length (gs-end-pts s)))
     (setf (gs-end-pts s) (make-array n-contours :element-type '(unsigned-byte 16))))
   (loop with total = 0
@@ -561,6 +565,8 @@ y coordinates, and the bounding box of the points."
 
 (defun write-simple-glyph (s out gid n-contours has-bbox)
   "Write simple glyph GID; return its xMin."
+  (declare (glyf-streams s) (glyf-out out) (type (unsigned-byte 16) gid)
+           (type (integer 1 32767) n-contours))
   (let ((total-pts (read-contour-ends s gid n-contours))
         (start (out-pos out)))
     (multiple-value-bind (x-len y-len cxmin cymin cxmax cymax)
@@ -683,6 +689,8 @@ Returns an X-MINS vector of (signed-byte 16) for 'hmtx' reconstruction."
           (setf (aref x-mins gid) (font-data-read-i16 glyf-fd (+ off 2))))))))
 
 (defun reconstruct-hmtx (unpacked hmtx-entry num-glyphs num-h-metrics x-mins)
+  (declare (type (unsigned-byte 16) num-glyphs num-h-metrics)
+           (type (or null (simple-array (signed-byte 16) (*))) x-mins))
   (when (or (zerop num-h-metrics) (> num-h-metrics num-glyphs))
     (woff-fail "hmtx" "invalid numberOfHMetrics ~D for ~D glyphs" num-h-metrics num-glyphs))
   (let* ((bs (make-bstream unpacked
@@ -700,6 +708,7 @@ Returns an X-MINS vector of (signed-byte 16) for 'hmtx' reconstruction."
           (out (make-array (+ (* 4 num-h-metrics) (* 2 (- num-glyphs num-h-metrics)))
                            :element-type '(unsigned-byte 8)))
           (p 0))
+      (declare (fixnum p))
       (dotimes (i num-h-metrics)
         (setf (aref advances i) (bs-u16 bs "hmtx")))
       (dotimes (i num-h-metrics)
