@@ -155,27 +155,34 @@
       (setf (svref tuple i) (runes/otf:font-data-read-i16 fd (+ pos (* 2 i)))))))
 
 (defun gvar-tuple-scalar (peak intermediate coords)
-  "Scalar of a tuple at COORDS, or NIL when it does not apply (scalar_for)."
-  (let ((scalar #x10000))
-    (dotimes (i (length peak) (unless (zerop scalar) scalar))
-      (let ((p (aref peak i))
-            (coord (if (< i (length coords)) (aref coords i) 0)))
-        (unless (zerop p)
-          (when (zerop coord) (return nil))
-          (unless (= p coord)
-            (if intermediate
+  "Scalar of a tuple at COORDS, or NIL when it does not apply (scalar_for).
+Each axis multiplies the scalar by how far COORDS lies towards its peak."
+  (flet ((coord (i) (if (< i (length coords)) (aref coords i) 0))
+         (scale (scalar numerator denominator)
+           ;; From 2.14 to 16.16 for the division.
+           (runes/otf/charstring::fixed-mul-div scalar (ash numerator 2) (ash denominator 2))))
+    (loop with scalar = #x10000
+          for i below (length peak)
+          for p = (aref peak i)
+          for coord = (coord i)
+          do (cond
+               ;; No peak on this axis, or exactly at it: a factor of one.
+               ((or (zerop p) (= p coord)))
+               ((zerop coord) (return nil))
+               ((null intermediate)
+                (if (<= (min p 0) coord (max p 0))
+                    (setf scalar (scale scalar coord p))
+                    (return nil)))
+               (t
                 (let ((start (aref (car intermediate) i))
                       (end (aref (cdr intermediate) i)))
-                  ;; An invalid region contributes a factor of one.
-                  (unless (or (> start p) (> p end) (and (minusp start) (plusp end)))
-                    (when (or (<= coord start) (>= coord end)) (return nil))
-                    (setf scalar
-                          (if (< coord p)
-                              (runes/otf/charstring::fixed-mul-div scalar (ash (- coord start) 2) (ash (- p start) 2))
-                              (runes/otf/charstring::fixed-mul-div scalar (ash (- end coord) 2) (ash (- end p) 2))))))
-                (progn
-                  (when (or (< coord (min p 0)) (> coord (max p 0))) (return nil))
-                  (setf scalar (runes/otf/charstring::fixed-mul-div scalar (ash coord 2) (ash p 2)))))))))))
+                  (cond
+                    ;; An invalid region contributes a factor of one.
+                    ((or (> start p) (> p end) (and (minusp start) (plusp end))))
+                    ((or (<= coord start) (>= coord end)) (return nil))
+                    ((< coord p) (setf scalar (scale scalar (- coord start) (- p start))))
+                    (t (setf scalar (scale scalar (- end coord) (- end p))))))))
+          finally (return (unless (zerop scalar) scalar)))))
 
 (defun map-active-tuples (data coords fn)
   "Call FN with (scalar points data-cursor) for each tuple that applies at
