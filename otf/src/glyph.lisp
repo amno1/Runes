@@ -255,9 +255,21 @@ no TrueType glyph variations."
 
 (defmethod kerning-offset ((left-glyph glyph) (right-glyph glyph)
                            (font-loader font-loader))
+  ;; From 'GPOS' when it has 'kern' lookups, as HarfBuzz does, else from
+  ;; the 'kern' table.
   (let ((key (logior (ash (font-index left-glyph) 16)
                      (font-index right-glyph))))
-    (gethash key (kerning-table font-loader) 0)))
+    (if (gpos-kern-lookups font-loader)
+        (let ((cache (gpos-kerning-cache font-loader)))
+          (multiple-value-bind (value found) (gethash key cache)
+            (if found
+                value
+                (setf (gethash key cache)
+                      (handler-case (gpos-kerning font-loader (font-index left-glyph)
+                                                  (font-index right-glyph))
+                        ;; Unreadable data gives no kerning.
+                        (runes/otf:font-error () 0))))))
+        (gethash key (kerning-table font-loader) 0))))
 
 (defmethod kerning-offset ((left character) (right character)
                            (font-loader font-loader))

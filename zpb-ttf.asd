@@ -29,4 +29,5 @@
                              (:file "glyf-outlines")
                              (:file "cff-outlines")
                              (:file "variations")
+                             (:file "gpos-kerning")
                              (:file "font-loader-interface")))))

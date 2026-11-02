@@ -41,6 +41,10 @@
    (top-side-bearings :accessor top-side-bearings :initform (vector))
    ;; from 'kern' table
    (kerning-table :initform (make-hash-table) :accessor kerning-table)
+   ;; from 'GPOS': the 'kern' lookups, found on first use, and the kerning
+   ;; of each pair asked for (see gpos-kerning.lisp)
+   (%gpos-kern-lookups :initform :unknown :accessor %gpos-kern-lookups)
+   (gpos-kerning-cache :initform (make-hash-table) :accessor gpos-kerning-cache)
    ;; from 'name' table
    (name-entries :initform (vector) :accessor name-entries)
    ;; from 'post' table

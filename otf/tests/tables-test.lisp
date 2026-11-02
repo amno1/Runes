@@ -293,6 +293,12 @@
     (test-assert (= (zpb-ttf:glyph-count loader) 2620) "glyph-count is 2620")
     (test-assert (= (zpb-ttf:ascender loader) 1854) "ascender is 1854")
     (test-assert (= (zpb-ttf:descender loader) -434) "descender is -434")
+    ;; Kerning from GPOS, which this font has besides a 'kern' table; the
+    ;; values are HarfBuzz's.
+    (test-assert (zpb-ttf::gpos-kern-lookups loader) "GPOS kern lookups are found")
+    (test-assert (= (zpb-ttf:kerning-offset #\A #\V loader) -152) "GPOS kerning of AV is -152")
+    (test-assert (= (zpb-ttf:kerning-offset #\T #\o loader) -227) "GPOS kerning of To is -227")
+    (test-assert (= (zpb-ttf:kerning-offset #\o #\o loader) 0) "an unkerned pair gives 0")
 
     ;; Glyph A
     (let ((glyph (zpb-ttf:find-glyph #\A loader)))

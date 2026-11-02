@@ -860,7 +860,11 @@ follow it.
 
 @deffn {Generic Function} all-kerning-pairs loader
 @deffnx {Generic Function} kerning-offset left right loader
-Kerning from the @samp{kern} table.
+Kerning in font units: from the @samp{kern} feature's PairPos lookups in
+@samp{GPOS} when the font has them, as HarfBuzz does, otherwise from the
+@samp{kern} table.  The values are the font's static kerning: device tables
+and variation deltas are not applied.  @code{all-kerning-pairs} lists the
+pairs of the @samp{kern} table only.
 @end deffn
 
 @deffn {Generic Function} string-bounding-box string loader &key kerning
