@@ -31,6 +31,7 @@
   (:use #:cl)
   (:export
    ;; font loader
+   #:font-loader
    #:open-font-loader
    #:close-font-loader
    #:with-font-loader
@@ -40,6 +41,7 @@
    #:value
    #:collection-font-count
    #:collection-font-index
+   #:cff-outlines-p
    ;; font typographic
    #:italic-angle
    #:underline-thickness

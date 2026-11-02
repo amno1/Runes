@@ -757,35 +757,57 @@ Evaluation stops at the first stack-clearing operator."
   (declare (evaluator ev) (cursor c) (fixnum depth))
   (when (> depth +nesting-depth-limit+)
     (fail 'charstring-limit-exceeded "subroutines nested too deeply"))
+  ;; The position is kept in POS while numbers are read, and written back
+  ;; to C only around an operator, which may read from C itself.
   (let ((stack (ev-stack ev))
+        (bytes (cursor-bytes c))
+        (pos (cursor-pos c))
+        (end (cursor-end c))
         (seen-endchar nil))
-    (loop while (plusp (cursor-remaining c))
-          do (when (> (incf (ev-ops-done ev)) +max-operations+)
-               (fail 'charstring-limit-exceeded "too many operations"))
-             (let ((b0 (cursor-u8 c)))
-               (cond
-                 ;; Byte 29 is not a number here: it is callgsubr in a
-                 ;; charstring (it encodes a 32-bit integer only in DICTs).
-                 ((or (= b0 28) (<= 32 b0 254))
-                  (stack-push-int stack (parse-int c b0)))
-                 ((= b0 255)
-                  ;; Type 1 reads an integer, Type 2 a raw 16.16 value.
-                  (let ((v (cursor-int c 4)))
-                    (if (ev-type1-p ev)
-                        (stack-push-int stack v)
-                        (stack-push-fixed stack v))))
-                 (t
-                  ;; FreeType ignores reserved operators, clearing the stack.
-                  (let ((op (read-operator c b0)))
-                    (cond
-                      ((null op) (reset-stack ev))
-                      (t
-                       (when (eq op :endchar) (setf seen-endchar t))
-                       (unless (evaluate-operator ev op c depth)
-                         (return))
-                       ;; The first stack-clearing operator settles the width.
-                       (when (and (ev-width-only ev) (ev-seen-width-command ev))
-                         (return)))))))))
+    (declare (type (simple-array (unsigned-byte 8) (*)) bytes) (fixnum pos end))
+    (macrolet ((next-byte ()
+                 `(if (< pos end)
+                      (prog1 (aref bytes pos) (incf pos))
+                      (fail 'charstring-read-error "charstring ends early")))
+               (signed-bytes (n)
+                 ;; N bytes, big-endian, as a signed integer.
+                 `(let ((u 0))
+                    (declare (type (unsigned-byte 32) u))
+                    (dotimes (i ,n) (setf u (logior (ash u 8) (next-byte))))
+                    (if (logbitp ,(1- (* 8 n)) u) (- u ,(ash 1 (* 8 n))) u))))
+      (loop while (< pos end)
+            do (when (> (incf (ev-ops-done ev)) +max-operations+)
+                 (fail 'charstring-limit-exceeded "too many operations"))
+               (let ((b0 (next-byte)))
+                 (declare (type (unsigned-byte 8) b0))
+                 ;; Numbers, as PARSE-INT reads them.  Byte 29 is not one here:
+                 ;; it is callgsubr in a charstring (it encodes a 32-bit integer
+                 ;; only in DICTs).
+                 (cond
+                   ((<= 32 b0 246) (stack-push-int stack (- b0 139)))
+                   ((<= 247 b0 250) (stack-push-int stack (+ (* (- b0 247) 256) (next-byte) 108)))
+                   ((<= 251 b0 254) (stack-push-int stack (- (- (* (- b0 251) 256)) (next-byte) 108)))
+                   ((= b0 28) (stack-push-int stack (signed-bytes 2)))
+                   ((= b0 255)
+                    ;; Type 1 reads an integer, Type 2 a raw 16.16 value.
+                    (let ((v (signed-bytes 4)))
+                      (if (ev-type1-p ev)
+                          (stack-push-int stack v)
+                          (stack-push-fixed stack v))))
+                   (t
+                    (setf (cursor-pos c) pos)
+                    ;; FreeType ignores reserved operators, clearing the stack.
+                    (let ((op (read-operator c b0)))
+                      (cond
+                        ((null op) (reset-stack ev))
+                        (t
+                         (when (eq op :endchar) (setf seen-endchar t))
+                         (unless (evaluate-operator ev op c depth)
+                           (return))
+                         ;; The first stack-clearing operator settles the width.
+                         (when (and (ev-width-only ev) (ev-seen-width-command ev))
+                           (return)))))
+                    (setf pos (cursor-pos c)))))))
     seen-endchar))
 
 (declaim (inline reset-stack ensure-open emit-line coords-remaining stack-arg))
