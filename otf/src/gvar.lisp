@@ -282,6 +282,48 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
            (interp (1+ final) (1+ end) final first)
            (interp start first final first)))))))
 
+(defun add-scaled-delta (vector i delta scalar)
+  (setf (aref vector i) (f+ (aref vector i) (scaled-delta delta scalar))))
+
+(defun add-dense-deltas (c scalar dx dy)
+  "Add a tuple's deltas for every point, read at cursor C, to DX and DY."
+  (let ((n (length dx)))
+    (read-dense c n (lambda (i d) (add-scaled-delta dx i d scalar)))
+    (read-dense c n (lambda (i d) (add-scaled-delta dy i d scalar)))))
+
+(defun interpolate-contours (fx fy out-x out-y touched ends)
+  "Infer the deltas of the untouched points of every contour (IUP)."
+  (loop with start = 0
+        for end in ends
+        ;; A contour ending before the previous one is skipped.
+        when (>= end start)
+          do (when (>= end (length fx)) (gvar-fail))
+             (interpolate-untouched fx fy out-x out-y touched start end)
+             (setf start (1+ end))))
+
+(defun add-sparse-deltas (c scalar points fx fy ends dx dy)
+  "Add a tuple's deltas for POINTS, read at cursor C, to DX and DY, with
+those of the other points inferred from them.  FX and FY are the points'
+16.16 coordinates."
+  (let ((n (length fx))
+        (out-x (copy-seq fx))
+        (out-y (copy-seq fy))
+        (touched (make-array (length fx) :initial-element nil)))
+    ;; Point numbers past the glyph's points are skipped.
+    (read-sparse c points (length points)
+                 (lambda (i d)
+                   (when (< i n)
+                     (add-scaled-delta out-x i d scalar)
+                     (setf (aref touched i) t))))
+    (read-sparse c points (length points)
+                 (lambda (i d)
+                   (when (< i n)
+                     (add-scaled-delta out-y i d scalar))))
+    (interpolate-contours fx fy out-x out-y touched ends)
+    (dotimes (i n)
+      (setf (aref dx i) (f+ (aref dx i) (f- (aref out-x i) (aref fx i)))
+            (aref dy i) (f+ (aref dy i) (f- (aref out-y i) (aref fy i)))))))
+
 (defun simple-glyph-deltas (data coords xs ys ends)
   "16.16 deltas for every point of a simple glyph, phantom points included,
 as two vectors; XS and YS are the font unit coordinates of all its points
@@ -293,35 +335,11 @@ and ENDS its contour end points. NIL if the data is malformed."
          (fy (map 'vector #'fixed-from-int ys)))
     (handler-case
         (progn
-          (map-active-tuples
-           data coords
-           (lambda (scalar points c)
-             (if (eq points :all)
-                 (progn
-                   (read-dense c n (lambda (i d) (setf (aref dx i) (f+ (aref dx i) (scaled-delta d scalar)))))
-                   (read-dense c n (lambda (i d) (setf (aref dy i) (f+ (aref dy i) (scaled-delta d scalar))))))
-                 (let ((out-x (copy-seq fx)) (out-y (copy-seq fy))
-                       (touched (make-array n :initial-element nil))
-                       (count (length points)))
-                   (read-sparse c points count
-                                (lambda (i d)
-                                  (when (< i n)
-                                    (setf (aref out-x i) (f+ (aref out-x i) (scaled-delta d scalar))
-                                          (aref touched i) t))))
-                   (read-sparse c points count
-                                (lambda (i d)
-                                  (when (< i n)
-                                    (setf (aref out-y i) (f+ (aref out-y i) (scaled-delta d scalar))))))
-                   (let ((start 0))
-                     (dolist (end ends)
-                       ;; A contour ending before the previous one is skipped.
-                       (when (>= end start)
-                         (when (>= end n) (gvar-fail))
-                         (interpolate-untouched fx fy out-x out-y touched start end)
-                         (setf start (1+ end)))))
-                   (dotimes (i n)
-                     (setf (aref dx i) (f+ (aref dx i) (f- (aref out-x i) (aref fx i)))
-                           (aref dy i) (f+ (aref dy i) (f- (aref out-y i) (aref fy i)))))))))
+          (map-active-tuples data coords
+                             (lambda (scalar points c)
+                               (if (eq points :all)
+                                   (add-dense-deltas c scalar dx dy)
+                                   (add-sparse-deltas c scalar points fx fy ends dx dy))))
           (values dx dy))
       (gvar-data-error () nil))))
 
