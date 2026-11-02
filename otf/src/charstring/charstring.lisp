@@ -108,6 +108,8 @@
 (defun fixed/ (a b)
   "Quotient of two fixed values, rounded like FreeType's FT_DivFix; a zero
 divisor gives the largest magnitude."
+  ;; A may also be BCD-VALUE's unsigned 32-bit digits.
+  (declare (type (integer #x-80000000 #xFFFFFFFF) a) (type (signed-byte 32) b))
   (let* ((sign (not (eq (minusp a) (minusp b))))
          (au (abs a))
          (bu (abs b))
@@ -213,6 +215,7 @@ padding, for one value)."
         collect (if (< i (stack-top s)) (stack-get-fixed s i) 0)))
 
 (defun stack-drop (s n)
+  (declare (stack s) (fixnum n))
   (setf (stack-top s) (max 0 (- (stack-top s) n))))
 
 (defun stack-exch (s)
@@ -225,6 +228,7 @@ padding, for one value)."
 
 (defun stack-roll (s count shift)
   "Rotate the top COUNT values by SHIFT places toward the top."
+  (declare (stack s) (type (signed-byte 32) count shift))
   (when (< count 2)
     (return-from stack-roll))
   (when (> count (stack-top s))
@@ -296,6 +300,7 @@ reinterpreted, with B, as fixed point bits, as FreeType does."
 (defun stack-apply-blend (s blend-state)
   "The `blend' operator: replace target values and their per-region deltas
 by the blended target values."
+  (declare (stack s))
   (let ((target-count (stack-pop-int s)))
     (when (or (minusp target-count) (> target-count (stack-top s)))
       (fail 'charstring-invalid-operation "blend count exceeds the stack"))
@@ -368,6 +373,7 @@ BASE-CODE and ACCENT-CODE are Standard Encoding codes.")
 
 (defun subr-bias (count)
   "Bias added to a subroutine number for an INDEX of COUNT subroutines."
+  (declare (type (unsigned-byte 32) count))
   (cond ((< count 1240) 107)
         ((< count 33900) 1131)
         (t 32768)))
@@ -1312,6 +1318,8 @@ extra operands."
 
 (defun handle-mm-blend (ev subr-idx num-args)
   "Blend point values of a multiple master font (othersubrs 14 to 18)."
+  ;; NUM-ARGS is MOST-POSITIVE-FIXNUM for a negative count (HANDLE-OTHERSUBR).
+  (declare (evaluator ev) (fixnum subr-idx num-args))
   (let* ((weights (context-weight-vector (ev-context ev)))
          (stack (ev-stack ev))
          (num-points (+ (- subr-idx 13) (if (= subr-idx 18) 1 0))))
