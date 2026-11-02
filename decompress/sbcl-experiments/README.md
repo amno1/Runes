@@ -1,7 +1,7 @@
 # SBCL code generation notes for `inflate-block`
 
 Experiments from 2026-10-26: SBCL 2.6.9 master plus sb-simd-512, Source Code
-Pro WOFF. The measured results are summarised in `../optimizations.md`
+Pro WOFF. The measured results are summarised in `../doc/optimizations.md`
 (section "SBCL codegen in `inflate-block`").
 
 | File                            | What                                                               |

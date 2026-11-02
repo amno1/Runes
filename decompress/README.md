@@ -210,6 +210,7 @@ src/
   inflate.lisp   deflate and zlib: INFLATE, ZLIB-DECOMPRESS, Adler-32
 data/dictionary.bin
 doc/optimizations.md   every optimisation tried, with measured results
+sbcl-experiments/      SBCL code-generation experiments: disassemblies, an SBCL patch
 tests/
   tests.lisp     libbrotli and libz oracle tests;  run.lisp runs them
   vectors/       Brotli reference streams (.br) and originals (.raw)

@@ -813,7 +813,7 @@ conversions 55 → 32, but stack references 78 → 95 (`base`/`ocap` are new
 live values) and the round-trip `MOV`s are unchanged. Measured 383–386 vs
 381–383 MB/s; `perf stat` −2% instructions, +1% cycles. Neutral, not kept.
 
-Disassemblies and the pointer variant: `doc/codegen/`.
+Disassemblies and the pointer variant: `sbcl-experiments/`.
 
 Conclusion: the excess is not tagging or (at this size) the allocator choice;
 it is two-address move coalescing (a quarter of the instructions) plus spilled
@@ -823,7 +823,7 @@ not help.
 
 ## SBCL pass: retarget result moves after pack
 
-An SBCL patch, not a change here; see `doc/codegen/mov-retarget/`. It removes
+An SBCL patch, not a change here; see `sbcl-experiments/mov-retarget/`. It removes
 `MOV tmp,x; op tmp; MOV x,tmp` round trips (in `inflate-block`: 190 → 131
 reg-reg MOVs, 685 → 626 instructions, stack references unchanged). It passes
 SBCL's test suite and decompress's tests. Executed instructions drop 7–12%

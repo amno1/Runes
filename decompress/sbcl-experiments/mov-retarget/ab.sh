@@ -7,7 +7,7 @@
 # Columns: label file MB/s instructions cycles.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
-root=$(cd "$here/../../.." && pwd)
+root=$(cd "$here/../.." && pwd)
 A=$1; B=$2; shift 2
 files=${*:-"SourceCodePro-Regular.woff meslo.z9.z src8m.z6.z src1m.q9.br RedHatText-Regular.br"}
 out=${OUT:-/tmp/mov-retarget-ab}

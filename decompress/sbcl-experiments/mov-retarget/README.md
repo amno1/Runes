@@ -100,7 +100,7 @@ The 7 files fail on unmodified master too, so they come from this environment:
 | decompress: moves retargeted | — | 383 |
 | SBCL core: machine code bytes | 10,808,535 | 10,806,912 (−0.015%) |
 
-`count-movs.py` counts the MOVs; `codesize.lisp` measures the core.
+`count-movs.lisp` counts the MOVs; `codesize.lisp` measures the core.
 
 The SBCL core barely changes because most of SBCL is tagged, call-heavy code.
 The pattern is common only in raw-word arithmetic loops like decoders.
@@ -154,7 +154,7 @@ bytes) is the remaining suspect, and it is not proven here.
 | `0001-retarget-result-moves.patch` | The pass, against SBCL master d24b6e227 |
 | `repro.lisp` | Ten-line reproduction |
 | `ab.sh`, `run.lisp` | A/B harness: two SBCLs, `perf stat`, five inputs |
-| `count-movs.py` | Counts instructions, reg-reg MOVs, stack references and tag shifts in a disassembly |
+| `count-movs.lisp` | Counts instructions, reg-reg MOVs, stack references and tag shifts in a disassembly |
 | `codesize.lisp` | Total machine-code bytes in a core |
 | `prototype/` | Runtime-loadable versions (pre-pack, which was dropped; post-pack with a rule for moves before a VOP, which fired twice and was dropped) |
 | `results/` | Raw benchmark output, PMU counters, disassemblies, SBCL test logs |

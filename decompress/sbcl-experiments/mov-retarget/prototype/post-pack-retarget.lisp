@@ -1,5 +1,7 @@
 ;;;; PROTOTYPE, kept for the record: has known bugs (see ../README.md, "Bugs found on the way"). Use ../0001-retarget-result-moves.patch.
+
 (in-package "SB-C")
+
 (defvar *retarget-result-moves* t)
 (defvar *retargeted-moves* 0)
 (defvar *retarget-rules* (list 1 2))

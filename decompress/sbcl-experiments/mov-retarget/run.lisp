@@ -3,7 +3,7 @@
 ;;;; compiling and `perf stat` counts load + decode only.
 ;;;;   FILE=SourceCodePro-Regular.woff BENCH=1 sbcl --script run.lisp
 (require :asdf)
-(defvar *root* (merge-pathnames "../../../" (directory-namestring *load-truename*)))
+(defvar *root* (merge-pathnames "../../" (directory-namestring *load-truename*)))
 (push *root* asdf:*central-registry*)
 (handler-bind ((warning #'muffle-warning)) (asdf:load-system "decompress"))
 ;; JOB and NOW from the regular bench, without its main loop
