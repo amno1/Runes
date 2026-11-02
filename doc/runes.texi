@@ -1,0 +1,1421 @@
+\input texinfo   @c -*- texinfo -*-
+@c %**start of header
+@setfilename runes.info
+@settitle Runes Manual
+@documentencoding UTF-8
+@syncodeindex vr fn
+@syncodeindex tp fn
+@c %**end of header
+
+@copying
+This manual is for Runes, font management, loading and text rendering
+in Common Lisp.
+
+Copyright @copyright{} 2012--2025 Michael Filonenko and contributors.@*
+Copyright @copyright{} 2026 Arthur Miller.
+
+Runes is distributed under the GNU Lesser General Public License,
+version 2.1 or later, except @file{otf/} and @file{decompress/}, which
+are under the MIT license (the zpb-ttf code in @file{otf/} under the BSD
+2-Clause license).  See @file{LICENSE} in each.
+@end copying
+
+@dircategory Common Lisp
+@direntry
+* Runes: (runes).       Fonts and text for Common Lisp.
+@end direntry
+
+@titlepage
+@title Runes
+@subtitle Fonts and text for Common Lisp
+@author Arthur Miller
+@page
+@vskip 0pt plus 1filll
+@insertcopying
+@end titlepage
+
+@contents
+
+@ifnottex
+@node Top
+@top Runes
+
+Runes finds the installed fonts, loads and caches them, gives their
+metrics, lays out lines of text, rasterizes glyphs and draws text on
+X11 and in client-side buffers, all in Common Lisp.
+
+@insertcopying
+@end ifnottex
+
+@menu
+* Overview::                    The systems and what each does.
+* Quick start::                 Drawing a line of text on X11.
+* Font manager::                The @code{runes} system.
+* Rasterizer::                  @code{runes/raster} and @code{runes/raster-antron}.
+* X11 bridge::                  @code{runes/xcb}.
+* Client-side bridge::          @code{runes/wayland}.
+* Font loader::                 The @code{zpb-ttf} interface.
+* OpenType tables::             @code{runes/otf}.
+* CFF charstrings::             @code{runes/otf/charstring}.
+* Decompression::               The @code{decompress} system.
+* Migrating from clx-truetype:: What changed for CLX users.
+* Tests::                       Running the test suites.
+* Index::                       Functions, variables and classes.
+@end menu
+
+@c ====================================================================
+@node Overview
+@chapter Overview
+
+Runes aims to do FreeType's job of loading fonts and serving their
+metrics, and fontconfig's job of discovering and caching them, without
+calling into foreign libraries.  The aim is similar to Google's
+Fontations.  It is developed and tested on SBCL.
+
+@menu
+* Systems::                     Systems, packages and licenses.
+* Requirements::                What each system depends on.
+@end menu
+
+@node Systems
+@section Systems
+
+@table @code
+@item runes
+Package @code{RUNES}, nicknames @code{TRUETYPE} and @code{CL-TRUETYPE};
+in @file{src/core/}.  The font manager: font discovery, the @code{font}
+class, open font loaders, metrics, and glyph positions along a line.
+It draws and rasterizes nothing and depends on no graphics library.
+@xref{Font manager}.
+
+@item runes/raster
+Package @code{RUNES/RASTER}; in @file{src/raster/}.  Rasterizes
+strings and single glyphs to 8-bit alpha maps with cl-vectors and
+cl-aa.  @xref{Rasterizer}.
+
+@item runes/raster-antron
+The same package and API as @code{runes/raster}, rasterizing with
+Antron's CPU rasterizer instead of cl-vectors and cl-aa.  Load one of
+the two, not both.
+
+@item runes/xcb
+Package @code{RUNES/XCB}, nicknames @code{RUNES-XCB},
+@code{XCB-TRUETYPE} and @code{XFT}; in @file{src/xcb/}.  Draws text on
+X11 through XCB and RENDER glyph sets, and re-exports the
+@code{RUNES} and @code{RUNES/RASTER} API.  @xref{X11 bridge}.
+
+@item runes/wayland
+Package @code{RUNES/WAYLAND}; in @file{src/wayland/}.  Draws text into
+pixels the client owns, as on Wayland.  @xref{Client-side bridge}.
+
+@item zpb-ttf
+Package @code{ZPB-TTF}; sources in @file{otf/src/}.  The zpb-ttf font
+loader API, kept so that zpb-ttf programs work unchanged, on top of
+@code{runes/otf}.  BSD 2-Clause.  @xref{Font loader}.
+
+@item runes/otf
+Package @code{RUNES/OTF}, nickname @code{OTF}; in @file{otf/}.
+Bounds-checked readers for about 50 OpenType tables, generated from
+schemas, plus WOFF and WOFF2 decoding.  MIT.  @xref{OpenType tables}.
+
+@item runes/otf/charstring
+Package @code{RUNES/OTF/CHARSTRING}.  The CFF and CFF2 charstring
+interpreter and DICT parser, a port of Fontations'.  MIT.
+@xref{CFF charstrings}.
+
+@item decompress
+Package @code{DECOMPRESS}; in @file{decompress/}.  Brotli, zlib and raw
+deflate decoders with no dependencies.  MIT.  @xref{Decompression}.
+@end table
+
+For backward compatibility, @file{cl-truetype.asd} loads
+@code{runes} and @code{runes/raster}, and @file{clxcb-truetype.asd}
+loads @code{runes/xcb}.
+
+Antron renders text from @code{runes} alone: it takes fonts, metrics
+and layout from it and rasterizes the outlines itself, so it does not
+need @code{runes/raster} or a bridge.
+
+@node Requirements
+@section Requirements
+
+@itemize
+@item
+SBCL.  @code{runes} and the bridges use portable libraries and may
+work elsewhere, untested; @code{runes/otf}, @code{zpb-ttf} and
+@code{decompress} use SBCL internals and need SBCL.
+@item
+ASDF 3 and UIOP.
+@item
+cacle, for the LFU caches of string metrics and alpha maps, and
+bordeaux-threads, for the locks around font loaders and caches.
+@item
+@code{runes/raster}: cl-vectors, cl-paths-ttf and cl-aa, and
+trivial-garbage.  @code{runes/raster-antron}: Antron instead of the
+cl-vectors libraries.
+@item
+@code{runes/xcb}: clxcb, the XCB binding.
+@end itemize
+
+With the sb-simd-512 build of SBCL (with AVX-512), parts of
+@code{decompress} use AVX-512.  Stock SBCL runs the plain Lisp code;
+check for @code{:decompress-avx512} in @code{*features*}.
+
+@c ====================================================================
+@node Quick start
+@chapter Quick start
+
+Load the X11 bridge and index the installed fonts:
+
+@lisp
+(asdf:load-system :runes/xcb)
+(runes/xcb:cache-fonts)
+@end lisp
+
+Wrap an XCB window in a @code{window} object, wait for its Expose
+event, and draw on it:
+
+@lisp
+(xcb:with-x-connection (conn)
+  (let* ((screen (first (xcb:conn-roots conn)))
+         (win-id (xcb:generate-id conn))
+         (font   (make-instance 'runes/xcb:font
+                                :family "DejaVu Sans"
+                                :subfamily "Book"
+                                :size 24)))
+    (xcb:create-window conn 0 win-id (xcb:root screen) 100 100 400 200 0
+                       xcb-const:+window-class-input-output+ 0
+                       (logior xcb-const:+cw-back-pixel+
+                               xcb-const:+cw-event-mask+)
+                       :background-pixel (xcb:black-pixel screen)
+                       :event-mask xcb-const:+event-mask-exposure+)
+    (xcb:map-window conn win-id)
+    (xcb:flush conn)
+    (let ((win (make-instance 'runes/xcb:window
+                              :connection conn :id win-id :screen screen)))
+      ;; ... wait for the window's Expose event, then:
+      (runes/xcb:draw-text win font "Hello, Runes" 10 60 :colour #xFFFFFF)
+      (xcb:flush conn))))
+@end lisp
+
+@file{examples/hello.lisp} is the complete program, with the event
+loop:
+
+@lisp
+(load "examples/hello.lisp")
+(runes-example:hello)
+@end lisp
+
+@c ====================================================================
+@node Font manager
+@chapter The font manager
+
+The @code{runes} system, package @code{RUNES}.  Every symbol in this
+chapter is also exported from @code{RUNES/XCB}.
+
+@menu
+* Font cache::                  Finding the installed fonts.
+* Fonts::                       The @code{font} class.
+* Font loaders::                Open font files.
+* Targets and DPI::             What metrics are measured against.
+* Metrics::                     Ascent, descent, text extents.
+* Layout::                      Glyph positions along a line.
+* Fitting and centring::        Sizing text to a box.
+@end menu
+
+@node Font cache
+@section The font cache
+
+@defvar *font-dirs*
+The directories searched for fonts.  By default
+@file{/usr/share/fonts/}, @file{/usr/local/share/fonts/},
+@file{~/.local/share/fonts/} and @file{~/.fonts/}, and on macOS also
+@file{/Library/Fonts/} and @file{/System/Library/Fonts/}.
+@end defvar
+
+@defvar *font-cache*
+A hash table of family name to a hash table of subfamily name to
+pathname.  Guarded by a lock.
+@end defvar
+
+@defun cache-fonts
+Scan @code{*font-dirs*} for @file{.ttf} files and replace
+@code{*font-cache*} with what is found.  The scan builds a new table
+and swaps it in when done, so other threads go on finding fonts
+meanwhile.  Call it once per image, and again after installing fonts.
+Only files with the type @file{ttf} are indexed, although the loader
+also opens @file{.otf}, @file{.ttc}, @file{.woff} and @file{.woff2}
+files given by pathname.
+@end defun
+
+@defun cache-font-file pathname
+Add the font in @var{pathname} to @code{*font-cache*}.  A file the
+loader cannot read is skipped.
+@end defun
+
+@defun get-font-families
+Return the list of cached family names.
+@end defun
+
+@defun get-font-subfamilies family
+Return the subfamilies of @var{family}, such as @samp{Regular},
+@samp{Italic} or @samp{Bold}.
+@end defun
+
+@defun check-valid-font-families family subfamily
+Signal an error unless @var{family} and @var{subfamily} are in the
+cache, calling @code{cache-fonts} first if the cache is empty.
+@end defun
+
+@defun get-font-pathname font
+Return the pathname of the file @var{font} is read from.
+@end defun
+
+@node Fonts
+@section Fonts
+
+@deftp {Class} font family subfamily size underline strikethrough overline antialias background foreground overwrite-gcontext
+A face, a size and a text style.  Make one with
+
+@lisp
+(make-instance 'font :family "DejaVu Sans" :subfamily "Book" :size 24)
+@end lisp
+
+@var{size} is in pixels.  @var{subfamily} may be omitted or
+@code{nil}; then Regular, Book, or the first available subfamily is
+used.  @var{underline}, @var{strikethrough} and @var{overline} default
+to false, @var{antialias} to true.  @var{background},
+@var{foreground} and @var{overwrite-gcontext} are kept from
+clx-truetype and not used by the bridges, which take the colour as an
+argument.
+@end deftp
+
+@deffn {Accessor} font-family font
+@deffnx {Accessor} font-subfamily font
+@deffnx {Accessor} font-size font
+@deffnx {Accessor} font-underline font
+@deffnx {Accessor} font-strikethrough font
+@deffnx {Accessor} font-overline font
+@deffnx {Accessor} font-antialias font
+@deffnx {Accessor} font-background font
+@deffnx {Accessor} font-foreground font
+@deffnx {Accessor} font-overwrite-gcontext font
+The font's slots.  Setting one flushes the font's caches, so a font can
+be reconfigured and reused.
+@end deffn
+
+@deffn {Generic Function} font-equal font1 font2
+True if the two fonts have the same family, subfamily and size, and
+the same value in every style slot.
+@end deffn
+
+@deffn {Generic Function} flush-font-caches font
+Flush everything cached for @var{font}.  A renderer that caches images
+per font adds an @code{:after} method to flush those too, as
+@code{runes/raster} does.
+@end deffn
+
+@deffn {Accessor} font-string-bboxes font
+@deffnx {Accessor} font-string-line-bboxes font
+The font's caches of string bounding boxes.
+@end deffn
+
+@defun make-font-cache font dpi-cache-size string-cache-size inner-provider
+@defunx font-cache-fetch cache dpi string
+A two-level cache, per DPI and then per string, of values computed by
+@var{inner-provider}.  Used for the bounding box caches.
+@end defun
+
+@node Font loaders
+@section Font loaders
+
+Each font file is opened once, by the zpb-ttf loader (@pxref{Font
+loader}), and the loader is kept open for the life of the image.
+
+@defvar *font-loader-cache*
+A hash table of pathname to open font loader.
+@end defvar
+
+@defmac with-font-loader (loader font) &body body
+Run @var{body} with @var{loader} bound to @var{font}'s cached loader,
+opening it the first time, while holding the font loader lock.  A
+loader is not thread-safe, so use it only inside this macro.
+@end defmac
+
+@defun close-font-loaders
+Close every cached loader and empty @code{*font-loader-cache*}.
+@end defun
+
+@node Targets and DPI
+@section Targets and DPI
+
+The metric functions take a @dfn{target}, which gives the resolution
+the text is measured at: an integer DPI, a cons @code{(@var{dpi-x}
+. @var{dpi-y})}, or, with a bridge loaded, a drawable or a screen.
+Anything else counts as 96 DPI.
+
+@deffn {Generic Function} target-dpi target
+Return @code{(values @var{dpi-x} @var{dpi-y})} for @var{target}.  A
+backend adds methods for its own drawables and screens.
+@end deffn
+
+@defun font-units->pixels-x dpi-x font
+@defunx font-units->pixels-y dpi-y font
+Return the factor that converts font units to pixels.
+@end defun
+
+@node Metrics
+@section Metrics
+
+All lengths are in pixels.  The @dfn{bounding box} of a string is its
+ink: the box around the glyphs as drawn.  The @dfn{line box} spans the
+advance widths horizontally and the font's ascent and descent
+vertically, which is what lines laid out one under another need.
+
+@defun font-ascent target font
+@defunx font-descent target font
+@defunx font-line-gap target font
+@defunx baseline-to-baseline target font
+The font's ascent, descent (negative, as in TrueType), line gap, and
+the distance between the baselines of two lines.
+@end defun
+
+@defun font-ascent-for-dpi dpi-y font
+@defunx font-descent-for-dpi dpi-y font
+The same as @code{font-ascent} and @code{font-descent}, for a DPI.
+@end defun
+
+@defun font-lines-height target font lines-count
+The height of @var{lines-count} lines: ascent plus descent for one
+line, plus the line gap between lines.
+@end defun
+
+@defun text-bounding-box target font string &key start end
+@defunx text-width target font string &key start end
+@defunx text-height target font string &key start end
+The bounding box of @var{string}, from @var{start} to @var{end}, and
+its width and height.
+@end defun
+
+@defun text-line-bounding-box target font string &key start end
+@defunx text-line-width target font string &key start end
+@defunx text-line-height target font string &key start end
+The same for the line box.
+@end defun
+
+@defun xmin bounding-box
+@defunx ymin bounding-box
+@defunx xmax bounding-box
+@defunx ymax bounding-box
+The sides of a bounding box.
+@end defun
+
+@defvar *allow-fixed-pitch-p*
+When true, the default, the width of a line in a font marked
+fixed-pitch is the first glyph's advance times the length.  Faster,
+but wrong for fonts whose CJK glyphs are double width despite the
+flag; bind it to @code{nil} for those.
+@end defvar
+
+@node Layout
+@section Layout
+
+@defun layout-string font string &key (dpi-x 96) (letter-spacing 0.0) (word-spacing 0.0) kerning-table
+Lay out @var{string} on one line.  @var{letter-spacing} is added after
+each character, @var{word-spacing} after each space.  Kerning comes
+from @var{kerning-table} or else from the font.  Return
+@code{(values @var{layout} @var{total-advance})}, where @var{layout}
+is a vector of @code{(@var{glyph-index} @var{pen-x})}, @var{pen-x} the
+exact pen position in pixels from the start of the line.
+@end defun
+
+@defun kern-offset font char1 char2 &key custom-table (dpi-x 96)
+The kerning between @var{char1} and @var{char2} in fractional pixels,
+from @var{custom-table} if given, else from the font.
+@end defun
+
+@defun line-box font dpi &key (multiplier 1.0) explicit-height
+Return @code{(values @var{ascent} @var{descent} @var{height}
+@var{leading})} in pixels, @var{ascent} and @var{descent} both
+positive.  @var{height} is the natural line height times
+@var{multiplier}, or @var{explicit-height}.
+@end defun
+
+@defun font-decorations font string x y dpi-x dpi-y line-p
+The underline, strikethrough and overline of @var{string} drawn at
+baseline (@var{x}, @var{y}), as a list of rectangles @code{(@var{left}
+@var{top} @var{width} @var{height})}, y down.  They span the bounding
+box, or the line box when @var{line-p}.  @code{nil} when the font has
+none of the three set.
+@end defun
+
+@node Fitting and centring
+@section Fitting and centring
+
+@defun fit-font target family subfamily string box-width box-height &key (min-size 8) (probe-size 100)
+Return a new font of @var{family} and @var{subfamily}, as large as
+possible with @var{string}'s line box inside @var{box-width} by
+@var{box-height}, and at least @var{min-size}.
+@end defun
+
+@defun fit-font-size target family subfamily string box-width box-height &key (min-size 8) (probe-size 100)
+Like @code{fit-font}, but return only the size, for a caller that
+resizes a font of its own.
+@end defun
+
+@defun text-center target font string box-width box-height
+Return @code{(values @var{baseline-x} @var{baseline-y})} that centre
+@var{string} in a box of @var{box-width} by @var{box-height}, to pass
+to @code{draw-text-line}.
+@end defun
+
+@c ====================================================================
+@node Rasterizer
+@chapter The rasterizer
+
+The @code{runes/raster} system, package @code{RUNES/RASTER}, turns
+glyph outlines into 8-bit alpha maps (A8: one byte of coverage per
+pixel).  @code{runes/raster-antron} has the same package and API and
+rasterizes with Antron; load one or the other.
+
+Glyphs are rasterized once per face, size and DPI and kept on the
+client.
+
+@defvar *max-glyph-faces*
+The most faces, each at one size and DPI, whose glyphs are kept.  Past
+it they are dropped and rasterized again when next used.  The default
+is 256.
+@end defvar
+
+@defvar *glyph-images*
+The glyph images kept, per face.
+@end defvar
+
+@deftp {Structure} glyph-image
+One glyph rasterized for one face: an A8 image with rows padded to 4
+bytes, its origin relative to its top left, and its advance.
+@end deftp
+
+@defun glyph-image-data image
+@defunx glyph-image-width image
+@defunx glyph-image-height image
+@defunx glyph-image-x image
+@defunx glyph-image-y image
+@defunx glyph-image-advance image
+@defunx glyph-image-stride image
+The pixels, size, origin (@var{x}, @var{y}) and advance in pixels of
+@var{image}, and its bytes per row (the width rounded up to 4).
+@end defun
+
+@defun layout-glyphs font string dpi-x dpi-y
+Lay out @var{string} and rasterize the glyphs not yet rasterized for
+this face.  Return a vector of @code{(@var{glyph-index} @var{pen-x}
+@var{image})} and the face key.
+@end defun
+
+@defun layout-styled-glyphs font string &key (dpi-x 96) (dpi-y 96) (letter-spacing 0.0) (word-spacing 0.0) kerning-table
+Like @code{layout-glyphs}, with the options of @code{layout-string}.
+Return @code{(values @var{layout} @var{total-advance} @var{key})}.
+@end defun
+
+@defun text-pixarray target font string
+@defunx text-pixarray dpi-x dpi-y font string
+@defunx text-line-pixarray target font string
+@defunx text-line-pixarray dpi-x dpi-y font string
+Rasterize the whole string into one alpha map, across its bounding box
+or line box.  Return five values: the alpha map, @var{min-x},
+@var{max-y}, the width and the height.  The bridges draw glyph by
+glyph instead; these are for code that wants one image of a string.
+@end defun
+
+@defun text-pixarray-for-dpi dpi-x dpi-y font string
+@defunx text-pixarray-for-drawable drawable font string
+@defunx text-line-pixarray-for-dpi dpi-x dpi-y font string
+@defunx text-line-pixarray-for-drawable drawable font string
+The two calling forms of @code{text-pixarray} and
+@code{text-line-pixarray} as separate functions.
+@end defun
+
+@c ====================================================================
+@node X11 bridge
+@chapter The X11 bridge
+
+The @code{runes/xcb} system, package @code{RUNES/XCB}, draws text on
+X11 through XCB (the clxcb binding) and the RENDER extension.  Each
+glyph is uploaded once per connection into a RENDER glyph set, and a
+string is drawn with one small request naming its glyphs, as Xft does.
+
+@menu
+* Drawables::                   Windows and pixmaps to draw on.
+* Drawing text::                @code{draw-text} and @code{draw-text-line}.
+* X11 caches::                  What is kept per connection.
+* RENDER helpers::              Lower-level functions.
+@end menu
+
+@node Drawables
+@section Drawables
+
+@deftp {Class} drawable connection id visual screen owned
+The abstract base of @code{window} and @code{pixmap}: an XID text is
+drawn on, with its connection, so that the two cannot be mismatched.
+The visual defaults to the screen's root visual.
+@end deftp
+
+@deftp {Class} window
+@deftpx {Class} pixmap
+A window or a pixmap that text is drawn on.
+@end deftp
+
+Whoever creates an X resource frees it.  A drawable always frees the
+RENDER picture it makes for drawing, and frees the window or pixmap
+itself only when made with @code{:owned t}:
+
+@lisp
+(make-instance 'runes/xcb:window :connection c :id win)
+    ;; frees only its picture: the window is the application's
+(make-instance 'runes/xcb:pixmap :connection c :id pm :owned t)
+    ;; also frees the pixmap
+@end lisp
+
+@deffn {Generic Function} destroy-drawable drawable
+Free @var{drawable}'s picture, and the window or pixmap too if
+@var{drawable} owns it.  Can be called more than once.
+@end deffn
+
+@defun release-drawable drawable
+Free the picture and cancel the finalizer, but leave the window or
+pixmap alone, owned or not; @var{drawable} no longer owns it
+afterwards.
+@end defun
+
+Every drawable has a finalizer as a safety net.  It does not write to
+the X connection, which belongs to the application's thread: it queues
+the free requests instead.
+
+@defun flush-deferred-frees connection
+Send the free requests queued by finalizers for @var{connection}.  Call
+it from the thread that owns the connection.  @code{draw-text},
+@code{draw-text-line} and @code{destroy-drawable} call it; a program
+that only measures text and abandons drawables should call it itself.
+@end defun
+
+@deffn {Accessor} drawable-connection drawable
+@deffnx {Accessor} drawable-id drawable
+@deffnx {Accessor} drawable-visual drawable
+@deffnx {Accessor} drawable-owned-p drawable
+@deffnx {Generic Function} drawable-screen drawable
+The drawable's connection, XID, visual, ownership and screen.
+@end deffn
+
+@deffn {Generic Function} dpi-x drawable
+@deffnx {Generic Function} dpi-y drawable
+@deffnx {Function} screen-dpi screen
+The resolution of a drawable or a screen, from the screen's size in
+pixels and millimetres.
+@end deffn
+
+@node Drawing text
+@section Drawing text
+
+@defun draw-text drawable font string x y &key (colour #xFFFFFF)
+@defunx draw-text-line drawable font string x y &key (colour #xFFFFFF)
+Draw @var{string} with its baseline at (@var{x}, @var{y}).  The
+underline, strikethrough and overline span the bounding box for
+@code{draw-text} and the line box for @code{draw-text-line}, which is
+what lines laid out one under another want.  @var{colour} is an
+@code{#x00RRGGBB} integer.  Antialiasing follows
+@code{font-antialias}.
+
+Each glyph's origin is put on a whole pixel, so a line is never more
+than half a pixel off its measured width, and decorations are whole
+pixels.  Neither function fills a background; draw it first.
+@end defun
+
+@defvar *draw-with-glyph-sets*
+When true, the default, text is drawn through glyph sets.  When
+@code{nil}, the whole string is rasterized and uploaded as one alpha
+mask on every call, as clx-truetype did.
+@end defvar
+
+@node X11 caches
+@section Caches
+
+A connection keeps at most 64 glyph sets, one per face, size, DPI and
+antialiasing, and frees the least recently used.  The tables below are
+weak on the connection, so none keeps a connection alive, and the
+server frees what they hold when the connection closes.
+
+@defvar *fill-cache*
+Per connection, a table of colour to solid-fill picture.
+@end defvar
+
+@defvar *mask-gc-cache*
+Per connection and screen, the depth-8 GC used to upload alpha masks.
+@end defvar
+
+@node RENDER helpers
+@section RENDER helpers
+
+These are used by the drawing functions and exported for programs
+that use RENDER themselves.
+
+@defvr {Constant} +pict-op-over+
+RENDER's Over operator.
+@end defvr
+
+@defun pict-formats-reply-for connection
+The QueryPictFormats reply of @var{connection}, queried once and
+cached on the connection.
+@end defun
+
+@defun format-for-visual connection visual-id
+@defunx a8-format connection
+The PictFormat for a visual, and the A8 PictFormat.  @code{a8-format}
+signals an error if the server has none.
+@end defun
+
+@defun drawable-picture drawable
+@defunx drawable-picture-for drawable &optional format
+@var{drawable}'s RENDER picture: @code{nil} if not yet made, or made
+on first use with @var{format} or its visual's format.
+@end defun
+
+@defun solid-fill-picture connection colour
+A 1x1 solid-fill picture of @var{colour}, cached in
+@code{*fill-cache*}.
+@end defun
+
+@defun mask-gc-for connection drawable-id &optional root
+A GC for depth-8 drawables, cached per connection and per screen
+(@var{root} names the screen by its root window).
+@end defun
+
+@defun put-alpha-mask connection pixmap width height data &optional root
+Upload an A8 image to a depth-8 pixmap, padding rows to 4 bytes when
+needed.
+@end defun
+
+@defun put-image-chunked connection format drawable gc width height dst-x dst-y left-pad depth data
+PutImage, split by rows to stay within X11's maximum request length.
+@end defun
+
+@c ====================================================================
+@node Client-side bridge
+@chapter The client-side bridge
+
+The @code{runes/wayland} system, package @code{RUNES/WAYLAND}, draws
+text into pixels the client owns, as Wayland clients do.  It does not
+talk to a Wayland compositor: the client passes functions that blend
+into its own surface, so it keeps its clipping and fast paths.
+
+@defun draw-text font string x y &key (dpi 96) blend fill
+Draw @var{string} with its baseline at (@var{x}, @var{y}).  For each
+glyph, @var{blend} is called as @code{(blend @var{left} @var{top}
+@var{width} @var{height} @var{data} @var{stride})}, to blend the text
+colour through @var{data}, an A8 alpha map with rows @var{stride}
+bytes apart.  For each decoration, @var{fill} is called as @code{(fill
+@var{left} @var{top} @var{width} @var{height})}.  Decorations span the
+bounding box.
+@end defun
+
+@defun draw-text-line font string x y &key (dpi 96) blend fill
+Like @code{draw-text}, with decorations across the line box.
+@end defun
+
+@defun draw-text-into-buffer pixels width height font string x y colour &key (dpi 96) line-p
+Draw into @var{pixels}, a vector of @var{width} by @var{height}
+@code{#x00RRGGBB} pixels, in @var{colour}.  @var{line-p} spans the
+decorations across the line box.
+@end defun
+
+@defun blend-alpha-into-buffer pixels width height left top w h data stride colour
+@defunx fill-rectangle-in-buffer pixels width height left top w h colour
+The blend and fill that @code{draw-text-into-buffer} uses, clipped to
+the buffer.
+@end defun
+
+@defun glyph-run font string dpi
+@var{string} laid out and rasterized: a vector of @code{(@var{pen-x}
+. @var{glyph-image})}, @var{pen-x} in whole pixels from the start of
+the line.  Runs are cached per font, string and DPI.
+@end defun
+
+@defvar *max-glyph-runs*
+The most glyph runs kept.  Past it all are dropped.
+@end defvar
+
+@defun flush-glyph-runs &optional font
+Forget the glyph runs of @var{font}, or of every font.
+@code{flush-font-caches} does this for its font.
+@end defun
+
+@c ====================================================================
+@node Font loader
+@chapter The font loader
+
+The @code{zpb-ttf} system, package @code{ZPB-TTF}, keeps the API of
+Zachary Beane's zpb-ttf on top of @code{runes/otf}, so existing
+programs work unchanged and can open more fonts: TrueType and CFF/CFF2
+outlines, variable fonts, collections, WOFF and WOFF2.  The original
+zpb-ttf manual is @file{otf/doc/index.html};
+@file{otf/doc/font-loader-details.md} lists what differs from the
+original and what is not supported.
+
+A font loader is not thread-safe: it fills its glyph cache lazily.
+
+@lisp
+(zpb-ttf:with-font-loader (font "LiberationSans-Regular.ttf")
+  (let ((glyph (zpb-ttf:find-glyph #\A font)))
+    (values (zpb-ttf:family-name font)
+            (zpb-ttf:advance-width glyph)
+            (zpb-ttf:bounding-box glyph))))
+@end lisp
+
+@menu
+* Opening fonts::
+* Font information::
+* Glyphs::
+* Outlines::
+* Variable fonts::
+* Loader conditions::
+@end menu
+
+@node Opening fonts
+@section Opening fonts
+
+@defun open-font-loader thing &key (collection-index 0)
+Open a font from @var{thing}: a pathname, a stream, or an octet
+vector.  WOFF and WOFF2 are recognised by their signature and decoded
+first.  For a collection (TTC, or a WOFF2 collection),
+@var{collection-index} picks the font.
+@end defun
+
+@defun close-font-loader loader
+Close @var{loader}.
+@end defun
+
+@defmac with-font-loader (loader thing &rest args) &body body
+Open @var{thing} with @var{args} as for @code{open-font-loader}, run
+@var{body}, and close it.
+@end defmac
+
+@deffn {Accessor} collection-font-count loader
+@deffnx {Accessor} collection-font-index loader
+@deffnx {Accessor} font-index loader
+The number of fonts in the collection and which one is open.
+@end deffn
+
+@node Font information
+@section Font information
+
+@deffn {Generic Function} family-name loader
+@deffnx {Generic Function} subfamily-name loader
+@deffnx {Generic Function} full-name loader
+@deffnx {Generic Function} postscript-name loader
+Names from the @samp{name} table.
+@end deffn
+
+@deffn {Generic Function} name-entry-value name-designator loader
+@deffnx {Generic Function} find-name-entry platform-id encoding-id language-id name-id loader
+Any entry of the @samp{name} table.
+@end deffn
+
+@deffn {Accessor} units/em loader
+@deffnx {Accessor} ascender loader
+@deffnx {Accessor} descender loader
+@deffnx {Accessor} line-gap loader
+@deffnx {Accessor} vascender loader
+@deffnx {Accessor} vdescender loader
+@deffnx {Accessor} max-width loader
+@deffnx {Accessor} italic-angle loader
+@deffnx {Accessor} underline-position loader
+@deffnx {Accessor} underline-thickness loader
+@deffnx {Accessor} fixed-pitch-p loader
+@deffnx {Accessor} glyph-count loader
+@deffnx {Accessor} bounding-box loader
+Font-wide metrics in font units.  @code{italic-angle} is in degrees.
+At a variable font's instance, the metrics that @samp{MVAR} varies
+follow it.
+@end deffn
+
+@deffn {Generic Function} all-kerning-pairs loader
+@deffnx {Generic Function} kerning-offset left right loader
+Kerning from the @samp{kern} table.
+@end deffn
+
+@deffn {Generic Function} string-bounding-box string loader &key kerning
+The bounding box of @var{string} in font units.
+@end deffn
+
+@node Glyphs
+@section Glyphs
+
+@deffn {Generic Function} find-glyph char-or-code loader
+@deffnx {Generic Function} index-glyph index loader
+@deffnx {Generic Function} glyph-exists-p char-or-code loader
+Find a glyph by character or code point, or by glyph index.  An index
+out of range signals an error.
+@end deffn
+
+@deffn {Generic Function} advance-width glyph
+@deffnx {Generic Function} advance-height glyph
+@deffnx {Generic Function} left-side-bearing glyph
+@deffnx {Generic Function} right-side-bearing glyph
+@deffnx {Generic Function} top-side-bearing glyph
+@deffnx {Accessor} code-point glyph
+@deffnx {Accessor} bounding-box glyph
+@deffnx {Accessor} xmin object
+@deffnx {Accessor} ymin object
+@deffnx {Accessor} xmax object
+@deffnx {Accessor} ymax object
+Glyph metrics in font units, following @samp{HVAR} and @samp{VVAR} at a
+variable font's instance.
+@end deffn
+
+@node Outlines
+@section Outlines
+
+zpb-ttf contours describe quadratic curves.  CFF curves are cubic;
+@code{contours} approximates each with quadratic pieces within a
+quarter of a font unit.
+
+@deffn {Accessor} contours glyph
+@deffnx {Generic Function} contour-count glyph
+@deffnx {Generic Function} contour glyph index
+A glyph's contours: vectors of points.
+@end deffn
+
+@deffn {Accessor} x point
+@deffnx {Accessor} y point
+@deffnx {Generic Function} on-curve-p point
+A point's coordinates and whether it is on the curve.
+@end deffn
+
+@defmac do-contours (contour glyph &optional result) &body body
+@defmacx do-contour-segments (p0 p1 p2) contour &body body
+@defmacx do-contour-segments* (p1 p2) contour &body body
+Walk a glyph's contours and their segments.  @var{p1} is the control
+point of a curve, or @code{nil} for a line.
+@end defmac
+
+@defun explicit-contour-points contour
+@var{contour} with the on-curve points between two control points,
+which TrueType leaves implied, made explicit.
+@end defun
+
+@deffn {Generic Function} cubic-contours glyph
+The exact outline of any glyph: a vector of contours, each a vector of
+@code{(:move @var{x} @var{y})}, @code{(:line @var{x} @var{y})} and
+@code{(:curve @var{cx0} @var{cy0} @var{cx1} @var{cy1} @var{x}
+@var{y})} commands in font units, closed implicitly.
+@end deffn
+
+@node Variable fonts
+@section Variable fonts
+
+@lisp
+(zpb-ttf:with-font-loader (font "Cantarell-VF.otf")
+  (setf (zpb-ttf:variation-coordinates font) '(("wght" . 700)))
+  (zpb-ttf:cubic-contours (zpb-ttf:find-glyph #\o font)))
+@end lisp
+
+@deffn {Generic Function} variation-axes loader
+A list of @code{(@var{tag} @var{minimum} @var{default} @var{maximum})}
+in user units, one per axis; @code{nil} for a font that does not vary.
+@end deffn
+
+@deffn {Accessor} variation-coordinates loader
+The instance, as an alist of axis tag to user value; @code{nil} for the
+default.  Outlines, advances, side bearings and font-wide metrics follow
+it.  Coordinates go through @samp{fvar} and @samp{avar} 1.0;
+@samp{avar} 2.0 mappings are not applied.
+@end deffn
+
+@deffn {Generic Function} variation-metric-delta loader tag
+The change of the @samp{MVAR} metric @var{tag}, such as @code{"xhgt"},
+at the instance, in font units.
+@end deffn
+
+@node Loader conditions
+@section Conditions
+
+@deftp {Condition} bad-magic
+@deftpx {Condition} unsupported-format
+@deftpx {Condition} unsupported-version
+@deftpx {Condition} unsupported-value
+@deftpx {Condition} regrettable-value
+@deftpx {Condition} regrettable-hex-value
+Signalled for a file the loader cannot read.  @code{value} returns the
+offending value.  Reads past the end of the data signal
+@code{runes/otf:font-out-of-bounds-error} (@pxref{OpenType
+conditions}).
+@end deftp
+
+@c ====================================================================
+@node OpenType tables
+@chapter OpenType tables
+
+The @code{runes/otf} system, package @code{RUNES/OTF}, nickname
+@code{OTF}, is the low-level layer under @code{zpb-ttf}.  A font is
+held in memory once and its tables are read straight from the bytes
+without copying.  Every read is bounds-checked.
+
+@menu
+* Font data::                   Windows into the font's bytes.
+* Table readers::               The generated accessors.
+* Web fonts::                   WOFF and WOFF2.
+* OpenType conditions::         Errors.
+@end menu
+
+@node Font data
+@section Font data
+
+@deftp {Structure} font-data bytes offset length
+A window into an octet vector.
+@end deftp
+
+@defun make-font-data bytes &key (offset 0) length
+@defunx ensure-font-data source
+Make a window over a simple octet vector, or, with
+@code{ensure-font-data}, from a pathname, a file name or any octet
+vector.
+@end defun
+
+@defun font-data-slice font-data offset &optional length
+A window inside another, @var{offset} relative to it.
+@end defun
+
+@defun font-data-valid-range-p font-data pos size
+True if @var{size} bytes at @var{pos} lie inside the window.
+@end defun
+
+@defun font-data-read-u8 font-data pos
+@defunx font-data-read-i8 font-data pos
+@defunx font-data-read-u16 font-data pos
+@defunx font-data-read-i16 font-data pos
+@defunx font-data-read-u24 font-data pos
+@defunx font-data-read-i24 font-data pos
+@defunx font-data-read-u32 font-data pos
+@defunx font-data-read-i32 font-data pos
+@defunx font-data-read-u64 font-data pos
+@defunx font-data-read-fword font-data pos
+@defunx font-data-read-ufword font-data pos
+@defunx font-data-read-fixed font-data pos
+@defunx font-data-read-f2dot14 font-data pos
+@defunx font-data-read-long-date-time font-data pos
+@defunx font-data-read-tag font-data pos
+@defunx font-data-read-tag-string font-data pos
+Big-endian reads of the OpenType data types.  @code{fixed} is 16.16,
+@code{f2dot14} is 2.14, a long date time counts seconds since 1904, and
+a tag is read as an integer or a 4-character string.
+@end defun
+
+@node Table readers
+@section Table readers
+
+The table readers are generated from s-expression schemas in
+@file{otf/schemas/}, derived from the Fontations table definitions, by
+the code generator in @file{otf/codegen/}; the generated code is in
+@file{otf/src/tables/}.  To change a reader, change its schema or the
+generator and run @command{make codegen}.  Every table follows the same
+naming:
+
+@table @code
+@item (read-@var{table} @var{font-data} @var{offset} &optional @var{length})
+Check the table's fixed part and return a view of it, a structure named
+@var{table}.  For example @code{read-head}, @code{read-hhea},
+@code{read-cmap}.
+@item (@var{table}-@var{field} @var{view})
+A field, decoded.  @code{(head-units-per-em head)}.
+@item (@var{table}-@var{field}-raw @var{font-data} @var{offset})
+The same field read straight from the bytes, without a view.
+@item (@var{table}-@var{array}-count @var{view})
+@itemx (@var{table}-@var{array}-ref @var{view} @var{index})
+The length and the elements of an array field.
+@item (@var{flags}-@var{flag}-p @var{flags})
+A bit of a flags field.
+@item +@var{table}-tag+
+@itemx +@var{record}-size+
+The table's tag and the size of a fixed record, as constants.
+@end table
+
+Every view includes @code{table-ref} (with @code{table-ref-font-data},
+@code{table-ref-offset}, @code{table-ref-length}), and every record
+@code{record-ref}.  Offsets inside a table are followed with
+@code{resolve-offset16}, @code{resolve-offset32} and their
+@code{nullable} versions.
+
+The tables of a font are found through its table directory:
+
+@lisp
+(let* ((fd (otf:ensure-font-data #p"DejaVuSans.ttf"))
+       (td (otf:read-table-directory fd 0)))
+  (dotimes (i (otf:table-directory-table-records-count td))
+    (let ((rec (otf:table-directory-table-records-ref td i)))
+      (when (string= (otf:table-record-tag rec) "head")
+        (return (otf:head-units-per-em
+                 (otf:read-head fd (otf:table-record-offset rec)
+                                (otf:table-record-length rec))))))))
+@end lisp
+
+A collection starts with a @code{ttc-header} instead
+(@code{read-ttc-header}), whose
+@code{ttc-header-table-directory-offsets-ref} gives each font's table
+directory.
+
+Tables with readers include the core TrueType tables (@samp{head},
+@samp{hhea}, @samp{hmtx}, @samp{maxp}, @samp{name}, @samp{OS/2},
+@samp{post}, @samp{cmap}, @samp{glyf}, @samp{kern}), the layout tables
+(@samp{GDEF}, @samp{GSUB}, @samp{GPOS}, @samp{BASE}, @samp{MATH}), the
+variation tables (@samp{fvar}, @samp{avar}, @samp{gvar}, @samp{cvar},
+@samp{HVAR}, @samp{VVAR}, @samp{MVAR}, @samp{STAT}), colour and bitmap
+tables (@samp{COLR}, @samp{CPAL}, @samp{CBDT}, @samp{CBLC}, @samp{EBDT},
+@samp{EBLC}, @samp{sbix}, @samp{SVG }) and the Apple tables
+(@samp{morx}, @samp{kerx}, @samp{feat}, @samp{trak}, @samp{ankr} and
+others).  @file{otf/doc/font-loader-details.md} lists them and the
+tables left out.
+
+A few layouts whose shape depends on the data itself are decoded by
+hand in @file{otf/src/extensions.lisp}, for example
+@code{fvar-axis-ref}, @code{fvar-instance-ref},
+@code{gvar-glyph-variation-data-header}, @code{read-gpos-value-record},
+@code{pair-set-pair-value-record-ref}, @code{mvar-value-record-ref} and
+@code{strike-glyph-data}.  Their docstrings describe them.
+
+@node Web fonts
+@section Web fonts
+
+WOFF compresses each table with zlib; WOFF2 compresses all of them with
+Brotli and transforms @samp{glyf}, @samp{loca} and @samp{hmtx}.  Both are
+decoded with the @code{decompress} system.  @code{open-font-loader}
+recognises them by itself; these functions decode them explicitly.
+
+@defun decode-woff1 source &key verify-checksums
+@defunx decode-woff2 source
+Decode a WOFF or WOFF2 file from @var{source}, a font-data, an octet
+vector or a pathname, and return a font-data over the plain sfnt; a
+WOFF2 collection becomes a TTC.  With @var{verify-checksums}, each WOFF
+table's checksum is checked.
+@end defun
+
+@defun decode-woff1-metadata source
+@defunx woff1-private-data source
+A WOFF file's extended metadata XML, decompressed, and its private data
+block; @code{nil} when absent.
+@end defun
+
+@node OpenType conditions
+@section Conditions
+
+@deftp {Condition} font-error
+The base of the conditions below.  Its readers are
+@code{font-error-message}, @code{font-error-table},
+@code{font-error-pos}, @code{font-error-size},
+@code{font-error-length}, @code{font-error-expected},
+@code{font-error-actual} and @code{font-error-format-id}, each set when
+it applies.
+@end deftp
+
+@deftp {Condition} font-out-of-bounds-error
+A read would go past the end of the data: a truncated or malicious
+file.
+@end deftp
+
+@deftp {Condition} font-format-error
+@deftpx {Condition} font-version-error
+@deftpx {Condition} unsupported-format-error
+A table is malformed, has an unknown version, or uses a format that is
+not supported.
+@end deftp
+
+@c ====================================================================
+@node CFF charstrings
+@chapter CFF charstrings
+
+The @code{runes/otf/charstring} system, package
+@code{RUNES/OTF/CHARSTRING}, evaluates the Type 2 charstrings of
+@samp{CFF } and @samp{CFF2} tables, a port of Fontations'
+interpreter, with its DICT parser and font structures.  @code{zpb-ttf}
+uses it for CFF outlines; use it directly to receive the outline
+commands yourself.
+
+The @code{seac} operator, used by some old Adobe fonts for accented
+glyphs, is not supported and signals an error.
+
+@menu
+* CFF fonts::
+* Sinks::
+* Blending::
+* Charstring internals::
+@end menu
+
+@node CFF fonts
+@section CFF fonts
+
+@defun open-cff-font table-data &key upem
+Read the @samp{CFF } or @samp{CFF2} table in the font-data window
+@var{table-data}.  @var{upem} is the font's units per em from
+@samp{head}; without it the FontMatrix decides.  Returns a
+@code{cff-font}.
+@end defun
+
+@defun cff-font-kind font
+@defunx cff-font-cff2-p font
+@defunx cff-font-upem font
+@defunx cff-num-glyphs font
+@defunx cff-num-subfonts font
+Information about a @code{cff-font}.
+@end defun
+
+@defun cff-subfont-index font gid
+@defunx cff-subfont font index &optional (coords #())
+The subfont of glyph @var{gid} (or @code{nil} if FDSelect does not
+cover it), and subfont @var{index} itself, at the CFF2 instance
+@var{coords}.
+@end defun
+
+@defun cff-subfont-default-width subfont
+@defunx cff-subfont-nominal-width subfont
+@defunx cff-subfont-vs-index subfont
+A subfont's default and nominal widths and its vsindex.
+@end defun
+
+@defun cff-draw-glyph font subfont gid sink &optional (coords #())
+Evaluate glyph @var{gid}, sending its outline in font units (fixed
+point) to @var{sink}, without degenerate commands.  Return its advance
+width.  @var{coords} are the normalized coordinates of a CFF2 instance.
+@end defun
+
+@defun font-matrix-elements matrix
+@defunx font-matrix-scale matrix
+A @code{scaled-font-matrix}: @code{#(@var{xx} @var{yx} @var{xy} @var{yy}
+@var{dx} @var{dy})} in fixed point, and the units per em it implies.
+@end defun
+
+@node Sinks
+@section Sinks
+
+An outline is sent to a @dfn{sink}, an object with methods on these
+generic functions.  Coordinates are 16.16 fixed point.
+
+@deffn {Generic Function} sink-move-to sink x y
+@deffnx {Generic Function} sink-line-to sink x y
+@deffnx {Generic Function} sink-curve-to sink cx0 cy0 cx1 cy1 x y
+@deffnx {Generic Function} sink-close sink
+@deffnx {Generic Function} sink-finish sink
+The outline.
+@end deffn
+
+@deffn {Generic Function} sink-hstem sink y dy
+@deffnx {Generic Function} sink-vstem sink x dx
+@deffnx {Generic Function} sink-hint-mask sink mask
+@deffnx {Generic Function} sink-counter-mask sink mask
+@deffnx {Generic Function} sink-clear-hints sink
+The hints, which a sink may ignore.
+@end deffn
+
+@deftp {Class} null-sink
+@deftpx {Class} nop-filter-sink
+A sink that discards everything, and one that drops degenerate
+commands before passing the rest on.
+@end deftp
+
+@defun fixed->float f
+@defunx float->fixed x
+@defunx fixed-from-int i
+Convert between fixed point and numbers.
+@end defun
+
+@node Blending
+@section Blending
+
+CFF2 charstrings and DICTs vary with a @dfn{blend state}, which holds a
+scalar per variation region at an instance.
+
+@defun make-blend-state store coords store-index
+A blend state for the @samp{ItemVariationStore} @var{store} at
+@var{coords}, normalized coordinates in [-1, 1], one per axis.
+@var{store-index} is the initial vsindex.
+@end defun
+
+@deftp {Class} item-variation-blend-state
+@deftpx {Class} constant-blend-state
+A blend state computed from a store, or holding scalars computed by the
+caller.
+@end deftp
+
+@deffn {Generic Function} blend-scalars state
+@deffnx {Generic Function} blend-region-count state
+@deffnx {Generic Function} blend-set-store-index state index
+@deffnx {Accessor} blend-store-index state
+@deffnx {Accessor} blend-coords state
+The scalars, their number, and the ItemVariationData in use.
+@end deffn
+
+@defun item-variation-delta store outer inner coords
+The delta of item (@var{outer}, @var{inner}) of @var{store} at
+@var{coords}, in 16.16 units without rounding.
+@end defun
+
+@node Charstring internals
+@section Evaluating charstrings directly
+
+@deftp {Class} charstring-context
+@deftpx {Class} simple-charstring-context
+@deftpx {Class} cff-charstring-context
+What a charstring refers to: subroutines, @code{seac} components and
+multiple master data.  @code{simple-charstring-context} takes vectors
+of subroutines and applies the bias; @code{cff-charstring-context}
+holds a CFF subfont's.
+@end deftp
+
+@deffn {Generic Function} context-subr context index
+@deffnx {Generic Function} context-global-subr context index
+@deffnx {Generic Function} context-kind context
+@deffnx {Generic Function} context-seac-components context base-code accent-code
+@deffnx {Generic Function} context-build-char-len context
+@deffnx {Generic Function} context-weight-vector context
+The methods a context provides.  @code{context-kind} is @code{:type1}
+or @code{:type2}.
+@end deffn
+
+@defun subr-bias count
+The bias added to subroutine numbers for @var{count} subroutines.
+@end defun
+
+@defun evaluate-charstring context charstring sink &key blend-state
+Evaluate @var{charstring} into @var{sink}.  Return the width it states,
+or @code{nil} when the default width applies.
+@end defun
+
+@defun evaluate-width context charstring &key blend-state
+The width @var{charstring} states, without drawing it.
+@end defun
+
+@defun dict-entries dict &key blend-state unhinted-private
+@defunx dict-entry entries op &optional default
+The entries of a CFF DICT as a list of @code{(@var{operator}
+. @var{value})}, and the first value for @var{op}.  An entry that
+cannot be read appears as @code{(:error . @var{condition})}.
+@end defun
+
+@defvr {Constant} +max-stack+
+@defvrx {Constant} +max-operations+
+@defvrx {Constant} +nesting-depth-limit+
+Limits on the operand stack, the operations per glyph and the
+subroutine nesting.
+@end defvr
+
+@deftp {Condition} charstring-error
+@deftpx {Condition} charstring-malformed
+@deftpx {Condition} charstring-invalid-operation
+@deftpx {Condition} charstring-limit-exceeded
+@deftpx {Condition} charstring-missing-resource
+@deftpx {Condition} charstring-read-error
+Signalled for charstrings that cannot be evaluated.
+@end deftp
+
+@c ====================================================================
+@node Decompression
+@chapter Decompression
+
+The @code{decompress} system, package @code{DECOMPRESS}, decodes
+Brotli (RFC 7932), zlib (RFC 1950) and raw deflate (RFC 1951) data held
+in memory.  It has no dependencies and works on its own.  It neither
+streams nor compresses.  The input is read in place.
+
+@defun decompress input &key size-hint (start 0) end
+Decode the Brotli stream in @var{input}, an octet vector, between
+@var{start} and @var{end}, and return the decoded octets.
+@var{size-hint}, the decoded size if known (WOFF2 records it), lets the
+output be allocated once.
+@end defun
+
+@defun zlib-decompress input &key size-hint (start 0) end
+@defunx inflate input &key size-hint (start 0) end
+Decode a zlib stream (header, deflate data, Adler-32), or raw deflate
+data, in the same way.
+@end defun
+
+@deftp {Condition} decompression-error
+@deftpx {Condition} brotli-error
+@deftpx {Condition} deflate-error
+Malformed input.  @code{brotli-error} and @code{deflate-error} are
+subtypes of @code{decompression-error}.
+@end deftp
+
+The Brotli decoder needs the Brotli dictionary,
+@file{decompress/data/dictionary.bin}, read the first time a stream uses
+it.  An image saved with @code{save-lisp-and-die} should load it first.
+
+@file{decompress/README.md} has the measurements against libbrotli,
+zlib-ng and libdeflate, and @file{decompress/doc/optimizations.md}
+records what was tried.
+
+@c ====================================================================
+@node Migrating from clx-truetype
+@chapter Migrating from clx-truetype
+
+The X11 bridge started as clx-truetype ported from CLX to XCB.
+@file{doc/design-notes.md} explains the changes in detail.
+
+@itemize
+@item
+XCB, not CLX: no @code{xlib} symbols; everything draws through a clxcb
+connection.
+
+@item
+@code{window} and @code{pixmap} wrap an XID and its connection, and
+free the window or pixmap only when made with @code{:owned t}.
+clx-truetype's always freed it, even an application's own window.
+
+@item
+The colour is an argument, @code{:colour #x00RRGGBB}, since XCB cannot
+read a GC's foreground back.
+
+@item
+Text is drawn through RENDER glyph sets: about 30 times faster for a
+repeated string, over 100 times for a new one, and a few bytes per
+character over @command{ssh -X}.  Glyphs sit on whole pixels, the
+decorations are whole-pixel lines, and @code{draw-text-line} no longer
+clips the overline.
+
+@item
+No background fill: draw the background first.
+
+@item
+Caches are weak hash tables keyed on the connection, and finalizers
+queue their frees for the application's thread.
+
+@item
+@code{window} and @code{pixmap} are exported names: a package that uses
+both this one and CLX or CLIM should shadow them.
+@end itemize
+
+@c ====================================================================
+@node Tests
+@chapter Tests
+
+@table @asis
+@item The bridges
+@command{tests/run.sh} runs every test in @file{tests/}, or those named,
+each in a fresh SBCL against a scratch Xephyr server with two screens
+on display @code{:11} (or @env{XEPHYR_DISPLAY}).  Any Xephyr already
+on that display is stopped first.
+
+@item runes/otf and zpb-ttf
+@command{make test} in @file{otf/}, against the fonts in
+@file{otf/tests/fonts/}.
+
+@item decompress
+@command{make test-decompress} in @file{otf/}.  The tests compare the
+decoders with libbrotli and libz on round trips and corrupt input.
+@end table
+
+@c ====================================================================
+@node Index
+@unnumbered Index
+
+@printindex fn
+
+@bye

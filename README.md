@@ -105,135 +105,15 @@ You should see a simple message:
 
 ![hello](screenshots/hello.png)
 
-## API
+## Documentation
 
-### Fonts
-
-`make-instance 'font :family ... :subfamily ... :size ...` builds a
-font object.  `subfamily` may be omitted or NIL, in which case the
-first of Regular, Book, or the first available subfamily is chosen.
-
-The accessors are `font-family`, `font-subfamily`, `font-size`,
-`font-underline`, `font-strikethrough`, `font-overline`,
-`font-antialias`.  All of them have `setf` methods that flush the
-font's string caches, so a font can be reused and reconfigured.
-
-`cache-fonts` repopulates `*font-cache*` from `*font-dirs*`.  Use
-`get-font-families` and `get-font-subfamilies` to enumerate what's
-installed.
-
-### Layout
-
-    (layout-string    font string &key dpi-x letter-spacing word-spacing kerning-table)
-    (font-decorations font string x y dpi-x dpi-y line-p)
-
-`layout-string` returns a vector of `(glyph-index pen-x)`, the pen
-positions exact and in pixels from the start of the line, and the
-line's total advance.  `font-decorations` returns the font's underline,
-strikethrough and overline for a string drawn at baseline (x, y), as
-rectangles `(left top width height)`.
-
-### Drawing on the client (`runes/wayland`)
-
-    (draw-text      font string x y &key dpi blend fill)
-    (draw-text-line font string x y &key dpi blend fill)
-    (draw-text-into-buffer pixels width height font string x y colour &key dpi line-p)
-
-`draw-text` calls `(blend left top width height data stride)` for each
-glyph's alpha map and `(fill left top width height)` for each
-decoration; the caller blends its text colour into its own surface.
-`draw-text-into-buffer` does both into a vector of `#x00RRGGBB` pixels.
-Glyph runs are cached per font, string and DPI; `flush-glyph-runs`
-forgets them, as `flush-font-caches` does for one font.
-
-### Drawables
-
-`window` and `pixmap` are the two drawable classes, one for each X
-drawable type; `drawable` is their abstract base and cannot be made
-itself.  A drawable carries its connection, its XID, its visual
-(defaulting to the screen's root visual), and its screen.
-
-Whoever creates an X resource frees it.  A drawable always frees the
-RENDER picture it creates for drawing.  It frees the window or pixmap
-itself only when it owns it, given `:owned t` when it is made:
-
-    (make-instance 'xcb-truetype:window :connection c :id win)
-        ;; frees only its picture: the window is the application's
-    (make-instance 'xcb-truetype:pixmap :connection c :id pm :owned t)
-        ;; also frees the pixmap
-
-`destroy-drawable` frees the picture, and the window or pixmap too if
-the drawable owns it.  `release-drawable` frees only the picture.  Every
-drawable also has a finalizer installed at construction as a safety
-net; the finalizer does not write to the X socket — it queues a free
-request on a weak per-connection list, drained by
-`flush-deferred-frees` (which `draw-text`, `draw-text-line`, and
-`destroy-drawable` call automatically).
-
-### Drawing
-
-    (draw-text      drawable font string x y &key colour)
-    (draw-text-line drawable font string x y &key colour)
-
-Both draw STRING with its baseline at (x, y).  They differ in the box
-that underline, strikethrough and overline span: the ink bounding box
-for `draw-text`, the advance-width line box for `draw-text-line`, which
-is what you want for laying out multiple lines.
-
-Text is drawn through RENDER glyph sets: each glyph is rasterized once
-per face, size and DPI, and uploaded once per connection, so drawing a
-string again costs a few bytes per character.  Each glyph's origin is
-put on a whole pixel, so a line is never more than half a pixel off its
-measured width.  Binding `*draw-with-glyph-sets*` to NIL draws the old
-way instead, rasterizing and uploading the whole string on every call.
-
-`colour` is an `#x00RRGGBB` integer; the renderer expands it to the
-16-bit channels RENDER expects.
-
-### Metrics
-
-The metric functions take a *target* — a drawable, a screen, an
-integer DPI, or a `(dpi-x . dpi-y)` cons — and a font:
-
-    (text-width             target font "string")
-    (text-height            target font "string")
-    (text-line-width        target font "string")
-    (text-line-height       target font "string")
-    (font-ascent            target font)
-    (font-descent           target font)
-    (font-line-gap          target font)
-    (baseline-to-baseline   target font)
-
-`fit-font` and `text-center` are convenience wrappers:
-
-    ;; Return a font sized so string fits inside the box.
-    (fit-font drawable "DejaVu Sans" "Book" string box-width box-height
-              :min-size 8)
-
-    ;; Return (values baseline-x baseline-y) that centre string in the box.
-    (text-center drawable font string box-width box-height)
-
-### Caches
-
-`*font-cache*` maps family names to subfamily-to-pathname tables.
-`*font-loader-cache*` holds open ZPB-TTF loaders keyed by pathname;
-call `close-font-loaders` to close them.
-
-`cache-fonts` scans into a new table and swaps it in when done, so
-other threads go on finding fonts while it runs.
-
-Each glyph, rasterized by `runes/raster` for one face at one size and
-DPI, is kept on the client (at most 256 faces' worth) and, by
-`runes/xcb`, uploaded once per connection
-into a glyph set.  A connection keeps at most 64 glyph sets, one per
-face, size, DPI and antialiasing, freeing the least recently used.
-
-`*fill-cache*`, `*mask-gc-cache*` and the glyph sets are kept in weak
-hash tables keyed on connection, holding solid-fill pictures, the
-depth-8 GC used for mask uploads, and glyph sets.  None keeps a
-connection alive; the server frees what they hold when the connection
-closes.
-
+The manual is `doc/runes.texi`, in Texinfo.  It documents every system:
+the font manager, the rasterizer, both bridges, the zpb-ttf loader,
+the OpenType tables, the CFF interpreter and the decompressors.  Build
+it with `make -C doc` and read it in Emacs with `C-u C-h i
+doc/runes.info`, or with `info -f doc/runes.info`.  `make -C doc html`
+gives one HTML page.  `doc/design-notes.md` explains the design
+changes from clx-truetype.
 
 ## Systems & Packages
 
@@ -272,42 +152,11 @@ use Antron.
 
 ## Differences from clx-truetype
 
-If migrating from CLX:
-
-- **XCB, not CLX**:  No `xlib` symbols, no second connection type.
-  Everything draws through a connection produced by `xcb:`.
-
-- **Drawable wrapper classes**:  `window` and `pixmap` wrap an XID
-  and its connection.  `drawable` is abstract; instantiate one of the
-  two concrete classes.  They free the window or pixmap only when made
-  with `:owned t`; clx-truetype's always did.
-
-- **Colour is passed explicitly**:  `draw-text` and `draw-text-line`
-  take `:colour #x...` rather than reading the current foreground off
-  a GC, because XCB has no way to read GC state back.  The 1×1 pen
-  pixmap trick is gone; a solid-fill picture per colour is used
-  instead.
-
-- **Glyph sets**:  Text is drawn through RENDER glyph sets, as Xft
-  does, instead of rasterizing and uploading each string's alpha mask
-  on every call: about 30 times faster for a repeated string and over
-  100 times for a new one, and only a few bytes per character over
-  `ssh -X`.  Glyphs sit on whole pixels; underline, strikethrough and
-  overline are crisp whole-pixel lines; and `draw-text-line` no longer
-  clips the overline away.  See `CHANGES`.
-
-- **No `draw-background-p`**:  The background fill that clx-truetype
-  performed per call is not implemented; callers draw their own
-  background rectangle first.
-
-- **Caches keyed on connection**:  The plist-based drawable caches are
-  replaced by weak hash tables keyed on the connection object, so a
-  connection that becomes unreachable does not keep its cache or
-  itself alive.
-
-- **Deferred finalization**:  Finalizers queue frees on a weak
-  per-connection list rather than writing to the socket.  The queue
-  is drained on the application thread.
+Migrating from CLX: the bridge draws through XCB, `window` and
+`pixmap` free their X resource only when made with `:owned t`, the
+colour is passed as `:colour`, text goes through RENDER glyph sets, and
+there is no background fill.  The manual's chapter "Migrating from
+clx-truetype" and `doc/design-notes.md` have the details.
 
 ## Tests
 
