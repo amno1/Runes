@@ -306,13 +306,15 @@ a check fails.
 
 The GNU Lesser General Public License, version 2.1 or later
 (`LGPL-2.1-or-later`).  See `LICENSE`, and `COPYING` for the license
-text.
+text.  This covers everything except `otf/` and `decompress/`, which
+are MIT licensed (with the zpb-ttf code in `otf/` under BSD 2-Clause);
+see the `LICENSE` in each.
 
-clxcb-truetype is a derivative work of [clx-truetype][clx-truetype] by
+Runes started as clxcb-truetype, a derivative work of [clx-truetype][clx-truetype] by
 Michael Filonenko and contributors, which was published under the MIT
 license.  clx-truetype is said to have grown out of McCLIM's TrueType
 rendering, which is under the LGPL; that could not be confirmed, so
-clxcb-truetype uses McCLIM's license, which is right either way.  The
+Runes uses McCLIM's license, which is right either way.  The
 MIT notice of clx-truetype's code is kept in `LICENSE`.  See `AUTHORS`
 for everyone who worked on it, and for what is known of the history.
 
@@ -324,7 +326,7 @@ have not had this confirmed by them (see `AUTHORS`).  It was written
 and maintained by Michael Filonenko.  It is the standard text renderer for [StumpWM][stumpwm],
 via the [ttf-fonts][ttf-fonts] contrib module.
 
-clxcb-truetype ports the X-specific portions of that library to XCB
+clxcb-truetype, now Runes, ported the X-specific portions of that library to XCB
 while keeping the client-side rasterization pipeline intact.
 
 [clxcb]:            https://github.com/amno1/clxcb

@@ -1,17 +1,24 @@
-clxcb-truetype — authors and contributors
-=========================================
+Runes — authors and contributors
+================================
 
-clxcb-truetype is a port of clx-truetype to CLXCB.  Everyone below has
-worked on it or on the code it comes from.  Some of their work has since
-been rewritten or removed in this particular port: the CLX-specific
-code, the old manual and the StumpWM patch.  Even removed code was very
+Runes started as clxcb-truetype, a port of clx-truetype to CLXCB.  This
+file covers that part of Runes: the font manager, the rasterizer and the
+X11 and Wayland bridges.  The OpenType loader (otf/) and the decompress
+system (decompress/) have their own authors and licenses; see the
+README and LICENSE in each.
+
+Everyone below has worked on it or on the code it comes from.  Some of
+their work has since been rewritten or removed in this particular port:
+the CLX-specific code, the old manual and the StumpWM patch.  Even removed code was very
 useful to me to gain the understanding of the library, so they are
 credited for it all the same.
 
-What clxcb-truetype adds is the XCB port: the code that talks to the X
-server through XCB (clxcb) instead of CLX.  Everything else: the font
-class and cache, metrics and rasterization is clx-truetype's work,
-carried over.  Credit for it, and copyright in it, stays with its
+What clxcb-truetype added was the XCB port: the code that talks to the X
+server through XCB (clxcb) instead of CLX.  Runes has since split the
+code into a font manager and a rasterizer and added the Wayland bridge
+and the layout functions (see Arthur Miller below).  The font class and
+cache, metrics and rasterization at the core of it are clx-truetype's
+work, carried over.  Credit for it, and copyright in it, stays with its
 authors below.
 
 The license, and what we could not confirm
@@ -31,7 +38,7 @@ is not known: either from McCLIM's code, or from code Gilbert Baumann
 and Andy Hefner gave under a separate license.  That has not been
 settled.
 
-So clxcb-truetype is distributed under the LGPL, version 2.1 or later,
+So this part of Runes is distributed under the LGPL, version 2.1 or later,
 McCLIM's own license, which is right in either case.  The MIT notice
 clx-truetype's code came with is kept in LICENSE, as the MIT license
 requires.  If you are one of the authors and know more, please tell me
@@ -68,13 +75,18 @@ clx-truetype
   Mihail Ivanchev (MIvanchev)
       Documented clx-truetype's situation and its principal fork (2024).
 
-clxcb-truetype
---------------
+clxcb-truetype, now Runes
+-------------------------
 
   Arthur Miller
-      The port to XCB and clxcb (2026), and only that: drawables over
-      XIDs with deferred, thread-safe frees, the Xrender path on clxcb's
-      RENDER extension, locking around font loaders, and the fixes since.
+      The port to XCB and clxcb (2026): drawables over XIDs with
+      deferred, thread-safe frees, the Xrender path on clxcb's RENDER
+      extension, locking around font loaders, and the fixes since.
+      Then Runes (2026): the split into a backend-neutral font manager
+      and a separate rasterizer (runes/raster), the layout additions
+      (kerning offsets, line boxes, styled glyph runs), the Wayland
+      bridge (runes/wayland) and the Antron rasterizer back end
+      (runes/raster-antron).
 
-clxcb-truetype is built on zpb-ttf, cl-vectors, cl-paths-ttf, cl-aa,
+This part of Runes is built on zpb-ttf, cl-vectors, cl-paths-ttf, cl-aa,
 cacle, trivial-garbage and bordeaux-threads, and their authors' work.

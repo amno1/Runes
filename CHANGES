@@ -1,11 +1,11 @@
-clxcb-truetype — changes from clx-truetype
-==========================================
+Runes — changes from clx-truetype
+=================================
 
-clxcb-truetype is clx-truetype ported from CLX to XCB (clxcb).  The font
+Runes started as clxcb-truetype: clx-truetype ported from CLX to XCB (clxcb).  The font
 class, font cache, metrics and rasterization are clx-truetype's and work
 as before; the changes are in how the library talks to the X server.
 
-clxcb-truetype is distributed under the LGPL, version 2.1 or later,
+This part of Runes is distributed under the LGPL, version 2.1 or later,
 where clx-truetype was published under the MIT license; LICENSE and
 AUTHORS say why.
 
@@ -14,7 +14,7 @@ Drawables, and who frees what
 
 In the X protocol a DRAWABLE is a type of XID, naming a window or a pixmap;
 the resources the server keeps are windows, pixmaps and pictures, and
-whoever creates a resource is responsible for freeing it.  clxcb-truetype
+whoever creates a resource is responsible for freeing it.  Runes
 follows that rule:
 
   * A WINDOW or a PIXMAP is the library's handle on a window or pixmap

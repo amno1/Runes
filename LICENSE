@@ -1,9 +1,12 @@
-clxcb-truetype is free software: you can redistribute it and/or modify it
+This file covers Runes apart from otf/ and decompress/, which have their
+own LICENSE files (MIT, and BSD 2-Clause for the zpb-ttf code in otf/).
+
+Runes is free software: you can redistribute it and/or modify it
 under the terms of the GNU Lesser General Public License as published by
 the Free Software Foundation, either version 2.1 of the License, or (at
 your option) any later version.
 
-clxcb-truetype is distributed in the hope that it will be useful, but
+Runes is distributed in the hope that it will be useful, but
 WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
 or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
 License, in the file COPYING, for more details.
@@ -16,19 +19,19 @@ SPDX-License-Identifier: LGPL-2.1-or-later
 Why the LGPL
 ------------
 
-clxcb-truetype is ported from clx-truetype, which was published under the
+Runes started as clxcb-truetype, a port of clx-truetype, which was published under the
 MIT license.  clx-truetype is said to have grown out of the TrueType
 rendering written for McCLIM, which has always been under the LGPL,
 version 2.1 or later.  That could not be confirmed either way (see
-AUTHORS), so clxcb-truetype is distributed under McCLIM's license, which
+AUTHORS), so Runes is distributed under McCLIM's license, which
 is right in either case.
 
 The MIT license clx-truetype's code was published under
 --------------------------------------------------------
 
 The code carried over from clx-truetype was published with the notice
-below, which the MIT license requires to be kept.  clxcb-truetype as a
-whole is distributed under the LGPL, as above.
+below, which the MIT license requires to be kept.  Runes, apart from otf/
+and decompress/, is distributed under the LGPL, as above.
 
   Copyright (c) 2012-2025 Michael Filonenko and contributors
 
