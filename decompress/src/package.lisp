@@ -7,6 +7,13 @@
 
 (in-package #:decompress)
 
+;;; The bit reader loads 8 input bytes as one native 64-bit word, which has
+;;; the bits in stream order only on a little-endian CPU.  Elsewhere every
+;;; stream would decode to garbage, so refuse to build instead.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (unless (and (member :little-endian *features*) (member :64-bit *features*))
+    (error "decompress needs a 64-bit little-endian SBCL.")))
+
 (deftype u8vec () '(simple-array (unsigned-byte 8) (*)))
 (deftype u32vec () '(simple-array (unsigned-byte 32) (*)))
 (deftype index () '(integer 0 #.(ash most-positive-fixnum -4)))

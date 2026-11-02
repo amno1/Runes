@@ -165,8 +165,12 @@ it names, and an SBCL source tree (`SBCL_SRC`, default `~/repos/sbcl`).
 
 ## Requirements
 
-**SBCL**, little-endian (developed and tested on x86-64): the decoders use SAPs
-for unaligned loads and stores, raw-word structure slots,
+**SBCL** on a 64-bit little-endian CPU, such as x86-64 or 64-bit Arm
+(developed and tested on x86-64; other CPUs untested).  The bit reader
+loads 8 input bytes as one native word, which matches the bit order of
+Brotli and deflate only on little-endian CPUs; on any other the system
+signals an error when it is compiled.  The decoders also use SAPs for
+unaligned loads and stores, raw-word structure slots,
 `sb-ext:define-load-time-global` and `sb-kernel:%shrink-vector`.
 
 **AVX-512 (optional)**: when SBCL has sb-simd with AVX512BW (the sb-simd-512
