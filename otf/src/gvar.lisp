@@ -139,19 +139,20 @@
     (loop while (< cur count)
           do (multiple-value-bind (run width) (read-delta-run c)
                (dotimes (i run)
-                 (let ((v (read-run-value c width)))
-                   (cond ((< next (length points))
-                          (funcall fn (aref points next) v)
-                          (incf next))
-                         ;; A zero run needs a point for every value.
-                         ((zerop width) (gvar-fail)))))
+                 (cond ((< next (length points))
+                        (funcall fn (aref points next) (read-run-value c width))
+                        (incf next))
+                       ;; A zero run needs a point for every value.
+                       ((zerop width) (gvar-fail))))
                (incf cur run)))))
 
 ;;; Tuples
 
 (defun read-tuple (fd pos axis-count)
-  (coerce (loop for i below axis-count collect (runes/otf:font-data-read-i16 fd (+ pos (* 2 i))))
-          'vector))
+  "The AXIS-COUNT 2.14 values at POS, as a vector."
+  (let ((tuple (make-array axis-count)))
+    (dotimes (i axis-count tuple)
+      (setf (svref tuple i) (runes/otf:font-data-read-i16 fd (+ pos (* 2 i)))))))
 
 (defun gvar-tuple-scalar (peak intermediate coords)
   "Scalar of a tuple at COORDS, or NIL when it does not apply (scalar_for)."
