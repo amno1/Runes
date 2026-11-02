@@ -84,103 +84,101 @@ unpaired surrogates become U+FFFD."
                       (runes/otf:font-data-read-u16 fd (+ sub-off 2)))))
     (min declared (max 0 (- table-end sub-off)))))
 
-(defun setup-cmap-lookup (loader cmap cmap-offset cmap-length)
-  (let ((fd (font-data loader))
-        (table-end (+ cmap-offset cmap-length))
-        (best-fmt nil)
-        (best-sub-off nil))
-    ;; Look for Format 12 (preferred full Unicode) or Format 4 (BMP Unicode)
-    (dotimes (i (runes/otf:cmap-num-tables cmap))
+(defun best-cmap-subtable (fd cmap cmap-offset)
+  "The format and position of the 'cmap' subtable to use: the first Unicode
+format 12 subtable or, without one, the first Unicode format 4 subtable."
+  (let ((format-4 nil))
+    (dotimes (i (runes/otf:cmap-num-tables cmap) (when format-4 (values 4 format-4)))
       (let* ((erec (runes/otf:cmap-encoding-records-ref cmap i))
              (plat (runes/otf:encoding-record-platform-id erec))
              (enc (runes/otf:encoding-record-encoding-id erec))
              (sub-off (+ cmap-offset (runes/otf:encoding-record-subtable-offset erec)))
              (fmt (runes/otf:font-data-read-u16 fd sub-off)))
-        (cond
-          ((and (= fmt 12) (or (= plat 0) (= plat 3)))
-           (setf best-fmt 12 best-sub-off sub-off)
-           (return))
-          ((and (= fmt 4) (or (= plat 0) (and (= plat 3) (or (= enc 1) (= enc 10)))))
-           ;; The first suitable format 4 subtable wins.
-           (unless best-fmt
-             (setf best-fmt 4 best-sub-off sub-off))))))
+        (cond ((and (= fmt 12) (or (= plat 0) (= plat 3)))
+               (return (values 12 sub-off)))
+              ((and (= fmt 4) (null format-4)
+                    (or (= plat 0) (and (= plat 3) (or (= enc 1) (= enc 10)))))
+               (setf format-4 sub-off)))))))
 
-    (cond
-      ((eql best-fmt 12)
-       (let* ((sub-len (cmap-subtable-length fd best-sub-off 12 table-end))
-              (cmap12 (runes/otf:read-cmap12 fd best-sub-off sub-len))
-              (num-groups (min (runes/otf:cmap12-num-groups cmap12)
-                               (max 0 (floor (- sub-len 16) 12)))))
-         (setf (cmap-lookup-fn loader)
-               (lambda (cp)
-                 (let ((low 0)
-                       (high (1- num-groups)))
-                   (loop while (<= low high) do
-                         (let* ((mid (floor (+ low high) 2))
-                                (grp (runes/otf:cmap12-groups-ref cmap12 mid))
-                                (start (runes/otf:sequential-map-group-start-char-code grp))
-                                (end (runes/otf:sequential-map-group-end-char-code grp)))
-                           (cond
-                             ((< cp start) (setf high (1- mid)))
-                             ((> cp end) (setf low (1+ mid)))
-                             (t (return
-                                  (+ (runes/otf:sequential-map-group-start-glyph-id grp)
-                                     (- cp start))))))
-                         finally (return 0))))
-               (cmap-mappings-fn loader)
-               (lambda (fn)
-                 (dotimes (g num-groups)
-                   (let* ((grp (runes/otf:cmap12-groups-ref cmap12 g))
-                          (start (runes/otf:sequential-map-group-start-char-code grp))
-                          (gid (runes/otf:sequential-map-group-start-glyph-id grp)))
-                     (loop for cp from start
-                             to (min (runes/otf:sequential-map-group-end-char-code grp) #x10FFFF)
-                           do (funcall fn cp (+ gid (- cp start))))))))))
+(defun setup-cmap12-lookup (loader fd sub-off table-end)
+  (let* ((sub-len (cmap-subtable-length fd sub-off 12 table-end))
+         (cmap12 (runes/otf:read-cmap12 fd sub-off sub-len))
+         (num-groups (min (runes/otf:cmap12-num-groups cmap12)
+                          (max 0 (floor (- sub-len 16) 12)))))
+    (flet ((group (i)
+             (let ((grp (runes/otf:cmap12-groups-ref cmap12 i)))
+               (values (runes/otf:sequential-map-group-start-char-code grp)
+                       (runes/otf:sequential-map-group-end-char-code grp)
+                       (runes/otf:sequential-map-group-start-glyph-id grp)))))
+      (setf (cmap-lookup-fn loader)
+            (lambda (cp)
+              ;; Binary search of the groups, which are sorted.
+              (let ((low 0) (high (1- num-groups)))
+                (loop while (<= low high)
+                      do (let ((mid (floor (+ low high) 2)))
+                           (multiple-value-bind (start end gid) (group mid)
+                             (cond ((< cp start) (setf high (1- mid)))
+                                   ((> cp end) (setf low (1+ mid)))
+                                   (t (return (+ gid (- cp start)))))))
+                      finally (return 0))))
+            (cmap-mappings-fn loader)
+            (lambda (fn)
+              (dotimes (g num-groups)
+                (multiple-value-bind (start end gid) (group g)
+                  (loop for cp from start to (min end #x10FFFF)
+                        do (funcall fn cp (+ gid (- cp start)))))))))))
 
-      ((eql best-fmt 4)
-       (let* ((sub-len (cmap-subtable-length fd best-sub-off 4 table-end))
-              (sub-end (+ best-sub-off sub-len))
-              (cmap4 (runes/otf:read-cmap4 fd best-sub-off sub-len))
-              ;; Four u16 arrays of segCount entries follow the 16-byte header.
-              (seg-len (min (floor (runes/otf:cmap4-seg-count-x2 cmap4) 2)
-                            (max 0 (floor (- sub-len 16) 8))))
-              (ro-base (+ best-sub-off 16 (* 6 seg-len))))
-         (labels ((segment-glyph (s cp)
-                    (let ((start (runes/otf:cmap4-start-code-ref cmap4 s))
-                          (delta (runes/otf:cmap4-id-delta-ref cmap4 s))
-                          (ro-off (runes/otf:cmap4-id-range-offsets-ref cmap4 s)))
-                      (cond
-                        ((< cp start) 0)
-                        ((zerop ro-off) (logand #xFFFF (+ cp delta)))
-                        (t
-                         (let ((g-addr (+ ro-base (* 2 s) ro-off (* 2 (- cp start)))))
-                           ;; A malformed idRangeOffset must not read past the subtable.
-                           (if (> (+ g-addr 2) sub-end)
-                               0
-                               (let ((gid (runes/otf:font-data-read-u16 fd g-addr)))
-                                 (if (zerop gid) 0 (logand #xFFFF (+ gid delta))))))))))
-                  (find-segment (cp)
-                    ;; First segment whose endCode >= CP.
-                    (let ((low 0) (high seg-len))
-                      (loop while (< low high)
-                            do (let ((mid (floor (+ low high) 2)))
-                                 (if (< (runes/otf:cmap4-end-code-ref cmap4 mid) cp)
-                                     (setf low (1+ mid))
-                                     (setf high mid))))
-                      (when (< low seg-len) low))))
-           (setf (cmap-lookup-fn loader)
-                 (lambda (cp)
-                   (let ((s (and (<= cp #xFFFF) (find-segment cp))))
-                     (if s (segment-glyph s cp) 0)))
-                 (cmap-mappings-fn loader)
-                 (lambda (fn)
-                   (dotimes (s seg-len)
-                     (loop for cp from (runes/otf:cmap4-start-code-ref cmap4 s)
-                             to (min (runes/otf:cmap4-end-code-ref cmap4 s) #xFFFE)
-                           for gid = (segment-glyph s cp)
-                           unless (zerop gid) do (funcall fn cp gid))))))))
-      (t
-       (setf (cmap-lookup-fn loader) (constantly 0))))))
+(defun setup-cmap4-lookup (loader fd sub-off table-end)
+  (let* ((sub-len (cmap-subtable-length fd sub-off 4 table-end))
+         (sub-end (+ sub-off sub-len))
+         (cmap4 (runes/otf:read-cmap4 fd sub-off sub-len))
+         ;; Four u16 arrays of segCount entries follow the 16-byte header.
+         (seg-len (min (floor (runes/otf:cmap4-seg-count-x2 cmap4) 2)
+                       (max 0 (floor (- sub-len 16) 8))))
+         (ro-base (+ sub-off 16 (* 6 seg-len))))
+    (labels ((segment-glyph (s cp)
+               (let ((start (runes/otf:cmap4-start-code-ref cmap4 s))
+                     (delta (runes/otf:cmap4-id-delta-ref cmap4 s))
+                     (ro-off (runes/otf:cmap4-id-range-offsets-ref cmap4 s)))
+                 (cond
+                   ((< cp start) 0)
+                   ((zerop ro-off) (logand #xFFFF (+ cp delta)))
+                   (t
+                    (let ((g-addr (+ ro-base (* 2 s) ro-off (* 2 (- cp start)))))
+                      ;; A malformed idRangeOffset must not read past the subtable.
+                      (if (> (+ g-addr 2) sub-end)
+                          0
+                          (let ((gid (runes/otf:font-data-read-u16 fd g-addr)))
+                            (if (zerop gid) 0 (logand #xFFFF (+ gid delta))))))))))
+             (find-segment (cp)
+               ;; First segment whose endCode >= CP.
+               (let ((low 0) (high seg-len))
+                 (loop while (< low high)
+                       do (let ((mid (floor (+ low high) 2)))
+                            (if (< (runes/otf:cmap4-end-code-ref cmap4 mid) cp)
+                                (setf low (1+ mid))
+                                (setf high mid))))
+                 (when (< low seg-len) low))))
+      (setf (cmap-lookup-fn loader)
+            (lambda (cp)
+              (let ((s (and (<= cp #xFFFF) (find-segment cp))))
+                (if s (segment-glyph s cp) 0)))
+            (cmap-mappings-fn loader)
+            (lambda (fn)
+              (dotimes (s seg-len)
+                (loop for cp from (runes/otf:cmap4-start-code-ref cmap4 s)
+                        to (min (runes/otf:cmap4-end-code-ref cmap4 s) #xFFFE)
+                      for gid = (segment-glyph s cp)
+                      unless (zerop gid) do (funcall fn cp gid))))))))
+
+(defun setup-cmap-lookup (loader cmap cmap-offset cmap-length)
+  (let ((fd (font-data loader))
+        (table-end (+ cmap-offset cmap-length)))
+    (multiple-value-bind (format sub-off) (best-cmap-subtable fd cmap cmap-offset)
+      (case format
+        (12 (setup-cmap12-lookup loader fd sub-off table-end))
+        (4 (setup-cmap4-lookup loader fd sub-off table-end))
+        (t (setf (cmap-lookup-fn loader) (constantly 0)))))))
 
 (defun read-long-metrics (data offset size long-count glyph-count)
   "Read an hmtx/vmtx style table: LONG-COUNT (advance, bearing) pairs
@@ -255,48 +253,56 @@ start of the subtable; a pair's value is at SUB-OFF + left + right."
     ;; Format 1 (contextual state table) and others are ignored.
     ))
 
+(defun load-microsoft-kern-table (loader koff kend)
+  "The subtables of a version 0 'kern' table.  Their header: version u16,
+length u16, coverage u16 with the format in the high byte and flags in the
+low byte."
+  (let ((data (font-data loader))
+        (n-tables (runes/otf:font-data-read-u16 (font-data loader) (+ koff 2)))
+        (sub-off (+ koff 4)))
+    (dotimes (t-idx n-tables)
+      (when (> (+ sub-off 6) kend) (return))
+      (let* ((sub-len (runes/otf:font-data-read-u16 data (+ sub-off 2)))
+             (sub-cov (runes/otf:font-data-read-u16 data (+ sub-off 4)))
+             (sub-end (min kend (+ sub-off (max sub-len 6)))))
+        ;; Horizontal, not minimum values, not cross-stream.
+        (when (= (logand sub-cov #b111) 1)
+          (read-kerning-subtable loader (ldb (byte 8 8) sub-cov) sub-off (+ sub-off 6)
+                                 ;; Fonts with many pairs overflow the 16-bit length.
+                                 (if (= t-idx (1- n-tables)) kend sub-end)))
+        (when (< sub-len 6) (return))
+        (incf sub-off sub-len)))))
+
+(defun load-apple-kern-table (loader koff kend)
+  "The subtables of a version 1.0 'kern' table.  Their header: length u32,
+coverage u16 with flags in the high byte and the format in the low byte,
+tupleIndex u16."
+  (let* ((data (font-data loader))
+         (n-tables (min (runes/otf:font-data-read-u32 data (+ koff 4))
+                        (floor (max 0 (- kend koff 8)) 8)))
+         (sub-off (+ koff 8)))
+    (dotimes (t-idx n-tables)
+      (when (> (+ sub-off 8) kend) (return))
+      (let ((sub-len (runes/otf:font-data-read-u32 data sub-off))
+            (sub-cov (runes/otf:font-data-read-u16 data (+ sub-off 4))))
+        ;; Not vertical, not cross-stream, not variation.
+        (when (zerop (logand sub-cov #xE000))
+          (read-kerning-subtable loader (ldb (byte 8 0) sub-cov) sub-off (+ sub-off 8)
+                                 (min kend (+ sub-off (max sub-len 8)))))
+        (when (< sub-len 8) (return))
+        (incf sub-off sub-len)))))
+
 (defun load-kern-table (loader koff ksize)
   "Read the horizontal format 0 and format 2 subtables of the Microsoft
 (version 0) or Apple (version 1.0) 'kern' table into the loader's
 kerning table."
-  (let* ((data (font-data loader))
-         (kend (+ koff ksize))
-         (version (runes/otf:font-data-read-u16 data koff)))
-    (case version
-      (0
-       ;; Subtable header: version u16, length u16, coverage u16 with the
-       ;; format in the high byte and flags in the low byte.
-       (let ((n-tables (runes/otf:font-data-read-u16 data (+ koff 2)))
-             (sub-off (+ koff 4)))
-         (dotimes (t-idx n-tables)
-           (when (> (+ sub-off 6) kend) (return))
-           (let* ((sub-len (runes/otf:font-data-read-u16 data (+ sub-off 2)))
-                  (sub-cov (runes/otf:font-data-read-u16 data (+ sub-off 4)))
-                  (sub-end (min kend (+ sub-off (max sub-len 6)))))
-             ;; Horizontal, not minimum values, not cross-stream.
-             (when (= (logand sub-cov #b111) 1)
-               (read-kerning-subtable loader (ldb (byte 8 8) sub-cov) sub-off (+ sub-off 6)
-                                      ;; Fonts with many pairs overflow the 16-bit length.
-                                      (if (= t-idx (1- n-tables)) kend sub-end)))
-             (when (< sub-len 6) (return))
-             (incf sub-off sub-len)))))
-      (1
-       ;; Subtable header: length u32, coverage u16 with flags in the high
-       ;; byte and the format in the low byte, tupleIndex u16.
-       (when (= (runes/otf:font-data-read-u16 data (+ koff 2)) 0)
-         (let ((n-tables (min (runes/otf:font-data-read-u32 data (+ koff 4))
-                              (floor (max 0 (- kend koff 8)) 8)))
-               (sub-off (+ koff 8)))
-           (dotimes (t-idx n-tables)
-             (when (> (+ sub-off 8) kend) (return))
-             (let* ((sub-len (runes/otf:font-data-read-u32 data sub-off))
-                    (sub-cov (runes/otf:font-data-read-u16 data (+ sub-off 4))))
-               ;; Not vertical, not cross-stream, not variation.
-               (when (zerop (logand sub-cov #xE000))
-                 (read-kerning-subtable loader (ldb (byte 8 0) sub-cov) sub-off (+ sub-off 8)
-                                        (min kend (+ sub-off (max sub-len 8)))))
-               (when (< sub-len 8) (return))
-               (incf sub-off sub-len)))))))))
+  (let ((data (font-data loader))
+        (kend (+ koff ksize)))
+    (case (runes/otf:font-data-read-u16 data koff)
+      (0 (load-microsoft-kern-table loader koff kend))
+      ;; Version 1.0: a 16.16 version whose low half is 0.
+      (1 (when (zerop (runes/otf:font-data-read-u16 data (+ koff 2)))
+           (load-apple-kern-table loader koff kend))))))
 
 (defparameter *sfnt-versions*
   (list #x00010000 #x4F54544F #x74727565 #x74797031) ; 1.0, 'OTTO', 'true', 'typ1'
