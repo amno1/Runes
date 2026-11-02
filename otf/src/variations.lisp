@@ -46,6 +46,7 @@ axis of LOADER's font, in user units; NIL for a font that does not vary.")
 
 (defun normalize-axis-value (value min default max)
   "VALUE (16.16) normalized to [-1, 1] for an axis (VariationAxisRecord::normalize)."
+  (declare (type (signed-byte 32) value min default max))
   (let* ((max (max max min))
          (value (max min (min max value)))
          (result (cond ((< value default)
@@ -140,6 +141,7 @@ computed at the coordinates before any is added."
 (defun apply-segment-map (maps coord)
   "COORD (16.16) mapped through one axis's segment map, a vector of (from
 . to) pairs, as Fontations' SegmentMaps::apply, which follows HarfBuzz."
+  (declare (simple-vector maps) (type (signed-byte 32) coord))
   (labels ((from (i) (car (aref maps i)))
            (to (i) (cdr (aref maps i)))
            ;; COORD moved as pair I moves its from value
@@ -296,6 +298,7 @@ font does not vary that metric through this table."
 
 (defun delta-set-index (pos fd index)
   "Outer and inner delta-set index for INDEX from the DeltaSetIndexMap at POS."
+  (declare (type (unsigned-byte 32) pos index) (type runes/otf:font-data fd))
   (let* ((format (runes/otf:font-data-read-u8 fd pos))
          (entry-format (runes/otf:font-data-read-u8 fd (+ pos 1)))
          (map-count (if (zerop format)

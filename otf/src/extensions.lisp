@@ -144,6 +144,7 @@ NUM-GLYPHS comes from 'maxp'."
 
 (defun item-variation-data-delta-set-ref (ivd item region)
   "Delta for ITEM (row) and REGION (column index into regionIndexes)."
+  (declare (type (unsigned-byte 32) item region))
   (let* ((words (item-variation-data-word-count ivd))
          (long-p (item-variation-data-long-words-p ivd))
          (wide (if long-p 4 2))
@@ -235,6 +236,8 @@ device offsets are relative to."
                         fmt)))
 
 (defun pair-value-record-at (pair-set index count start glyph-size glyph-reader value-format1 value-format2)
+  (declare (type (unsigned-byte 32) index count start) (type (integer 1 4) glyph-size)
+           (type (unsigned-byte 16) value-format1 value-format2))
   (unless (< index count)
     (error 'font-out-of-bounds-error :pos index :size 1 :length count))
   (let* ((size1 (value-format-size value-format1))
@@ -260,6 +263,8 @@ The value formats come from the parent PairPosFormat3 subtable."
                         value-format1 value-format2))
 
 (defun class-values-at (subtable start class1 class2 class1-count class2-count value-format1 value-format2)
+  (declare (type (unsigned-byte 32) start class1 class2 class1-count class2-count)
+           (type (unsigned-byte 16) value-format1 value-format2))
   (unless (and (< class1 class1-count) (< class2 class2-count))
     (error 'font-out-of-bounds-error :pos class1 :size 1 :length class1-count))
   (let* ((size1 (value-format-size value-format1))

@@ -176,14 +176,16 @@ byte width (0 for a run of zeros).  Runs are always read whole."
 (defun gvar-tuple-scalar (peak intermediate coords)
   "Scalar of a tuple at COORDS, or NIL when it does not apply (scalar_for).
 Each axis multiplies the scalar by how far COORDS lies towards its peak."
-  (flet ((coord (i) (if (< i (length coords)) (aref coords i) 0))
+  (declare (simple-vector peak coords) (type (or null cons) intermediate))
+  (flet ((coord (i) (if (< i (length coords)) (svref coords i) 0))
          (scale (scalar numerator denominator)
            ;; From 2.14 to 16.16 for the division.
            (runes/otf/charstring::fixed-mul-div scalar (ash numerator 2) (ash denominator 2))))
-    (loop with scalar = #x10000
-          for i below (length peak)
-          for p = (aref peak i)
-          for coord = (coord i)
+    ;; Coordinates and tuples are 2.14 values; the scalar is 16.16.
+    (loop with scalar of-type (signed-byte 32) = #x10000
+          for i of-type fixnum below (length peak)
+          for p of-type (signed-byte 16) = (svref peak i)
+          for coord of-type (signed-byte 16) = (coord i)
           do (cond
                ;; No peak on this axis, or exactly at it: a factor of one.
                ((or (zerop p) (= p coord)))
@@ -193,8 +195,9 @@ Each axis multiplies the scalar by how far COORDS lies towards its peak."
                     (setf scalar (scale scalar coord p))
                     (return nil)))
                (t
-                (let ((start (aref (car intermediate) i))
-                      (end (aref (cdr intermediate) i)))
+                (let ((start (svref (car intermediate) i))
+                      (end (svref (cdr intermediate) i)))
+                  (declare (type (signed-byte 16) start end))
                   (cond
                     ;; An invalid region contributes a factor of one.
                     ((or (> start p) (> p end) (and (minusp start) (plusp end))))
@@ -257,21 +260,23 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
 
 (defun interpolate-untouched (xs ys out-x out-y touched start end)
   "Infer deltas for the untouched points of the contour START..END (IUP)."
+  (declare (simple-vector xs ys out-x out-y touched) (fixnum start end))
   (labels ((interp-coord (in out from to ref1 ref2)
              ;; Points FROM below TO, between references REF1 and REF2 along
              ;; the contour, in one coordinate: IN the original values, OUT
-             ;; the moved ones.
-             (loop with swap = (> (aref in ref1) (aref in ref2))
-                   with in1 = (aref in (if swap ref2 ref1))
-                   with in2 = (aref in (if swap ref1 ref2))
-                   with out1 = (aref out (if swap ref2 ref1))
-                   with out2 = (aref out (if swap ref1 ref2))
-                   with scale = (if (/= in1 in2) (f/ (f- out2 out1) (f- in2 in1)) 0)
+             ;; the moved ones, all 16.16.
+             (declare (simple-vector in out) (fixnum from to ref1 ref2))
+             (loop with swap = (> (svref in ref1) (svref in ref2))
+                   with in1 of-type (signed-byte 32) = (svref in (if swap ref2 ref1))
+                   with in2 of-type (signed-byte 32) = (svref in (if swap ref1 ref2))
+                   with out1 of-type (signed-byte 32) = (svref out (if swap ref2 ref1))
+                   with out2 of-type (signed-byte 32) = (svref out (if swap ref1 ref2))
+                   with scale of-type (signed-byte 32) = (if (/= in1 in2) (f/ (f- out2 out1) (f- in2 in1)) 0)
                    ;; References sharing a coordinate but moved apart leave
                    ;; the points alone: an empty range.
                    with stop = (if (or (/= in1 in2) (= out1 out2)) to from)
-                   for i from from below stop
-                   for coord = (aref in i)
+                   for i of-type fixnum from from below stop
+                   for coord of-type (signed-byte 32) = (svref in i)
                    do (setf (aref out i)
                             (cond ((<= coord in1) (f+ coord (f- out1 in1)))
                                   ((>= coord in2) (f+ coord (f- out2 in2)))

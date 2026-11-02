@@ -317,12 +317,15 @@ no TrueType glyph variations."
 ;;; Zero-copy TrueType contour extraction
 
 (defun glyph-loca-info (loader gid)
+  "Offset and length of glyph GID's data in 'glyf', from 'loca'."
+  (declare (type (unsigned-byte 32) gid))
   (let ((loca (table-info "loca" loader)))
     (if (null loca)
         (values 0 0)
         (let ((fd (font-data loader))
               (loc-off (offset loca))
               (is-short (eql (loca-offset-format loader) :short)))
+          (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) loc-off))
           (if is-short
               (let ((off1 (* (runes/otf:font-data-read-u16 fd (+ loc-off (* gid 2))) 2))
                     (off2 (* (runes/otf:font-data-read-u16 fd (+ loc-off (* (1+ gid) 2))) 2)))
