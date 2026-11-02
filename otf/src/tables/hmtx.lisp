@@ -47,14 +47,16 @@
 (defun hmtx-h-metrics-count (table number-of-h-metrics)
   "Paired advance width/height and left/top side bearing values for each glyph. Records are indexed by glyph ID."
   (declare (type hmtx table)
-           (ignorable number-of-h-metrics))
+           (ignorable number-of-h-metrics)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (ignorable table))
   number-of-h-metrics)
 
 (defun hmtx-h-metrics-ref (table number-of-h-metrics index)
   "Paired advance width/height and left/top side bearing values for each glyph. Records are indexed by glyph ID."
   (declare (type hmtx table)
-           (ignorable number-of-h-metrics index))
+           (ignorable number-of-h-metrics index)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 4))))
     (unless
@@ -66,7 +68,8 @@
 (defun hmtx-left-side-bearings-count (table number-of-h-metrics)
   "Leading (left/top) side bearings for glyph IDs greater than or equal to numberOfLongMetrics."
   (declare (type hmtx table)
-           (ignorable number-of-h-metrics))
+           (ignorable number-of-h-metrics)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (ignorable table))
   (max 0
        (floor
@@ -78,7 +81,8 @@
 (defun hmtx-left-side-bearings-ref (table number-of-h-metrics index)
   "Leading (left/top) side bearings for glyph IDs greater than or equal to numberOfLongMetrics."
   (declare (type hmtx table)
-           (ignorable number-of-h-metrics index))
+           (ignorable number-of-h-metrics index)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos
          (+
@@ -120,13 +124,15 @@
 
 (defun hmtx-extended-h-metrics-count (table number-of-h-metrics)
   (declare (type hmtx-extended table)
-           (ignorable number-of-h-metrics))
+           (ignorable number-of-h-metrics)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (ignorable table))
   number-of-h-metrics)
 
 (defun hmtx-extended-h-metrics-ref (table number-of-h-metrics index)
   (declare (type hmtx-extended table)
-           (ignorable number-of-h-metrics index))
+           (ignorable number-of-h-metrics index)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 4))))
     (unless
@@ -137,7 +143,8 @@
 
 (defun hmtx-extended-left-side-bearings-count (table number-of-h-metrics)
   (declare (type hmtx-extended table)
-           (ignorable number-of-h-metrics))
+           (ignorable number-of-h-metrics)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (ignorable table))
   (max 0
        (floor
@@ -148,7 +155,8 @@
 
 (defun hmtx-extended-left-side-bearings-ref (table number-of-h-metrics index)
   (declare (type hmtx-extended table)
-           (ignorable number-of-h-metrics index))
+           (ignorable number-of-h-metrics index)
+           (type (unsigned-byte 32) number-of-h-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos
          (+

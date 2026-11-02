@@ -168,7 +168,8 @@
 (defun tuple-variation-header-peak-tuple-count (table axis-count)
   "Peak tuple record for this tuple variation table — optional, determined by flags in the tupleIndex value.  Note that this must always be included in the 'cvar' table."
   (declare (type tuple-variation-header table)
-           (ignorable axis-count))
+           (ignorable axis-count)
+           (type (unsigned-byte 32) axis-count))
   (declare (ignorable table))
   (if (logtest 32768 (tuple-variation-header-tuple-index table))
       axis-count
@@ -177,7 +178,8 @@
 (defun tuple-variation-header-peak-tuple-ref (table axis-count index)
   "Peak tuple record for this tuple variation table — optional, determined by flags in the tupleIndex value.  Note that this must always be included in the 'cvar' table."
   (declare (type tuple-variation-header table)
-           (ignorable axis-count index))
+           (ignorable axis-count index)
+           (type (unsigned-byte 32) axis-count))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (+ (table-ref-offset table) 4) (* index 2))))
     (unless
@@ -189,7 +191,8 @@
 (defun tuple-variation-header-intermediate-start-tuple-count (table axis-count)
   "Intermediate start tuple record for this tuple variation table — optional, determined by flags in the tupleIndex value."
   (declare (type tuple-variation-header table)
-           (ignorable axis-count))
+           (ignorable axis-count)
+           (type (unsigned-byte 32) axis-count))
   (declare (ignorable table))
   (if (logtest 16384 (tuple-variation-header-tuple-index table))
       axis-count
@@ -199,7 +202,8 @@
        (table axis-count index)
   "Intermediate start tuple record for this tuple variation table — optional, determined by flags in the tupleIndex value."
   (declare (type tuple-variation-header table)
-           (ignorable axis-count index))
+           (ignorable axis-count index)
+           (type (unsigned-byte 32) axis-count))
   (declare (type (unsigned-byte 32) index))
   (let ((pos
          (+
@@ -215,7 +219,8 @@
 (defun tuple-variation-header-intermediate-end-tuple-count (table axis-count)
   "Intermediate end tuple record for this tuple variation table — optional, determined by flags in the tupleIndex value."
   (declare (type tuple-variation-header table)
-           (ignorable axis-count))
+           (ignorable axis-count)
+           (type (unsigned-byte 32) axis-count))
   (declare (ignorable table))
   (if (logtest 16384 (tuple-variation-header-tuple-index table))
       axis-count
@@ -225,7 +230,8 @@
        (table axis-count index)
   "Intermediate end tuple record for this tuple variation table — optional, determined by flags in the tupleIndex value."
   (declare (type tuple-variation-header table)
-           (ignorable axis-count index))
+           (ignorable axis-count index)
+           (type (unsigned-byte 32) axis-count))
   (declare (type (unsigned-byte 32) index))
   (let ((pos
          (+

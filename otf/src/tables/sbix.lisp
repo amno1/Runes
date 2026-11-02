@@ -142,14 +142,16 @@
 (defun strike-glyph-data-offsets-count (table num-glyphs)
   "Offset from the beginning of the strike data header to bitmap data for an individual glyph ID."
   (declare (type strike table)
-           (ignorable num-glyphs))
+           (ignorable num-glyphs)
+           (type (unsigned-byte 32) num-glyphs))
   (declare (ignorable table))
   (+ num-glyphs 1))
 
 (defun strike-glyph-data-offsets-ref (table num-glyphs index)
   "Offset from the beginning of the strike data header to bitmap data for an individual glyph ID."
   (declare (type strike table)
-           (ignorable num-glyphs index))
+           (ignorable num-glyphs index)
+           (type (unsigned-byte 32) num-glyphs))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (+ (table-ref-offset table) 4) (* index 4))))
     (unless

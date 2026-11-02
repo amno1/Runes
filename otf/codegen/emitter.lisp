@@ -648,7 +648,11 @@ name of a flag in the flag field's FLAGS type."
                (push `(defun ,fn-name ,args
                         ,@(when fdoc (list fdoc))
                         (declare (type ,struct-name ,tbl)
-                                 ,@(when (cdr args) `((ignorable ,@(cdr args)))))
+                                 ,@(when (cdr args) `((ignorable ,@(cdr args))))
+                                 ;; Arguments from other tables are counts.
+                                 ,@(let ((counts (remove-if-not (lambda (a) (member a extra-args))
+                                                                (cdr args))))
+                                     (when counts `((type (unsigned-byte 32) ,@counts)))))
                         ,@body)
                      accessors))
              (guarded (present body) (if present `(when ,present ,body) body))

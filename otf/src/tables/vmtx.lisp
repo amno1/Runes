@@ -28,14 +28,16 @@
 (defun vmtx-v-metrics-count (table number-of-long-ver-metrics)
   "Paired advance height and top side bearing values for each glyph. Records are indexed by glyph ID."
   (declare (type vmtx table)
-           (ignorable number-of-long-ver-metrics))
+           (ignorable number-of-long-ver-metrics)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (ignorable table))
   number-of-long-ver-metrics)
 
 (defun vmtx-v-metrics-ref (table number-of-long-ver-metrics index)
   "Paired advance height and top side bearing values for each glyph. Records are indexed by glyph ID."
   (declare (type vmtx table)
-           (ignorable number-of-long-ver-metrics index))
+           (ignorable number-of-long-ver-metrics index)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 4))))
     (unless
@@ -47,7 +49,8 @@
 (defun vmtx-top-side-bearings-count (table number-of-long-ver-metrics)
   "Top side bearings for glyph IDs greater than or equal to numberOfLongMetrics."
   (declare (type vmtx table)
-           (ignorable number-of-long-ver-metrics))
+           (ignorable number-of-long-ver-metrics)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (ignorable table))
   (max 0
        (floor
@@ -59,7 +62,8 @@
 (defun vmtx-top-side-bearings-ref (table number-of-long-ver-metrics index)
   "Top side bearings for glyph IDs greater than or equal to numberOfLongMetrics."
   (declare (type vmtx table)
-           (ignorable number-of-long-ver-metrics index))
+           (ignorable number-of-long-ver-metrics index)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos
          (+
@@ -101,13 +105,15 @@
 
 (defun vmtx-extended-v-metrics-count (table number-of-long-ver-metrics)
   (declare (type vmtx-extended table)
-           (ignorable number-of-long-ver-metrics))
+           (ignorable number-of-long-ver-metrics)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (ignorable table))
   number-of-long-ver-metrics)
 
 (defun vmtx-extended-v-metrics-ref (table number-of-long-ver-metrics index)
   (declare (type vmtx-extended table)
-           (ignorable number-of-long-ver-metrics index))
+           (ignorable number-of-long-ver-metrics index)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 4))))
     (unless
@@ -118,7 +124,8 @@
 
 (defun vmtx-extended-top-side-bearings-count (table number-of-long-ver-metrics)
   (declare (type vmtx-extended table)
-           (ignorable number-of-long-ver-metrics))
+           (ignorable number-of-long-ver-metrics)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (ignorable table))
   (max 0
        (floor
@@ -132,7 +139,8 @@
 (defun vmtx-extended-top-side-bearings-ref
        (table number-of-long-ver-metrics index)
   (declare (type vmtx-extended table)
-           (ignorable number-of-long-ver-metrics index))
+           (ignorable number-of-long-ver-metrics index)
+           (type (unsigned-byte 32) number-of-long-ver-metrics))
   (declare (type (unsigned-byte 32) index))
   (let ((pos
          (+

@@ -177,14 +177,16 @@
 (defun axis-instance-arrays-axes-count (table axis-count)
   "Variation axis record array."
   (declare (type axis-instance-arrays table)
-           (ignorable axis-count))
+           (ignorable axis-count)
+           (type (unsigned-byte 32) axis-count))
   (declare (ignorable table))
   axis-count)
 
 (defun axis-instance-arrays-axes-ref (table axis-count index)
   "Variation axis record array."
   (declare (type axis-instance-arrays table)
-           (ignorable axis-count index))
+           (ignorable axis-count index)
+           (type (unsigned-byte 32) axis-count))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 20))))
     (unless
@@ -196,7 +198,8 @@
 (defun axis-instance-arrays-instances-start (table axis-count)
   "Byte position of the instances field; its elements are variable-length INSTANCE-RECORD data."
   (declare (type axis-instance-arrays table)
-           (ignorable axis-count))
+           (ignorable axis-count)
+           (type (unsigned-byte 32) axis-count))
   (+ (table-ref-offset table)
      (* (axis-instance-arrays-axes-count table axis-count) 20)))
 

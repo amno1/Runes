@@ -174,14 +174,16 @@
 (defun setting-name-array-settings-count (table n-settings)
   "List of setting names for a feature."
   (declare (type setting-name-array table)
-           (ignorable n-settings))
+           (ignorable n-settings)
+           (type (unsigned-byte 32) n-settings))
   (declare (ignorable table))
   n-settings)
 
 (defun setting-name-array-settings-ref (table n-settings index)
   "List of setting names for a feature."
   (declare (type setting-name-array table)
-           (ignorable n-settings index))
+           (ignorable n-settings index)
+           (type (unsigned-byte 32) n-settings))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 4))))
     (unless

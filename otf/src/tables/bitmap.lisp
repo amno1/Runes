@@ -397,7 +397,8 @@
        (table number-of-index-subtables)
   "Array of IndexSubtableRecords."
   (declare (type index-subtable-list table)
-           (ignorable number-of-index-subtables))
+           (ignorable number-of-index-subtables)
+           (type (unsigned-byte 32) number-of-index-subtables))
   (declare (ignorable table))
   number-of-index-subtables)
 
@@ -405,7 +406,8 @@
        (table number-of-index-subtables index)
   "Array of IndexSubtableRecords."
   (declare (type index-subtable-list table)
-           (ignorable number-of-index-subtables index))
+           (ignorable number-of-index-subtables index)
+           (type (unsigned-byte 32) number-of-index-subtables))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 8))))
     (unless
@@ -470,14 +472,16 @@
 (defun index-subtable1-sbit-offsets-count
        (table last-glyph-index first-glyph-index)
   (declare (type index-subtable1 table)
-           (ignorable last-glyph-index first-glyph-index))
+           (ignorable last-glyph-index first-glyph-index)
+           (type (unsigned-byte 32) last-glyph-index first-glyph-index))
   (declare (ignorable table))
   (+ (max 0 (- last-glyph-index first-glyph-index)) 2))
 
 (defun index-subtable1-sbit-offsets-ref
        (table last-glyph-index first-glyph-index index)
   (declare (type index-subtable1 table)
-           (ignorable last-glyph-index first-glyph-index index))
+           (ignorable last-glyph-index first-glyph-index index)
+           (type (unsigned-byte 32) last-glyph-index first-glyph-index))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (+ (table-ref-offset table) 8) (* index 4))))
     (unless
@@ -611,14 +615,16 @@
 (defun index-subtable3-sbit-offsets-count
        (table last-glyph-index first-glyph-index)
   (declare (type index-subtable3 table)
-           (ignorable last-glyph-index first-glyph-index))
+           (ignorable last-glyph-index first-glyph-index)
+           (type (unsigned-byte 32) last-glyph-index first-glyph-index))
   (declare (ignorable table))
   (+ (max 0 (- last-glyph-index first-glyph-index)) 2))
 
 (defun index-subtable3-sbit-offsets-ref
        (table last-glyph-index first-glyph-index index)
   (declare (type index-subtable3 table)
-           (ignorable last-glyph-index first-glyph-index index))
+           (ignorable last-glyph-index first-glyph-index index)
+           (type (unsigned-byte 32) last-glyph-index first-glyph-index))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (+ (table-ref-offset table) 8) (* index 2))))
     (unless

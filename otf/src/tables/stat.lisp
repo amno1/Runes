@@ -223,14 +223,16 @@
 (defun axis-value-array-axis-value-offsets-count (table axis-value-count)
   "Array of offsets to axis value tables, in bytes from the start of the axis value offsets array."
   (declare (type axis-value-array table)
-           (ignorable axis-value-count))
+           (ignorable axis-value-count)
+           (type (unsigned-byte 32) axis-value-count))
   (declare (ignorable table))
   axis-value-count)
 
 (defun axis-value-array-axis-value-offsets-ref (table axis-value-count index)
   "Array of offsets to axis value tables, in bytes from the start of the axis value offsets array."
   (declare (type axis-value-array table)
-           (ignorable axis-value-count index))
+           (ignorable axis-value-count index)
+           (type (unsigned-byte 32) axis-value-count))
   (declare (type (unsigned-byte 32) index))
   (let ((pos (+ (table-ref-offset table) (* index 2))))
     (unless
