@@ -41,10 +41,9 @@
                                    (kern-offset font previous-char char
                                                 :custom-table kerning-table
                                                 :dpi-x dpi-x)
-                                   (let ((ko (zpb-ttf:kerning-offset previous-glyph glyph loader)))
-                                     (if (and ko (not (zerop ko)))
-                                         (* sx (coerce ko 'single-float))
-                                         0.0f0)))))
+                                   (* sx (coerce (zpb-ttf:kerning-offset
+                                                  previous-glyph glyph loader)
+                                                 'single-float)))))
                      (incf pen (+ (advance previous-glyph previous-char)
                                   (coerce kern 'single-float)
                                   lsp))))

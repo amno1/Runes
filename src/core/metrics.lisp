@@ -386,23 +386,17 @@
       ((consp table)
        (let ((pair (cons char1 char2))
              (str (coerce (vector char1 char2) 'string)))
+         ;; EQUAL, not STRING=: the table may mix both kinds of key
          (or (cdr (assoc pair table :test #'equal))
-             (cdr (assoc str table :test #'string=))))))))
+             (cdr (assoc str table :test #'equal))))))))
 
 (defun kern-offset (font char1 char2 &key custom-table (dpi-x 96))
-  "Calculate kerning offset in fractional pixels between CHAR1 and CHAR2 for FONT.
-   Consults CUSTOM-TABLE if present; otherwise queries the font loader's kern table via zpb-ttf."
-  (when custom-table
-    (let ((val (lookup-custom-kerning custom-table char1 char2)))
-      (when val
-        (return-from kern-offset (coerce val 'single-float)))))
-  (with-font-loader (loader font)
-    (let ((g1 (zpb-ttf:find-glyph char1 loader))
-          (g2 (zpb-ttf:find-glyph char2 loader)))
-      (if (and g1 g2)
-          (let ((offset (zpb-ttf:kerning-offset g1 g2 loader)))
-            (if (and offset (not (zerop offset)))
-                (* (coerce offset 'single-float)
-                   (coerce (font-units->pixels-x dpi-x font) 'single-float))
-                0.0f0))
-          0.0f0))))
+  "Kerning between CHAR1 and CHAR2 in FONT, in fractional pixels: from
+   CUSTOM-TABLE when it has the pair, else from the font's kern table."
+  (let ((custom (and custom-table
+                     (lookup-custom-kerning custom-table char1 char2))))
+    (if custom
+        (coerce custom 'single-float)
+        (with-font-loader (loader font)
+          (* (coerce (zpb-ttf:kerning-offset char1 char2 loader) 'single-float)
+             (coerce (font-units->pixels-x dpi-x font) 'single-float))))))

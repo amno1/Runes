@@ -75,7 +75,5 @@
    #:font-string-line-bboxes)
 
   (:documentation "Pure Common Lisp TrueType and OpenType font management:
-   finding installed fonts, opening and caching them, metrics, and laying
-   out a line of glyphs.  It draws nothing and rasterizes nothing: a
-   renderer turns the glyphs into pixels (runes/raster for now), and adds
-   TARGET-DPI methods for its own drawables."))
+   find installed fonts, open and cache them, get metrics, and lay out a line of
+   glyphs."))
