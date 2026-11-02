@@ -26,13 +26,20 @@
 (defstruct bcd
   "Components of a binary coded decimal number. ERROR is the value to
 return when overflow or underflow was found while parsing."
-  (error nil) (number 0) (sign 1) (exponent 0) (exponent-add 0)
-  (integer-len 0) (fraction-len 0))
+  (error nil :type (or null (signed-byte 32)))
+  (number 0 :type (unsigned-byte 32))
+  (sign 1 :type (member -1 1))
+  (exponent 0 :type fixnum) (exponent-add 0 :type fixnum)
+  (integer-len 0 :type fixnum) (fraction-len 0 :type fixnum))
 
 (defun parse-bcd (c)
   "Parse the nibbles of a real number after the 30 operand byte."
   (let ((phase :integer) (sign 1) (exponent-sign 1) (number 0) (exponent 0)
         (exponent-add 0) (integer-len 0) (fraction-len 0) (overflow nil))
+    ;; NUMBER grows only below +BCD-NUMBER-LIMIT+, EXPONENT only up to 1000:
+    ;; one more digit keeps both in range.
+    (declare (type (member -1 1) sign exponent-sign) (type (unsigned-byte 32) number)
+             (fixnum exponent exponent-add integer-len fraction-len))
     (block nibbles
       (loop
         (let ((b (cursor-u8 c)))
@@ -83,6 +90,9 @@ of 1000 for more fractional precision, as FreeType does for BlueScale."
         (exponent (bcd-exponent bcd))
         (integer-len (bcd-integer-len bcd))
         (fraction-len (bcd-fraction-len bcd)))
+    ;; NUMBER may wrap to a negative 32-bit value when scaled up below.
+    (declare (type (integer #x-80000000 #xFFFFFFFF) number)
+             (fixnum exponent integer-len fraction-len))
     (when (zerop number)
       (return-from bcd-value 0))
     (incf exponent (if scale-by-1000 (+ 3 (bcd-exponent-add bcd)) (bcd-exponent-add bcd)))
@@ -122,6 +132,8 @@ as two values; used for FontMatrix components."
         (integer-len (bcd-integer-len bcd))
         (fraction-len (bcd-fraction-len bcd))
         result scaling)
+    (declare (type (integer #x-80000000 #xFFFFFFFF) number)
+             (fixnum exponent integer-len fraction-len))
     (when (zerop number)
       (return-from bcd-dynamic-value (values 0 0)))
     (incf fraction-len integer-len)
@@ -187,6 +199,7 @@ em it implies."
   (let* ((xx (aref elements 0)) (yx (aref elements 1))
          (xy (aref elements 2)) (yy (aref elements 3))
          (val (logior (abs xx) (abs yx) (abs xy) (abs yy))))
+    (declare (type (signed-byte 32) xx yx xy yy) (type (unsigned-byte 32) val))
     (when (or (zerop val) (> val #x7FFFFFFF))
       (return-from matrix-degenerate-p t))
     ;; Scale down to avoid overflowing the products below.

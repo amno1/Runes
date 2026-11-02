@@ -45,6 +45,7 @@
                              :base (+ offsets-pos (* (1+ count) off-size) -1)))))))
 
 (defun cff-index-offset (index i)
+  (declare (cff-index index) (type (unsigned-byte 32) i))
   (let ((offset (cff-uint (cff-index-data index)
                           (+ (cff-index-offsets-pos index) (* i (cff-index-off-size index)))
                           (cff-index-off-size index))))
@@ -55,6 +56,7 @@
 
 (defun cff-index-ref (index i)
   "Object I of INDEX as a FONT-DATA window."
+  (declare (cff-index index) (fixnum i))
   (unless (< -1 i (cff-index-count index))
     (fail 'charstring-malformed (format nil "INDEX entry ~D out of range" i)))
   (let* ((start (cff-index-offset index i))
@@ -74,6 +76,7 @@
 
 (defun fd-select-index (fd pos gid)
   "Font DICT index for GID from the FDSelect at POS, or NIL if not covered."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos gid))
   (let ((format (cff-u8 fd pos)))
     (case format
       (0 (handler-case (cff-u8 fd (+ pos 1 gid))
@@ -88,6 +91,7 @@
          (flet ((first-gid (i) (cff-uint fd (+ ranges (* i range-size)) w)))
            ;; The last range whose first glyph is not above GID.
            (let ((lo 0) (hi n))
+             (declare (type (unsigned-byte 32) lo hi))
              (loop while (< lo hi)
                    do (let ((mid (floor (+ lo hi) 2)))
                         (if (<= (first-gid mid) gid) (setf lo (1+ mid)) (setf hi mid))))

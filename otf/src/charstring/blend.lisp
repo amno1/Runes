@@ -19,6 +19,7 @@
 
 (defun fixed-mul-div (a b c)
   "A * B / C, rounded, like font-types' Fixed::mul_div (FreeType's FT_MulDiv)."
+  (declare (type (signed-byte 32) a b c))
   (let* ((sign (if (oddp (count-if #'minusp (list a b c))) -1 1))
          (result (if (zerop c)
                      #x7FFFFFFF
@@ -28,7 +29,10 @@
 (defun region-scalar (font-data region-pos axis-count coords)
   "Scalar of the VariationRegion at REGION-POS for COORDS, a vector of raw
 2.14 values; missing trailing coordinates are 0."
+  (declare (type runes/otf:font-data font-data) (fixnum region-pos)
+           (type (unsigned-byte 16) axis-count) (simple-vector coords))
   (let ((scalar #x10000))
+    (declare (type (signed-byte 32) scalar))
     (dotimes (i axis-count scalar)
       (let* ((pos (+ region-pos (* i 6)))
              (start2 (runes/otf:font-data-read-i16 font-data pos))
