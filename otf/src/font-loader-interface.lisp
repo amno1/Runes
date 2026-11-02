@@ -308,172 +308,164 @@ kerning table."
   (list #x00010000 #x4F54544F #x74727565 #x74797031) ; 1.0, 'OTTO', 'true', 'typ1'
   "Valid sfntVersion values at the start of a font's table directory.")
 
-(defun open-font-loader-from-data (data &key (collection-index 0) input-stream)
-  ;; WOFF and WOFF2 ('wOFF', 'wOF2'): decode to an sfnt (or TTC) in memory first
-  (when (>= (runes/otf:font-data-length data) 4)
-    (case (runes/otf:font-data-read-u32 data 0)
-      (#x774F4646
-       (return-from open-font-loader-from-data
-         (open-font-loader-from-data (runes/otf:decode-woff1 data)
-                                     :collection-index collection-index
-                                     :input-stream input-stream)))
-      (#x774F4632
-       (return-from open-font-loader-from-data
-         (open-font-loader-from-data (runes/otf:decode-woff2 data)
-                                     :collection-index collection-index
-                                     :input-stream input-stream)))))
-  (let* ((sfnt-magic (runes/otf:font-data-read-u32 data 0))
-         (font-offset 0)
-         (coll-count nil)
-         (coll-idx nil))
+(defmacro with-table ((view info) (tag loader reader) &body body)
+  "When LOADER's font has the table TAG, run BODY with INFO bound to its
+TABLE-INFO and VIEW to the table read with READER."
+  `(let ((,info (table-info ,tag ,loader)))
+     (when ,info
+       (let ((,view (,reader (font-data ,loader) (offset ,info) (size ,info))))
+         (declare (ignorable ,view))
+         ,@body))))
 
-    ;; Handle Font Collection (ttcf)
-    (when (= sfnt-magic #x74746366)
+(defun load-maxp (loader)
+  (with-table (maxp info) ("maxp" loader runes/otf:read-maxp)
+    (setf (glyph-count loader) (runes/otf:maxp-num-glyphs maxp))))
+
+(defun load-head (loader)
+  (with-table (head info) ("head" loader runes/otf:read-head)
+    (setf (units/em loader) (runes/otf:head-units-per-em head)
+          (bounding-box loader) (vector (runes/otf:head-x-min head) (runes/otf:head-y-min head)
+                                        (runes/otf:head-x-max head) (runes/otf:head-y-max head))
+          (loca-offset-format loader) (if (zerop (runes/otf:head-index-to-loc-format head))
+                                          :short
+                                          :long))))
+
+(defun load-horizontal-metrics (loader)
+  "'hhea', and the advance widths and left side bearings of 'hmtx'."
+  (with-table (hhea info) ("hhea" loader runes/otf:read-hhea)
+    (setf (ascender loader) (runes/otf:hhea-ascender hhea)
+          (descender loader) (runes/otf:hhea-descender hhea)
+          (line-gap loader) (runes/otf:hhea-line-gap hhea)
+          (max-width loader) (runes/otf:hhea-advance-width-max hhea))
+    (with-table (hmtx hmtx-info) ("hmtx" loader runes/otf:read-hmtx)
+      (multiple-value-bind (widths lsbs)
+          (read-long-metrics (font-data loader) (offset hmtx-info) (size hmtx-info)
+                             (runes/otf:hhea-number-of-h-metrics hhea) (glyph-count loader))
+        (setf (advance-widths loader) widths
+              (left-side-bearings loader) lsbs)))))
+
+(defun load-vertical-metrics (loader)
+  "'vhea' and 'vmtx' or, without both, vertical metrics made up from the
+horizontal ones."
+  (let ((vhea-info (table-info "vhea" loader))
+        (vmtx-info (table-info "vmtx" loader))
+        (data (font-data loader)))
+    (if (and vhea-info vmtx-info)
+        (let ((vhea (runes/otf:read-vhea data (offset vhea-info) (size vhea-info))))
+          (runes/otf:read-vmtx data (offset vmtx-info) (size vmtx-info))
+          (setf (vascender loader) (runes/otf:vhea-ascender vhea)
+                (vdescender loader) (runes/otf:vhea-descender vhea))
+          (multiple-value-bind (heights tsbs)
+              (read-long-metrics data (offset vmtx-info) (size vmtx-info)
+                                 (runes/otf:vhea-number-of-long-ver-metrics vhea) (glyph-count loader))
+            (setf (advance-heights loader) heights
+                  (top-side-bearings loader) tsbs)))
+        (let ((dx (/ (max-width loader) 2)))
+          (setf (vhea-missing-p loader) t
+                (vmtx-missing-p loader) t
+                (vascender loader) dx
+                (vdescender loader) (- dx)
+                (advance-heights loader) (vector (- (ascender loader) (descender loader))))))))
+
+(defun load-post (loader)
+  (with-table (post info) ("post" loader runes/otf:read-post)
+    (setf (italic-angle loader) (runes/otf:post-italic-angle post)
+          (fixed-pitch-p loader) (not (zerop (runes/otf:post-is-fixed-pitch post)))
+          (underline-position loader) (runes/otf:post-underline-position post)
+          (underline-thickness loader) (runes/otf:post-underline-thickness post))))
+
+(defun load-names (loader)
+  "Every entry of the 'name' table, decoded."
+  (with-table (name info) ("name" loader runes/otf:read-name)
+    (let ((storage (+ (offset info) (runes/otf:name-storage-offset name)))
+          (entries (make-array (runes/otf:name-count name))))
+      (dotimes (i (length entries))
+        (let* ((rec (runes/otf:name-name-record-ref name i))
+               (plat (runes/otf:name-record-platform-id rec))
+               (enc (runes/otf:name-record-encoding-id rec)))
+          (setf (aref entries i)
+                (make-instance 'name-entry
+                               :font-loader loader
+                               :platform-id plat
+                               :encoding-id enc
+                               :language-id (runes/otf:name-record-language-id rec)
+                               :name-id (runes/otf:name-record-name-id rec)
+                               :value (decode-name-string-from-fd
+                                       (font-data loader)
+                                       (+ storage (runes/otf:name-record-string-offset rec))
+                                       (runes/otf:name-record-length rec)
+                                       plat enc)))))
+      (setf (name-entries loader) entries))))
+
+(defun load-cmap (loader)
+  (with-table (cmap info) ("cmap" loader runes/otf:read-cmap)
+    (setup-cmap-lookup loader cmap (offset info) (size info))))
+
+(defun load-kern (loader)
+  "The 'kern' table; a truncated one gives what was read before the end."
+  (let ((info (table-info "kern" loader)))
+    (when info
+      (handler-case (load-kern-table loader (offset info) (size info))
+        (runes/otf:font-out-of-bounds-error () nil)))))
+
+(defun collection-font-offset (data collection-index)
+  "The position of font COLLECTION-INDEX's table directory, and the number
+of fonts in the collection (NIL for a single font)."
+  (if (/= (runes/otf:font-data-read-u32 data 0) #x74746366) ; 'ttcf'
+      (values 0 nil)
       (let ((num-fonts (runes/otf:font-data-read-u32 data 8)))
-        (setf coll-count num-fonts coll-idx collection-index)
         (when (>= collection-index num-fonts)
           (error 'unsupported-value
                  :description "Font index out of range in collection"
                  :actual-value collection-index
                  :expected-values (list num-fonts)))
-        (setf font-offset (runes/otf:font-data-read-u32 data (+ 12 (* collection-index 4))))))
+        (values (runes/otf:font-data-read-u32 data (+ 12 (* collection-index 4)))
+                num-fonts))))
 
+(defun open-font-loader-from-data (data &key (collection-index 0) input-stream)
+  ;; WOFF and WOFF2 ('wOFF', 'wOF2'): decode to an sfnt (or TTC) in memory first
+  (let ((decoder (when (>= (runes/otf:font-data-length data) 4)
+                   (case (runes/otf:font-data-read-u32 data 0)
+                     (#x774F4646 #'runes/otf:decode-woff1)
+                     (#x774F4632 #'runes/otf:decode-woff2)))))
+    (when decoder
+      (return-from open-font-loader-from-data
+        (open-font-loader-from-data (funcall decoder data)
+                                    :collection-index collection-index
+                                    :input-stream input-stream))))
+  (multiple-value-bind (font-offset collection-count) (collection-font-offset data collection-index)
     (let ((sfnt-version (runes/otf:font-data-read-u32 data font-offset)))
       (unless (member sfnt-version *sfnt-versions*)
         (error 'bad-magic
                :location (format nil "table directory at offset ~D" font-offset)
                :actual-value sfnt-version
                :expected-values *sfnt-versions*)))
-
     (let* ((dir (runes/otf:read-table-directory data font-offset))
            (num-tables (runes/otf:table-directory-num-tables dir))
            (loader (make-instance 'font-loader
                                   :font-data data
                                   :input-stream input-stream
                                   :table-count num-tables
-                                  :collection-font-count coll-count
-                                  :collection-font-index coll-idx)))
-
-      ;; Register table-info
+                                  :collection-font-count collection-count
+                                  :collection-font-index (when collection-count collection-index))))
       (dotimes (i num-tables)
         (let* ((rec (runes/otf:table-directory-table-records-ref dir i))
-               (tag (runes/otf:table-record-tag rec))
-               (t-off (runes/otf:table-record-offset rec))
-               (t-len (runes/otf:table-record-length rec)))
+               (tag (runes/otf:table-record-tag rec)))
           (setf (gethash tag (tables loader))
-                (make-instance 'table-info :name tag :offset t-off :size t-len))))
-
-      ;; 1. MAXP table
-      (let ((info (table-info "maxp" loader)))
-        (when info
-          (let ((maxp (runes/otf:read-maxp data (offset info) (size info))))
-            (setf (glyph-count loader) (runes/otf:maxp-num-glyphs maxp)))))
-
-      ;; 2. HEAD table
-      (let ((info (table-info "head" loader)))
-        (when info
-          (let ((head (runes/otf:read-head data (offset info) (size info))))
-            (setf (units/em loader) (runes/otf:head-units-per-em head)
-                  (bounding-box loader) (vector (runes/otf:head-x-min head)
-                                               (runes/otf:head-y-min head)
-                                               (runes/otf:head-x-max head)
-                                               (runes/otf:head-y-max head))
-                  (loca-offset-format loader) (if (zerop (runes/otf:head-index-to-loc-format head))
-                                                  :short
-                                                  :long)))))
-
-      ;; 3. HHEA & HMTX tables
-      (let ((hhea-info (table-info "hhea" loader))
-            (hmtx-info (table-info "hmtx" loader)))
-        (when hhea-info
-          (let* ((hhea (runes/otf:read-hhea data (offset hhea-info) (size hhea-info)))
-                 (num-h-metrics (runes/otf:hhea-number-of-h-metrics hhea)))
-            (setf (ascender loader) (runes/otf:hhea-ascender hhea)
-                  (descender loader) (runes/otf:hhea-descender hhea)
-                  (line-gap loader) (runes/otf:hhea-line-gap hhea)
-                  (max-width loader) (runes/otf:hhea-advance-width-max hhea))
-            (when hmtx-info
-              (runes/otf:read-hmtx data (offset hmtx-info) (size hmtx-info))
-              (multiple-value-bind (widths lsbs)
-                  (read-long-metrics data (offset hmtx-info) (size hmtx-info)
-                                     num-h-metrics (glyph-count loader))
-                (setf (advance-widths loader) widths
-                      (left-side-bearings loader) lsbs))))))
-
-      ;; 4. VHEA & VMTX tables (with horizontal metrics fallback)
-      (let ((vhea-info (table-info "vhea" loader))
-            (vmtx-info (table-info "vmtx" loader)))
-        (cond
-          ((and vhea-info vmtx-info)
-           (let* ((vhea (runes/otf:read-vhea data (offset vhea-info) (size vhea-info)))
-                  (num-v-metrics (runes/otf:vhea-number-of-long-ver-metrics vhea)))
-             (runes/otf:read-vmtx data (offset vmtx-info) (size vmtx-info))
-             (setf (vascender loader) (runes/otf:vhea-ascender vhea)
-                   (vdescender loader) (runes/otf:vhea-descender vhea))
-             (multiple-value-bind (heights tsbs)
-                 (read-long-metrics data (offset vmtx-info) (size vmtx-info)
-                                    num-v-metrics (glyph-count loader))
-               (setf (advance-heights loader) heights
-                     (top-side-bearings loader) tsbs))))
-          (t
-           (setf (vhea-missing-p loader) t
-                 (vmtx-missing-p loader) t)
-           (let ((dx (/ (max-width loader) 2)))
-             (setf (vascender loader) dx
-                   (vdescender loader) (- dx)
-                   (advance-heights loader) (vector (- (ascender loader) (descender loader))))))))
-
-      ;; 5. POST table
-      (let ((info (table-info "post" loader)))
-        (when info
-          (let ((post (runes/otf:read-post data (offset info) (size info))))
-            (setf (italic-angle loader) (runes/otf:post-italic-angle post)
-                  (fixed-pitch-p loader) (not (zerop (runes/otf:post-is-fixed-pitch post)))
-                  (underline-position loader) (runes/otf:post-underline-position post)
-                  (underline-thickness loader) (runes/otf:post-underline-thickness post)))))
-
-      ;; 6. NAME table
-      (let ((info (table-info "name" loader)))
-        (when info
-          (let* ((name-tbl (runes/otf:read-name data (offset info) (size info)))
-                 (storage (+ (offset info) (runes/otf:name-storage-offset name-tbl)))
-                 (cnt (runes/otf:name-count name-tbl))
-                 (entries (make-array cnt)))
-            (dotimes (i cnt)
-              (let* ((nrec (runes/otf:name-name-record-ref name-tbl i))
-                     (plat (runes/otf:name-record-platform-id nrec))
-                     (enc (runes/otf:name-record-encoding-id nrec))
-                     (lang (runes/otf:name-record-language-id nrec))
-                     (nid (runes/otf:name-record-name-id nrec))
-                     (slen (runes/otf:name-record-length nrec))
-                     (soff (+ storage (runes/otf:name-record-string-offset nrec)))
-                     (val (decode-name-string-from-fd data soff slen plat enc)))
-                (setf (aref entries i)
-                      (make-instance 'name-entry
-                                     :font-loader loader
-                                     :platform-id plat
-                                     :encoding-id enc
-                                     :language-id lang
-                                     :name-id nid
-                                     :value val))))
-            (setf (name-entries loader) entries))))
-
-      ;; 7. CMAP table
-      (let ((info (table-info "cmap" loader)))
-        (when info
-          (let ((cmap (runes/otf:read-cmap data (offset info) (size info))))
-            (setup-cmap-lookup loader cmap (offset info) (size info)))))
-
-      ;; 8. KERN table
-      (let ((info (table-info "kern" loader)))
-        (when info
-          (handler-case (load-kern-table loader (offset info) (size info))
-            (runes/otf:font-out-of-bounds-error () nil))))
-
-      ;; Initialize glyph cache
-      (setf (glyph-cache loader)
-            (make-array (glyph-count loader) :initial-element nil))
-
+                (make-instance 'table-info :name tag
+                                           :offset (runes/otf:table-record-offset rec)
+                                           :size (runes/otf:table-record-length rec)))))
+      ;; In this order: 'hmtx' needs the glyph count from 'maxp', and the
+      ;; made-up vertical metrics need 'hhea'.
+      (load-maxp loader)
+      (load-head loader)
+      (load-horizontal-metrics loader)
+      (load-vertical-metrics loader)
+      (load-post loader)
+      (load-names loader)
+      (load-cmap loader)
+      (load-kern loader)
+      (setf (glyph-cache loader) (make-array (glyph-count loader) :initial-element nil))
       loader)))
 
 (defun open-font-loader (thing &key (collection-index 0))
