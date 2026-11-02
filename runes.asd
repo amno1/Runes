@@ -71,6 +71,20 @@
                (:file "glyphs")
                (:file "render")))
 
+(asdf:defsystem #:runes/wayland
+  :description "Runes text blended into client-side pixels, as on Wayland, until Antron draws text."
+  :author "Arthur Miller and contributors (see AUTHORS)"
+  :license "LGPL-2.1-or-later (see LICENSE and COPYING)"
+  :homepage "https://github.com/amno1/runes"
+  :version "2.0.0"
+  :depends-on (#:runes
+               #:runes/raster
+               #:bordeaux-threads)
+  :pathname "src/wayland/"
+  :serial t
+  :components ((:file "package")
+               (:file "text")))
+
 ;;; ---- runes/otf: the OpenType reader (formerly zpb-otf), in otf/ --------------
 ;;;
 ;;; MIT licensed (otf/LICENSE).  The Brotli and zlib decoders that WOFF2 and
