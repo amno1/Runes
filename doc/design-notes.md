@@ -1,9 +1,9 @@
 Runes — changes from clx-truetype
 =================================
 
-Runes started as clxcb-truetype: clx-truetype ported from CLX to XCB (clxcb).  The font
-class, font cache, metrics and rasterization are clx-truetype's and work
-as before; the changes are in how the library talks to the X server.
+Runes started as clxcb-truetype: clx-truetype ported from CLX to XCB (clxcb).
+The font class, font cache, metrics and rasterization are clx-truetype's and
+work as before. The changes are in how the library talks to the X server.
 
 This part of Runes is distributed under the LGPL, version 2.1 or later,
 where clx-truetype was published under the MIT license; LICENSE and
@@ -14,12 +14,12 @@ Drawables, and who frees what
 
 In the X protocol a DRAWABLE is a type of XID, naming a window or a pixmap;
 the resources the server keeps are windows, pixmaps and pictures, and
-whoever creates a resource is responsible for freeing it.  Runes
-follows that rule:
+whoever creates a resource is responsible for freeing it. Runes
+follows that too:
 
   * A WINDOW or a PIXMAP is the library's handle on a window or pixmap
     that text is drawn on; the class says which, and so which request
-    frees it.  The RENDER picture made for drawing is the library's, and
+    frees it. The RENDER picture made for drawing is the library's, so
     the library always frees it.
 
   * The window or pixmap itself is freed only when its creator hands it
@@ -34,21 +34,21 @@ follows that rule:
     alone, owned or not.  DESTROY-DRAWABLE also frees it when owned.
 
 clx-truetype's WINDOW and PIXMAP always freed the window or pixmap when
-destroyed or dropped -- so a wrapper around an application's own window,
+destroyed or dropped. A wrapper around an application's own window,
 collected by the garbage collector, would destroy that window behind the
-application's back.  Now they own it only when told so.  Code that relied
-on the old behaviour adds :OWNED T.  DRAWABLE is their abstract base.
+application's back. Now they own it only when told so. Code that relied
+on the old behaviour adds :OWNED T. DRAWABLE is their abstract base.
 
 Text through glyph sets
 -----------------------
 
-DRAW-TEXT and DRAW-TEXT-LINE draw through RENDER glyph sets, as Xft does.
-Each glyph of a face, at one size and DPI, is rasterized once and uploaded
-once per connection; a string is then one small request naming its glyphs,
-a few bytes per character, however often it is drawn.  clx-truetype
-rasterized every string as a whole and uploaded its alpha mask on every
-call -- about 9 KB for one 24-pixel line of 300 pixels, which over ssh -X
-crossed the network each time.  Measured on Xephyr, a 14-pixel label:
+DRAW-TEXT and DRAW-TEXT-LINE draw through RENDER glyph sets, as Xft does.  Each
+glyph of a face, at one size and DPI, is rasterized once and uploaded once per
+connection. A string is then one small request naming its glyphs, a few bytes
+per character, however often it is drawn. clx-truetype rasterized every string
+as a whole and uploaded its alpha mask on every call. It is about 9 KB for one
+24-pixel line of 300 pixels, which over ssh -X crossed the network each time.
+Measured on Xephyr, a 14-pixel label:
 
     repeated string     280 us  ->  8.5 us
     new string each time 1150 us ->  8.8 us
