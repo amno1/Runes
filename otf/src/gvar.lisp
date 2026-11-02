@@ -123,28 +123,34 @@
 (defun read-run-value (c width)
   (if (zerop width) 0 (gc-int c width t)))
 
+(defmacro do-delta-runs ((value width) c continue &body body)
+  "While CONTINUE is true, read a run of deltas at cursor C and run BODY for
+each of its values, with VALUE bound to the delta and WIDTH to the run's
+byte width (0 for a run of zeros).  Runs are always read whole."
+  (let ((run (gensym "RUN")) (i (gensym "I")))
+    `(loop while ,continue
+           do (multiple-value-bind (,run ,width) (read-delta-run ,c)
+                (declare (ignorable ,width))
+                (dotimes (,i ,run)
+                  (let ((,value (read-run-value ,c ,width)))
+                    ,@body))))))
+
 (defun read-dense (c count fn)
   "Call FN with each index below COUNT and its delta; runs must fit exactly."
   (let ((cur 0))
-    (loop while (< cur count)
-          do (multiple-value-bind (run width) (read-delta-run c)
-               (when (> (+ cur run) count) (gvar-fail))
-               (dotimes (i run)
-                 (funcall fn (+ cur i) (read-run-value c width)))
-               (incf cur run)))))
+    (do-delta-runs (delta width) c (< cur count)
+      (when (>= cur count) (gvar-fail))   ; a run past COUNT
+      (funcall fn cur delta)
+      (incf cur))))
 
 (defun read-sparse (c points count fn)
   "Call FN with each of the COUNT POINTS and its delta, as read_sparse_deltas does."
-  (let ((cur 0) (next 0))
-    (loop while (< cur count)
-          do (multiple-value-bind (run width) (read-delta-run c)
-               (dotimes (i run)
-                 (cond ((< next (length points))
-                        (funcall fn (aref points next) (read-run-value c width))
-                        (incf next))
-                       ;; A zero run needs a point for every value.
-                       ((zerop width) (gvar-fail))))
-               (incf cur run)))))
+  (let ((cur 0))
+    (do-delta-runs (delta width) c (< cur count)
+      (cond ((< cur (length points)) (funcall fn (aref points cur) delta))
+            ;; A zero run needs a point for every value.
+            ((zerop width) (gvar-fail)))
+      (incf cur))))
 
 ;;; Tuples
 
@@ -345,6 +351,25 @@ and ENDS its contour end points. NIL if the data is malformed."
 
 ;;; Composite glyphs
 
+(defun component-deltas (c points)
+  "A tuple's component positions, as a list, and its deltas, read at cursor
+C: an x delta for each position, then as many y deltas."
+  (if (eq points :all)
+      ;; Every delta in the data, half of them x and half y.
+      (let ((all (read-all-deltas c)))
+        (values (loop for i below (floor (length all) 2) collect i) all))
+      (values (coerce points 'list) (read-n-deltas c (* 2 (length points))))))
+
+(defun add-component-deltas (positions deltas scalar dx dy)
+  "Add the scaled DELTAS of POSITIONS, as COMPONENT-DELTAS gives them, to DX
+and DY.  Positions past the components, or without a y delta, are skipped."
+  (loop with half = (length positions)
+        for position in positions
+        for i from 0
+        when (and (< position (length dx)) (< (+ half i) (length deltas)))
+          do (add-scaled-delta dx position (aref deltas i) scalar)
+             (add-scaled-delta dy position (aref deltas (+ half i)) scalar)))
+
 (defun composite-glyph-deltas (data coords count)
   "16.16 deltas for the COUNT components and phantom points of a composite
 glyph, as two vectors; NIL if the data is malformed."
@@ -352,22 +377,10 @@ glyph, as two vectors; NIL if the data is malformed."
         (dy (make-array count :initial-element 0)))
     (handler-case
         (progn
-          (map-active-tuples
-           data coords
-           (lambda (scalar points c)
-             (multiple-value-bind (positions values)
-                 (if (eq points :all)
-                     ;; Every delta in the data: x deltas, then as many y deltas.
-                     (let ((all (read-all-deltas c)))
-                       (values (loop for i below (floor (length all) 2) collect i) all))
-                     (values (coerce points 'list) (read-n-deltas c (* 2 (length points)))))
-               (let ((half (length positions)))
-                 (loop for position in positions
-                       for i from 0
-                       when (and (< position count) (< (+ half i) (length values)))
-                         do (setf (aref dx position) (f+ (aref dx position) (f* (fixed-from-int (aref values i)) scalar))
-                                  (aref dy position) (f+ (aref dy position)
-                                                         (f* (fixed-from-int (aref values (+ half i))) scalar))))))))
+          (map-active-tuples data coords
+                             (lambda (scalar points c)
+                               (multiple-value-bind (positions deltas) (component-deltas c points)
+                                 (add-component-deltas positions deltas scalar dx dy))))
           (values dx dy))
       (gvar-data-error () nil))))
 
@@ -375,19 +388,16 @@ glyph, as two vectors; NIL if the data is malformed."
   "Up to LIMIT deltas from C, fewer if the data ends."
   (let ((out (make-array limit :fill-pointer 0)))
     (handler-case
-        (loop while (< (fill-pointer out) limit)
-              do (multiple-value-bind (run width) (read-delta-run c)
-                   (dotimes (i run)
-                     (let ((v (read-run-value c width)))
-                       (when (< (fill-pointer out) limit) (vector-push v out))))))
+        (do-delta-runs (delta width) c (< (fill-pointer out) limit)
+          (when (< (fill-pointer out) limit) (vector-push delta out)))
       (gvar-data-error () nil))
     out))
 
 (defun read-all-deltas (c)
+  "Every delta from C to the end of its data."
   (let ((out (make-array 16 :adjustable t :fill-pointer 0)))
     (handler-case
-        (loop while (< (gc-pos c) (gc-end c))
-              do (multiple-value-bind (run width) (read-delta-run c)
-                   (dotimes (i run) (vector-push-extend (read-run-value c width) out))))
+        (do-delta-runs (delta width) c (< (gc-pos c) (gc-end c))
+          (vector-push-extend delta out))
       (gvar-data-error () nil))
     out))
