@@ -80,3 +80,32 @@ start carried over, as my wordcount program carries its previous byte.
 One caveat about length depending only on the first byte: hintmask and cntrmask
 (19 and 20) are followed by mask bytes, and how many depends on the number of
 stem hints declared earlier in the charstring.
+
+### Why it is not in the interpreter
+
+The speedups above are for tokenizing alone: finding where each token
+starts. The charstring interpreter does much more per token: it decodes
+the number, pushes it on the stack, runs the operator, and sends points
+through the outline filter to the sink. Measured on the interpreter
+(`cff-draw-glyph`, every glyph, null sink):
+
+| Interpreter (Noto Sans CJK)  | MB/s  |
+|------------------------------|-------|
+| Original port                | 17.9  |
+| Typed, inlined, struct sink¹ | 77.6  |
+| Position in a local²         | 78.8  |
+| Scalar tokenizer alone       | ~440  |
+
+1. Typed fixed point math, stack and cursor, `emit-curves` as a macro, one
+   structure for the transform and the degenerate-command filter, hints
+   skipped when the sink drops them.
+2. The main loop keeps the byte position in a local variable and decodes
+   numbers inline.
+
+Reading bytes and decoding numbers turned out to be a few percent of the
+interpreter's time; keeping the position in a register gained 1.5–3%.
+Most of the time is spent pushing operands, in the operator bodies, and
+in the outline filter. Finding token boundaries is only part of those few
+percent, so even an infinitely fast tokenizer would speed up the
+interpreter by a percent or two. The hintmask caveat and subroutine calls
+would also complicate it. The tokenizer stays an experiment.
