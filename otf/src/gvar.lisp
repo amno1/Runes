@@ -184,41 +184,49 @@ Each axis multiplies the scalar by how far COORDS lies towards its peak."
                     (t (setf scalar (scale scalar (- end coord) (- end p))))))))
           finally (return (unless (zerop scalar) scalar)))))
 
+(defun read-tuple-header (data pos)
+  "The tuple variation header at POS: its data size, its tuple index field,
+its peak tuple (NIL if it names a shared tuple that does not exist), its
+intermediate region as (start . end) or NIL, and the position after it."
+  (let* ((fd (glyph-var-data-fd data))
+         (axis-count (glyph-var-data-axis-count data))
+         (tuple-size (* 2 axis-count))
+         (size (runes/otf:font-data-read-u16 fd pos))
+         (index (runes/otf:font-data-read-u16 fd (+ pos 2)))
+         (p (+ pos 4)))
+    (flet ((next-tuple ()
+             (prog1 (read-tuple fd p axis-count) (incf p tuple-size))))
+      (let* ((peak (if (logbitp 15 index)
+                       (next-tuple)
+                       (let ((shared (logand index #x0FFF)))
+                         (when (< shared (glyph-var-data-shared-tuple-count data))
+                           (read-tuple fd (+ (glyph-var-data-shared-tuples data) (* shared tuple-size))
+                                       axis-count)))))
+             ;; Start, then end: arguments are evaluated left to right.
+             (intermediate (when (logbitp 14 index)
+                             (cons (next-tuple) (next-tuple)))))
+        (values size index peak intermediate p)))))
+
 (defun map-active-tuples (data coords fn)
   "Call FN with (scalar points data-cursor) for each tuple that applies at
 COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
-  (let* ((fd (glyph-var-data-fd data))
-         (axis-count (glyph-var-data-axis-count data))
-         (hpos (glyph-var-data-headers data))
-         (dpos (glyph-var-data-serialized data))
-         (dend (glyph-var-data-serialized-end data)))
-    (dotimes (i (glyph-var-data-tuple-count data))
-      (let* ((size (runes/otf:font-data-read-u16 fd hpos))
-             (index (runes/otf:font-data-read-u16 fd (+ hpos 2)))
-             (p (+ hpos 4))
-             (peak (if (logbitp 15 index)
-                       (prog1 (read-tuple fd p axis-count) (incf p (* 2 axis-count)))
-                       (let ((shared (logand index #x0FFF)))
-                         (when (< shared (glyph-var-data-shared-tuple-count data))
-                           (read-tuple fd (+ (glyph-var-data-shared-tuples data) (* shared 2 axis-count))
-                                       axis-count)))))
-             (intermediate (when (logbitp 14 index)
-                             (prog1 (cons (read-tuple fd p axis-count)
-                                          (read-tuple fd (+ p (* 2 axis-count)) axis-count))
-                               (incf p (* 4 axis-count)))))
-             (start dpos))
-        (setf hpos p
-              dpos (+ dpos size))
+  ;; The headers come one after another, and so do the tuples' data.
+  (loop for i below (glyph-var-data-tuple-count data)
+        for header = (glyph-var-data-headers data) then next-header
+        for (size index peak intermediate next-header)
+          = (multiple-value-list (read-tuple-header data header))
+        for start = (glyph-var-data-serialized data) then end
+        for end = (+ start size)
         ;; Tuple data past the end of the glyph's data ends the iteration.
-        (when (> dpos dend) (return))
-        (let ((scalar (and peak (gvar-tuple-scalar peak intermediate coords))))
-          (when scalar
-            (let ((c (make-gvar-cursor :fd fd :pos start :end dpos)))
-              (funcall fn scalar
-                       (if (logbitp 13 index)
-                           (read-packed-points c)
-                           (or (glyph-var-data-shared-points data) (gvar-fail)))
-                       c))))))))
+        until (> end (glyph-var-data-serialized-end data))
+        do (let ((scalar (and peak (gvar-tuple-scalar peak intermediate coords))))
+             (when scalar
+               (let ((c (make-gvar-cursor :fd (glyph-var-data-fd data) :pos start :end end)))
+                 (funcall fn scalar
+                          (if (logbitp 13 index)
+                              (read-packed-points c)
+                              (or (glyph-var-data-shared-points data) (gvar-fail)))
+                          c))))))
 
 (defun scaled-delta (delta scalar)
   (if (= scalar #x10000)
@@ -229,44 +237,48 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
 
 (defun interpolate-untouched (xs ys out-x out-y touched start end)
   "Infer deltas for the untouched points of the contour START..END (IUP)."
-  (let ((referenced (loop for i from start to end when (aref touched i) collect i)))
-    (when referenced
-      (labels ((interp (from to ref1 ref2)
-                 (when (< from to)
-                   (interp-coord xs out-x from to ref1 ref2)
-                   (interp-coord ys out-y from to ref1 ref2)))
-               (interp-coord (in out from to ref1 ref2)
-                 (multiple-value-bind (lo hi)
-                     (if (> (aref in ref1) (aref in ref2)) (values ref2 ref1) (values ref1 ref2))
-                   (let ((in1 (aref in lo)) (in2 (aref in hi))
-                         (out1 (aref out lo)) (out2 (aref out hi)))
-                     ;; References sharing a coordinate but moved apart leave it alone.
-                     (when (or (/= in1 in2) (= out1 out2))
-                       (let ((scale (if (/= in1 in2) (f/ (f- out2 out1) (f- in2 in1)) 0))
-                             (d1 (f- out1 in1))
-                             (d2 (f- out2 in2)))
-                         (loop for i from from below to
-                               do (let ((coord (aref in i)))
-                                    (setf (aref out i)
-                                          (cond ((<= coord in1) (f+ coord d1))
-                                                ((>= coord in2) (f+ coord d2))
-                                                (t (f+ out1 (f* (f- coord in1) scale)))))))))))))
-        (let ((first (first referenced)) (last (first referenced)))
-          (dolist (next (rest referenced))
-            (interp (1+ last) next last next)
-            (setf last next))
-          (if (= last first)
-              ;; A single reference carries the whole contour with it.
-              (let ((dx (f- (aref out-x first) (aref xs first)))
-                    (dy (f- (aref out-y first) (aref ys first))))
-                (unless (and (zerop dx) (zerop dy))
-                  (loop for i from start to end
-                        unless (= i first)
-                          do (setf (aref out-x i) (f+ (aref out-x i) dx)
-                                   (aref out-y i) (f+ (aref out-y i) dy)))))
-              (progn
-                (interp (1+ last) (1+ end) last first)
-                (interp start first last first))))))))
+  (labels ((interp-coord (in out from to ref1 ref2)
+             ;; Points FROM below TO, between references REF1 and REF2 along
+             ;; the contour, in one coordinate: IN the original values, OUT
+             ;; the moved ones.
+             (let ((lo ref1) (hi ref2))
+               (when (> (aref in lo) (aref in hi)) (rotatef lo hi))
+               (let ((in1 (aref in lo)) (in2 (aref in hi))
+                     (out1 (aref out lo)) (out2 (aref out hi)))
+                 ;; References sharing a coordinate but moved apart leave it alone.
+                 (when (or (/= in1 in2) (= out1 out2))
+                   (loop with scale = (if (/= in1 in2) (f/ (f- out2 out1) (f- in2 in1)) 0)
+                         for i from from below to
+                         for coord = (aref in i)
+                         do (setf (aref out i)
+                                  (cond ((<= coord in1) (f+ coord (f- out1 in1)))
+                                        ((>= coord in2) (f+ coord (f- out2 in2)))
+                                        (t (f+ out1 (f* (f- coord in1) scale))))))))))
+           (interp (from to ref1 ref2)
+             (interp-coord xs out-x from to ref1 ref2)
+             (interp-coord ys out-y from to ref1 ref2)))
+    (let ((refs (loop for i from start to end when (aref touched i) collect i)))
+      (cond
+        ((null refs))
+        ;; A single reference carries the whole contour with it.
+        ((null (rest refs))
+         (loop with ref = (first refs)
+               with dx = (f- (aref out-x ref) (aref xs ref))
+               with dy = (f- (aref out-y ref) (aref ys ref))
+               for i from start to end
+               unless (= i ref)
+                 do (setf (aref out-x i) (f+ (aref out-x i) dx)
+                          (aref out-y i) (f+ (aref out-y i) dy))))
+        (t
+         ;; Between each two references, then around the end of the contour:
+         ;; after the last one to the end, and from the start to the first.
+         (loop for (ref next) on refs
+               while next
+               do (interp (1+ ref) next ref next))
+         (let ((first (first refs))
+               (final (car (last refs))))
+           (interp (1+ final) (1+ end) final first)
+           (interp start first final first)))))))
 
 (defun simple-glyph-deltas (data coords xs ys ends)
   "16.16 deltas for every point of a simple glyph, phantom points included,
