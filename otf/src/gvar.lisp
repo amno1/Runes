@@ -12,6 +12,7 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (inline f+ f- f* f/ fixed-from-int fixed-round))
 (defun f+ (a b) (runes/otf/charstring::fixed+ a b))
 (defun f- (a b) (runes/otf/charstring::fixed- a b))
 (defun f* (a b) (runes/otf/charstring::fixed* a b))
@@ -26,15 +27,23 @@
 
 ;;; Reading bytes
 
-(defstruct (gvar-cursor (:conc-name gc-)) fd pos end)
+(defstruct (gvar-cursor (:conc-name gc-))
+  (fd nil :type runes/otf:font-data)
+  (pos 0 :type fixnum)
+  (end 0 :type fixnum))
+
+(declaim (inline gc-u8 gc-int))
 
 (defun gc-u8 (c)
+  (declare (gvar-cursor c))
   (when (>= (gc-pos c) (gc-end c)) (gvar-fail))
   (prog1 (runes/otf:font-data-read-u8 (gc-fd c) (gc-pos c)) (incf (gc-pos c))))
 
 (defun gc-int (c bytes signed)
+  (declare (gvar-cursor c) (type (integer 1 4) bytes))
   (when (> (+ (gc-pos c) bytes) (gc-end c)) (gvar-fail))
   (let ((v 0))
+    (declare (type (unsigned-byte 32) v))
     (dotimes (i bytes)
       (setf v (logior (ash v 8) (runes/otf:font-data-read-u8 (gc-fd c) (+ (gc-pos c) i)))))
     (incf (gc-pos c) bytes)
@@ -114,13 +123,17 @@
                        finally (incf seen run))
               finally (return points)))))
 
+(declaim (inline read-delta-run read-run-value scaled-delta add-scaled-delta))
+
 (defun read-delta-run (c)
   "The next run at C, as two values: the count and the byte width (0 for zeros)."
+  (declare (gvar-cursor c))
   (let ((control (gc-u8 c)))
     (values (1+ (logand control #x3F))
             (ecase (ash control -6) (0 1) (1 2) (2 0) (3 4)))))
 
 (defun read-run-value (c width)
+  (declare (gvar-cursor c) (type (member 0 1 2 4) width))
   (if (zerop width) 0 (gc-int c width t)))
 
 (defmacro do-delta-runs ((value width) c continue &body body)
@@ -235,6 +248,7 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
                           c))))))
 
 (defun scaled-delta (delta scalar)
+  (declare (type (signed-byte 32) delta scalar))
   (if (= scalar #x10000)
       (fixed-from-int delta)
       (f* (fixed-from-int delta) scalar)))
@@ -289,6 +303,7 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
            (interp start first final first)))))))
 
 (defun add-scaled-delta (vector i delta scalar)
+  (declare (simple-vector vector) (fixnum i))
   (setf (aref vector i) (f+ (aref vector i) (scaled-delta delta scalar))))
 
 (defun add-dense-deltas (c scalar dx dy)
