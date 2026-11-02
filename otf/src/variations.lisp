@@ -138,53 +138,68 @@ computed at the coordinates before any is added."
                 collect (if delta (add-avar2-delta c delta) c))))))
 
 (defun apply-segment-map (maps coord)
-  "COORD (16.16) mapped through one axis's segment map, as SegmentMaps::apply."
-  (let ((len (length maps)))
-    (flet ((from (i) (car (aref maps i)))
-           (to (i) (cdr (aref maps i))))
-      (cond
-        ((zerop len) coord)
-        ((= len 1) (+ (- coord (from 0)) (to 0)))
-        (t
-         (let ((start 0) (end len))
-           ;; Trim duplicate -1/+1 caps, as HarfBuzz does.
-           (when (and (= (from 0) #x-10000) (= (to 0) #x-10000) (= (from 1) #x-10000))
-             (incf start))
-           (when (and (= (from (1- end)) #x10000) (= (to (1- end)) #x10000) (= (from (- end 2)) #x10000))
-             (decf end))
-           (let ((i (loop for k from start below end when (= coord (from k)) return k)))
-             (if i
-                 (let ((j i))
-                   (loop while (and (< (1+ j) end) (= coord (from (1+ j)))) do (incf j))
-                   (cond ((= i j) (to i))
-                         ((= (+ i 2) j) (to (1+ i)))
-                         ((minusp coord) (to j))
-                         ((plusp coord) (to i))
-                         (t (if (< (abs (to i)) (abs (to j))) (to i) (to j)))))
-                 (let ((k (or (loop for k from start below end when (< coord (from k)) return k) end)))
-                   (cond
-                     ((= k start) (+ (- coord (from start)) (to start)))
-                     ((= k end) (+ (- coord (from (1- end))) (to (1- end))))
-                     (t (let ((bf (from (1- k))) (bt (to (1- k))) (af (from k)) (at (to k)))
-                          (runes/otf/charstring::fixed+
-                           bt (runes/otf/charstring::fixed-mul-div
-                               (runes/otf/charstring::fixed- at bt)
-                               (runes/otf/charstring::fixed- coord bf)
-                               (runes/otf/charstring::fixed- af bf)))))))))))))))
+  "COORD (16.16) mapped through one axis's segment map, a vector of (from
+. to) pairs, as Fontations' SegmentMaps::apply, which follows HarfBuzz."
+  (labels ((from (i) (car (aref maps i)))
+           (to (i) (cdr (aref maps i)))
+           ;; COORD moved as pair I moves its from value
+           (shift (i) (+ (- coord (from i)) (to i))))
+    (case (length maps)
+      (0 coord)
+      (1 (shift 0))
+      (t
+       ;; Some fonts repeat the -1 -> -1 or 1 -> 1 caps; skip the repeat.
+       (let* ((end (length maps))
+              (start (if (and (= (from 0) #x-10000)
+                              (= (to 0) #x-10000)
+                              (= (from 1) #x-10000))
+                         1
+                         0))
+              (end (if (and (= (from (1- end)) #x10000)
+                            (= (to (1- end)) #x10000)
+                            (= (from (- end 2)) #x10000))
+                       (1- end)
+                       end))
+              (i (position coord maps :key #'car :start start :end end)))
+         (if i
+             ;; COORD is a from value: pairs I to J all have it.
+             (let ((j (1- (or (position coord maps :key #'car :test-not #'= :start i :end end)
+                              end))))
+               (cond ((= i j) (to i))
+                     ;; Three: the middle one.
+                     ((= j (+ i 2)) (to (1+ i)))
+                     ;; More or two: the one nearer 0 on the from side, and
+                     ;; at 0 the one with the smaller to value.
+                     ((minusp coord) (to j))
+                     ((plusp coord) (to i))
+                     ((< (abs (to i)) (abs (to j))) (to i))
+                     (t (to j))))
+             ;; Between from values: interpolate between the pairs around
+             ;; COORD, or shift by the first or last pair outside them.
+             (let ((k (or (position-if (lambda (from) (< coord from)) maps
+                                       :key #'car :start start :end end)
+                          end)))
+               (cond ((= k start) (shift start))
+                     ((= k end) (shift (1- end)))
+                     (t (runes/otf/charstring::fixed+
+                         (to (1- k))
+                         (runes/otf/charstring::fixed-mul-div
+                          (runes/otf/charstring::fixed- (to k) (to (1- k)))
+                          (runes/otf/charstring::fixed- coord (from (1- k)))
+                          (runes/otf/charstring::fixed- (from k) (from (1- k))))))))))))))
 
 (defun normalize-coordinates (loader user-coordinates)
   "Normalized coordinates (reals in [-1, 1], one per axis) for
 USER-COORDINATES, an alist of axis tag to user value."
-  (let* ((axes (fvar-axes loader))
-         (coords (make-list (length axes) :initial-element 0)))
-    ;; Every axis with the tag is set, to permit non-linear interpolation.
-    (loop for (tag . value) in user-coordinates
-          do (loop for (axis-tag min default max) in axes
-                   for cell on coords
-                   when (string= tag axis-tag)
-                     do (setf (car cell)
-                              (normalize-axis-value (runes/otf/charstring:float->fixed value)
-                                                    min default max))))
+  (let ((coords
+          ;; Every axis with the tag is set, to permit non-linear
+          ;; interpolation; a tag given twice takes its last value.
+          (loop for (tag min default max) in (fvar-axes loader)
+                for setting = (find tag user-coordinates :key #'car :test #'string= :from-end t)
+                collect (if setting
+                            (normalize-axis-value (runes/otf/charstring:float->fixed (cdr setting))
+                                                  min default max)
+                            0))))
     (multiple-value-bind (segment-maps maps-end) (avar-segment-maps loader)
       (loop for maps in segment-maps
             for cell on coords
