@@ -29,6 +29,7 @@
 (defun read-point-flags (fd pos n)
   "The N point flags at POS, a flag with the repeat bit followed by its
 repeat count; and the position after them."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos) (fixnum n))
   (let ((flags (make-array n :element-type '(unsigned-byte 8)))
         (i 0))
     (loop while (< i n)
@@ -47,6 +48,8 @@ repeat count; and the position after them."
 (defun read-simple-points (fd pos contour-count)
   "End points, x and y coordinates and on-curve flags of the simple glyph
 whose contour count is at POS - 10, as four vectors."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos)
+           (type (unsigned-byte 16) contour-count))
   (let ((ends (make-array contour-count)))
     (dotimes (i contour-count)
       (setf (aref ends i) (runes/otf:font-data-read-u16 fd (+ pos (* 2 i)))))
@@ -61,7 +64,9 @@ whose contour count is at POS - 10, as four vectors."
         (flet ((coordinates (out short-bit same-bit)
                  ;; Each a byte (sign from SAME-BIT), the previous value
                  ;; (SAME-BIT without SHORT-BIT), or a word.
+                 (declare (simple-vector out) (type (integer 0 7) short-bit same-bit))
                  (let ((current 0))
+                   (declare (fixnum current))
                    (dotimes (j n)
                      (let ((flag (aref flags j)))
                        (incf current
@@ -276,12 +281,16 @@ or the distance that moves its point ARG2 onto the glyph's point ARG1."
     (values out phantom)))
 
 (defun outline-points->contours (out)
-  (let ((start 0))
+  (let ((xs (op-xs out)) (ys (op-ys out)) (on (op-on out))
+        (start 0))
+    (declare (fixnum start))
     (map 'vector
          (lambda (end)
-           (prog1 (coerce (loop for i from start to end
-                                collect (make-control-point (aref (op-xs out) i) (aref (op-ys out) i)
-                                                            (aref (op-on out) i)))
-                          'simple-vector)
-             (setf start (1+ end))))
+           (declare (fixnum end))
+           (let ((contour (make-array (max 0 (- (1+ end) start)))))
+             (loop for i of-type fixnum from start to end
+                   for j of-type fixnum from 0
+                   do (setf (svref contour j) (make-control-point (aref xs i) (aref ys i) (aref on i))))
+             (setf start (1+ end))
+             contour))
          (op-ends out))))
