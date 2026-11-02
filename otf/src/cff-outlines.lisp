@@ -279,6 +279,28 @@ contours are approximated only now: CUBIC-CONTOURS does not need them."
 
 ;;; The exact outline of any glyph
 
+(defun quadratic-contour->cubic (contour)
+  "The commands of a TrueType CONTOUR, its quadratic curves as cubics."
+  (let ((commands (make-array 8 :adjustable t :fill-pointer 0))
+        (moved nil))
+    (do-contour-segments (p0 p1 p2) contour
+      (unless moved
+        (vector-push-extend (list :move (x p0) (y p0)) commands)
+        (setf moved t))
+      (vector-push-extend
+       (if p1
+           ;; Degree elevation: the cubic with controls two thirds of the
+           ;; way to P1 is the same curve.
+           (list :curve
+                 (units (+ (x p0) (* 2/3 (- (x p1) (x p0)))))
+                 (units (+ (y p0) (* 2/3 (- (y p1) (y p0)))))
+                 (units (+ (x p2) (* 2/3 (- (x p1) (x p2)))))
+                 (units (+ (y p2) (* 2/3 (- (y p1) (y p2)))))
+                 (x p2) (y p2))
+           (list :line (x p2) (y p2)))
+       commands))
+    (copy-seq commands)))
+
 (defgeneric cubic-contours (glyph)
   (:documentation "The exact outline of GLYPH: a vector of contours, each a
 vector of (:move x y), (:line x y) and (:curve cx0 cy0 cx1 cy1 x y)
@@ -292,25 +314,4 @@ given as the cubic curves that trace them exactly."))
      (initialize-cff-outline glyph))
     (t
      (setf (%cubic-contours glyph)
-           (map 'vector
-                (lambda (contour)
-                  (let ((commands (make-array 8 :adjustable t :fill-pointer 0))
-                        (moved nil))
-                    (do-contour-segments (p0 p1 p2) contour
-                      (unless moved
-                        (vector-push-extend (list :move (x p0) (y p0)) commands)
-                        (setf moved t))
-                      (if p1
-                          ;; Degree elevation: the cubic with controls two
-                          ;; thirds of the way to P1 is the same curve.
-                          (vector-push-extend
-                           (list :curve
-                                 (units (+ (x p0) (* 2/3 (- (x p1) (x p0)))))
-                                 (units (+ (y p0) (* 2/3 (- (y p1) (y p0)))))
-                                 (units (+ (x p2) (* 2/3 (- (x p1) (x p2)))))
-                                 (units (+ (y p2) (* 2/3 (- (y p1) (y p2)))))
-                                 (x p2) (y p2))
-                           commands)
-                          (vector-push-extend (list :line (x p2) (y p2)) commands)))
-                    (copy-seq commands)))
-                (contours glyph))))))
+           (map 'vector #'quadratic-contour->cubic (contours glyph))))))
