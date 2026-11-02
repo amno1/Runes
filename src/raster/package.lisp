@@ -29,6 +29,6 @@
 
   (:documentation "A simple CPU text renderer: Runes fonts rasterized into
    A8 alpha maps, whole strings, or glyphs one at a time and cached per face.
-   The runes/xcb and runes/wayland bridges draw with it.  Two systems build
-   this package: runes/raster rasterizes with CL-VECTORS and CL-AA,
+   The runes/xcb and runes/wayland bridges draw with it. Two systems use this
+   package: runes/raster rasterizes with CL-VECTORS and CL-AA,
    runes/raster-antron with Antron's CPU rasterizer; load one of them."))
