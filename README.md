@@ -2,70 +2,39 @@
 
 Pure Common Lisp TrueType and OpenType font management: finding the
 installed fonts, loading and caching them, metrics, and line layout
-(formerly *clxcb-truetype*).
-
-## Systems & Packages
-
-- **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`, in
-  `src/core/`): the font manager.  Font discovery, the `FONT` class, open font
-  loaders, metrics, and glyph positions along a line (`layout-string`,
-  `font-decorations`).  It draws nothing and rasterizes nothing, and depends on
-  no graphics library.
-- **`runes/raster`** (package `RUNES/RASTER`, in `src/raster/`): rasterizes
-  strings and single glyphs to A8 alpha maps with CL-VECTORS and CL-AA
-  (`text-pixarray`, `layout-glyphs`, `glyph-image`).  A simple CPU text
-  renderer, which the two bridges draw with.
-- **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`, in
-  `src/xcb/`): text bridge for X11, drawing through XCB and RENDER glyph sets.
-- **`runes/wayland`** (package `RUNES/WAYLAND`, in `src/wayland/`): text bridge
-  for client-side rendering, as on Wayland: cached glyph runs blended into the
-  client's own pixels, through blend and fill functions the client passes, or
-  into a plain `#x00RRGGBB` buffer.
-- Backward compatibility: `cl-truetype.asd` (now `runes` plus `runes/raster`)
-  and `clxcb-truetype.asd` (`runes/xcb`) are provided as aliases.
-- **`runes/otf`** (package `RUNES/OTF`, nickname `OTF`, in `otf/`): the OpenType
-  loader, formerly zpb-otf. Bounds-checked readers for ~50 OpenType tables,
-  CFF/CFF2 charstrings (`runes/otf/charstring`), variable fonts, WOFF and
-  WOFF2. MIT licensed; see `otf/README.md`.
-- **`zpb-ttf`** (`zpb-ttf.asd`, sources in `otf/src/`): the zpb-ttf API on top
-  of `runes/otf`, kept so existing zpb-ttf programs work unchanged. BSD
-  2-Clause.
-- **`decompress`** (in `decompress/`): Brotli, zlib and raw deflate decoders
-  with no dependencies, usable on their own. MIT licensed; see
-  `decompress/README.md`.
-
-Antron renders text from `runes` alone: it takes fonts, metrics and
-layout from it and rasterizes the glyph outlines itself, so it does not
-use `runes/raster`.  The two bridges draw text for programs that do not
-use Antron.
+(formerly *clxcb-truetype* + *zpb-ttf*).
 
 ## Overview
 
-`runes` finds and opens fonts and answers questions about them: which
-families are installed, how big a string is, where each glyph of a line
-goes.  A renderer asks it for a line's layout -- each glyph index at its
-pen position -- and draws the glyphs itself, adding `RUNES:TARGET-DPI`
-methods for its own drawables.
+`runes` is meant to be a complete stop for managing and using fonts in Common
+Lisp. It aims to do Freetype's job of loading fonts and serving font metrics, as
+well as fontservers job of discovering and caching fonts. The aim is similar to
+Google's Fontations. The idea is that we should not have to call into foreign
+function libraries (Freetype, fontconfig, etc).
 
-`runes/raster` is a simple CPU text renderer: it turns glyph outlines,
-read by ZPB-TTF, into 8-bit coverage masks with CL-VECTORS and CL-AA, one
-glyph at a time and cached per face, and the bridges put them on screen:
+Provided are:
 
-- `runes/xcb` uploads each glyph once per connection into a RENDER
-  glyph set, and draws a string with one small request naming its
-  glyphs -- the way Xft draws text.  It re-exports the `RUNES` and
-  `RUNES/RASTER` API, so code written against `XCB-TRUETYPE` is
-  unchanged.
-- `runes/wayland` blends each glyph image into pixels the client owns,
-  and paints underlines, strikethroughs and overlines, through the
-  client's own blend and fill functions, so the client keeps its clipping
-  and its fast paths.
+- `runes/otf`, a font loader and parser, currently WIP. Missing is font hints
+   virtual machine, and some optimizations to CCF/CCF2 charstrings interpreter
 
-The X11 bridge is a port of [clx-truetype][clx-truetype] from CLX to
-XCB.  The rasterization pipeline (ZPB-TTF → CL-VECTORS → CL-AA) is
-reused unchanged; the X-specific code was rewritten against its own
-drawable wrappers, and the CLX cache layers were replaced with hash
-tables keyed on the connection.
+- `runes/raster` is a simple CPU text renderer. It turns glyph outlines, read by
+  ZPB-TTF, into 8-bit coverage masks with CL-VECTORS and CL-AA, one glyph at a
+  time and cached per face. To put them on the screen use one of the bridges,
+  either x11 via runes/xcb or Wayland via runes/wayland.
+
+- `runes/xcb` uploads each glyph once per connection into a RENDER glyph set,
+  and draws a string with one small request naming its glyphs, the way Xft draws
+  text. It re-exports the `RUNES` and `RUNES/RASTER` API, so code written
+  against `XCB-TRUETYPE` is unchanged.
+
+- `runes/wayland` blends each glyph image into pixels the client owns, and
+  paints underlines, strikethroughs and overlines, through the client's own
+  blend and fill functions, so the client keeps its clipping and its fast paths.
+
+The X11 bridge is a port of [clx-truetype][clx-truetype] from CLX to XCB. The
+rasterization pipeline (ZPB-TTF → CL-VECTORS → CL-AA) is reused unchanged. The
+X-specific code was rewritten against own drawable wrappers, and the CLX cache
+layers were replaced with hash tables keyed on the connection.
 
 [clx-truetype]: https://github.com/stumpwm/clx-truetype
 
@@ -73,7 +42,8 @@ tables keyed on the connection.
 
 - SBCL, preferably.  The library is developed and tested on SBCL.
   It uses portable libraries rather than SBCL-isms, so it may work on
-  other implementations, but I haven't tested them myself.
+  other implementations, but I haven't tested them myself. Decompression code used
+  for web fonts (woff1 and woff2) is much slower in portable Lisp than in SBCL.
 - ASDF 3.x for building the library
 - UIOP for portable getenv and directory/file listing
 - [zpb-ttf][zpb-ttf] — TrueType font parser (included, on top of `runes/otf`)
@@ -83,7 +53,7 @@ tables keyed on the connection.
 - `runes/raster` only: [cl-vectors][cl-vectors], [cl-paths-ttf][cl-paths-ttf],
   [cl-aa][cl-aa] for path representation and rasterization, and
   [trivial-garbage][trivial-garbage] for its per-font caches
-- `runes/xcb` only: [clxcb][clxcb], the XCB binding it draws through,
+- `runes/xcb` only: [clxcb][clxcb], the XCB binding to draw on X11
   and trivial-garbage for portable finalizers
 
 ## Quick start
@@ -264,9 +234,45 @@ depth-8 GC used for mask uploads, and glyph sets.  None keeps a
 connection alive; the server frees what they hold when the connection
 closes.
 
+
+## Systems & Packages
+
+- **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`, in
+  `src/core/`): the font manager.  Font discovery, the `FONT` class, open font
+  loaders, metrics, and glyph positions along a line (`layout-string`,
+  `font-decorations`).  It draws nothing and rasterizes nothing, and depends on
+  no graphics library.
+- **`runes/raster`** (package `RUNES/RASTER`, in `src/raster/`): rasterizes
+  strings and single glyphs to A8 alpha maps with CL-VECTORS and CL-AA
+  (`text-pixarray`, `layout-glyphs`, `glyph-image`).  A simple CPU text
+  renderer, which the two bridges draw with.
+- **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`, in
+  `src/xcb/`): text bridge for X11, drawing through XCB and RENDER glyph sets.
+- **`runes/wayland`** (package `RUNES/WAYLAND`, in `src/wayland/`): text bridge
+  for client-side rendering, as on Wayland: cached glyph runs blended into the
+  client's own pixels, through blend and fill functions the client passes, or
+  into a plain `#x00RRGGBB` buffer.
+- Backward compatibility: `cl-truetype.asd` (now `runes` plus `runes/raster`)
+  and `clxcb-truetype.asd` (`runes/xcb`) are provided as aliases.
+- **`runes/otf`** (package `RUNES/OTF`, nickname `OTF`, in `otf/`): the OpenType
+  loader, formerly zpb-otf. Bounds-checked readers for ~50 OpenType tables,
+  CFF/CFF2 charstrings (`runes/otf/charstring`), variable fonts, WOFF and
+  WOFF2. MIT licensed; see `otf/README.md`.
+- **`zpb-ttf`** (`zpb-ttf.asd`, sources in `otf/src/`): the zpb-ttf API on top
+  of `runes/otf`, kept so existing zpb-ttf programs work unchanged. BSD
+  2-Clause.
+- **`decompress`** (in `decompress/`): Brotli, zlib and raw deflate decoders
+  with no dependencies, usable on their own. MIT licensed; see
+  `decompress/README.md`.
+
+Antron renders text from `runes` alone: it takes fonts, metrics and
+layout from it and rasterizes the glyph outlines itself, so it does not
+use `runes/raster`.  The two bridges draw text for programs that do not
+use Antron.
+
 ## Differences from clx-truetype
 
-If you are migrating from the CLX version:
+If migrating from CLX:
 
 - **XCB, not CLX**:  No `xlib` symbols, no second connection type.
   Everything draws through a connection produced by `xcb:`.
