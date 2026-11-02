@@ -3,13 +3,11 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(in-package #:truetype)
+(in-package #:runes)
 
 (declaim (ftype (function (t) t)
                 font-string-bboxes
                 font-string-line-bboxes
-                font-string-alpha-maps
-                font-string-line-alpha-maps
                 font-underline
                 font-overline))
 

@@ -9,4 +9,4 @@
 (asdf:defsystem #:cl-truetype
   :description "Backward-compatibility alias for Runes."
   :version "1.0.0"
-  :depends-on (#:runes))
+  :depends-on (#:runes #:runes/raster))

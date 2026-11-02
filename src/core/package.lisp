@@ -1,4 +1,4 @@
-;;;; package.lisp — package definition and exports for truetype
+;;;; package.lisp — package definition and exports for runes
 ;;;; Copyright (C) 2012–2014 Michael Filonenko
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
@@ -59,27 +59,9 @@
    #:ymax
    #:*allow-fixed-pitch-p*
 
-   ;; Rasterization of whole strings
-   #:text-pixarray
-   #:text-pixarray-for-dpi
-   #:text-pixarray-for-drawable
-   #:text-line-pixarray
-   #:text-line-pixarray-for-dpi
-   #:text-line-pixarray-for-drawable
-
-   ;; Glyphs one at a time
-   #:glyph-image
-   #:glyph-image-width
-   #:glyph-image-height
-   #:glyph-image-stride
-   #:glyph-image-x
-   #:glyph-image-y
-   #:glyph-image-advance
-   #:glyph-image-data
-   #:layout-glyphs
-   #:layout-styled-glyphs
-   #:*glyph-images*
-   #:*max-glyph-faces*
+   ;; Layout
+   #:layout-string
+   #:font-decorations
 
    ;; For backends
    #:with-font-loader
@@ -87,12 +69,12 @@
    #:font-units->pixels-x
    #:font-units->pixels-y
    #:font-cache-fetch
+   #:make-font-cache
    #:font-string-bboxes
-   #:font-string-line-bboxes
-   #:font-decorations)
+   #:font-string-line-bboxes)
 
-  (:documentation "Pure Common Lisp TrueType fonts: discovery, metrics and
-   rasterization into alpha maps, for any drawing backend.  It draws
-   nothing itself; a backend (clxcb-truetype for XCB, or a client-side
-   renderer) puts the alpha maps on screen, and adds TARGET-DPI methods
-   for its own drawables."))
+  (:documentation "Pure Common Lisp TrueType and OpenType font management:
+   finding installed fonts, opening and caching them, metrics, and laying
+   out a line of glyphs.  It draws nothing and rasterizes nothing: a
+   renderer turns the glyphs into pixels (runes/raster for now), and adds
+   TARGET-DPI methods for its own drawables."))

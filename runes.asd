@@ -1,24 +1,24 @@
-;;;; runes.asd — system definition for Runes
+;;;; runes.asd — system definitions for Runes
 ;;;;
-;;;; Pure Common Lisp TrueType / OpenType font discovery, metrics,
-;;;; caching, and antialiased glyph rasterization.
+;;;; Pure Common Lisp TrueType / OpenType font management: discovery,
+;;;; loading, caching, metrics and layout.  Rasterization and drawing are
+;;;; in the systems after it: runes/raster, a simple CPU text renderer, and
+;;;; the runes/xcb and runes/wayland text bridges built on it.  Antron
+;;;; renders text from runes alone.
 
 (require :asdf)
 
 (in-package :asdf-user)
 
 (asdf:defsystem #:runes
-  :description "Pure Common Lisp TrueType/OpenType font metrics, discovery, and rasterization."
+  :description "Pure Common Lisp TrueType/OpenType font discovery, loading, caching, metrics and layout."
   :author "Michael Filonenko, Arthur Miller and contributors (see AUTHORS)"
   :license "LGPL-2.1-or-later (see LICENSE and COPYING)"
   :homepage "https://github.com/amno1/runes"
   :source-control (:git "https://github.com/amno1/runes.git")
   :bug-tracker "https://github.com/amno1/runes/issues"
-  :version "1.0.0"
+  :version "2.0.0"
   :depends-on (#:zpb-ttf
-               #:cl-vectors
-               #:cl-paths-ttf
-               #:cl-aa
                #:cacle
                #:bordeaux-threads
                #:uiop)
@@ -27,22 +27,43 @@
   :components ((:file "package")
                (:file "font-cache")
                (:file "metrics")
+               (:file "font")
+               (:file "layout")))
+
+(asdf:defsystem #:runes/raster
+  :description "A simple CPU text renderer: Runes fonts rasterized into A8 alpha maps with cl-vectors and cl-aa."
+  :author "Michael Filonenko, Arthur Miller and contributors (see AUTHORS)"
+  :license "LGPL-2.1-or-later (see LICENSE and COPYING)"
+  :homepage "https://github.com/amno1/runes"
+  :version "2.0.0"
+  :depends-on (#:runes
+               #:zpb-ttf
+               #:cl-vectors
+               #:cl-paths-ttf
+               #:cl-aa
+               #:cacle
+               #:trivial-garbage
+               #:bordeaux-threads)
+  :pathname "src/raster/"
+  :serial t
+  :components ((:file "package")
                (:file "raster")
                (:file "glyph-images")))
 
 (asdf:defsystem #:runes/xcb
-  :description "Pure Common Lisp TrueType font rendering for XCB."
+  :description "Runes text drawn on X11 through XCB and RENDER, until Antron draws text."
   :author "Michael Filonenko, Arthur Miller and contributors (see AUTHORS)"
   :license "LGPL-2.1-or-later (see LICENSE and COPYING)"
   :homepage "https://github.com/amno1/runes"
-  :version "1.0.0"
+  :version "2.0.0"
   :depends-on ("clxcb" "clxcb/render"
                #:runes
+               #:runes/raster
                #:zpb-ttf
                #:trivial-garbage
                #:bordeaux-threads
                #:uiop)
-  :pathname "src/"
+  :pathname "src/xcb/"
   :serial t
   :components ((:file "package")
                (:file "drawable")

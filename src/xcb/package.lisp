@@ -1,11 +1,11 @@
-;;;; package.lisp — package definitions and exports for xcb-truetype
+;;;; package.lisp — package definition and exports for runes/xcb
 ;;;; Copyright (C) 2012–2014 Michael Filonenko
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
 (defpackage #:runes/xcb
   (:nicknames #:runes-xcb #:xcb-truetype #:xft)
-  (:use #:cl #:truetype)
+  (:use #:cl #:runes #:runes/raster)
   (:import-from #:xcb-render
                 #:create-picture
                 #:free-picture
@@ -106,10 +106,10 @@
    #:put-alpha-mask
    #:put-image-chunked)
 
-  (:documentation "Pure Common Lisp TrueType font rendering for XCB,
-   ported from clx-truetype.  Fonts, metrics and rasterization come from
-   the TRUETYPE package (system cl-truetype), whose API this package
-   re-exports; this one draws through RENDER.  Its drawables are XCB-TRUETYPE:WINDOW and
-   XCB-TRUETYPE:PIXMAP: a package that :USEs this one together with CLX or
-   CLIM, which have a WINDOW and a PIXMAP of their own, should shadow them
-   or write them qualified."))
+  (:documentation "Runes text drawn on X11 through XCB and RENDER: a
+   bridge until Antron draws text itself.  Fonts and metrics come from
+   RUNES and glyph images from RUNES/RASTER, whose API this package
+   re-exports.  Its drawables are RUNES/XCB:WINDOW and RUNES/XCB:PIXMAP: a
+   package that :USEs this one together with CLX or CLIM, which have a
+   WINDOW and a PIXMAP of their own, should shadow them or write them
+   qualified."))

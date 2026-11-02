@@ -3,7 +3,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(in-package #:xcb-truetype)
+(in-package #:runes/xcb)
 
 ;; xcb:put-image-chunked is more efficient implementation; in benchmark it is
 ;; comparable or as fast as clx-truetype's on small images and faster on

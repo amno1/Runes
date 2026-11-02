@@ -1,8 +1,8 @@
-;;;; glyph-images.lisp — glyphs rasterized one at a time, and string layout
+;;;; glyph-images.lisp — glyphs rasterized one at a time, cached per face
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(in-package #:truetype)
+(in-package #:runes/raster)
 
 ;;; Each glyph of a face, at one size and DPI, is rasterized once and kept
 ;;; in *GLYPH-IMAGES*.  A backend draws a string by laying it out with
@@ -11,8 +11,7 @@
 ;;; the images into its own pixels.
 ;;;
 ;;; Glyphs are placed at whole pixels: each glyph's origin is the pen
-;;; position, accumulated exactly from advances and kerning, rounded.  So
-;;; a line never drifts from its measured width by more than half a pixel.
+;;; position from LAYOUT-STRING, rounded.
 
 (defvar *max-glyph-faces* 256
   "The most faces, at one size and DPI each, whose rasterized glyphs are
@@ -36,7 +35,7 @@
 
 (defvar *glyph-images* (make-hash-table :test 'equal)
   "Face key (see %FACE-KEY) -> hash table of glyph index -> GLYPH-IMAGE.
-   Guarded by *FONT-LOADER-LOCK*, which rasterizing needs anyway.")
+   Guarded by RUNES's font-loader lock, which rasterizing needs anyway.")
 
 (defun face-key (font dpi-x dpi-y)
   (list (get-font-pathname font) (font-size font) dpi-x dpi-y
@@ -77,60 +76,35 @@
                                               (letter-spacing 0.0)
                                               (word-spacing 0.0)
                                               kerning-table)
-  "Lay out STRING in FONT, applying LETTER-SPACING, WORD-SPACING, and
-   KERNING-TABLE (or the font's kerning table).
+  "Lay out STRING in FONT with LAYOUT-STRING, and rasterize the glyphs not
+   yet rasterized for this face.
    Returns (VALUES LAYOUT TOTAL-ADVANCE KEY)
    where LAYOUT is a vector of (GLYPH-INDEX PEN-X IMAGE)."
   (with-font-loader (loader font)
-    (let* ((key (face-key font dpi-x dpi-y))
-           (images (or (gethash key *glyph-images*)
-                       (progn
-                         (when (>= (hash-table-count *glyph-images*) *max-glyph-faces*)
-                           (clrhash *glyph-images*))
-                         (setf (gethash key *glyph-images*) (make-hash-table)))))
-           (sx (font-units->pixels-x dpi-x font))
-           (sy (font-units->pixels-y dpi-y font))
-           (len (length string))
-           (layout (make-array len))
-           (pen 0.0f0)
-           (lsp (coerce letter-spacing 'single-float))
-           (wsp (coerce word-spacing 'single-float))
-           (previous-glyph nil)
-           (previous-char nil))
-      (loop for i from 0 below len
-            for char = (char string i)
-            for glyph = (zpb-ttf:find-glyph char loader)
-            for index = (zpb-ttf:font-index glyph)
-            do (when previous-glyph
-                 (let ((kern (if kerning-table
-                                 (kern-offset font previous-char char
-                                              :custom-table kerning-table
-                                              :dpi-x dpi-x)
-                                 (let ((ko (zpb-ttf:kerning-offset previous-glyph glyph loader)))
-                                   (if (and ko (not (zerop ko)))
-                                       (* sx (coerce ko 'single-float))
-                                       0.0f0))))
-                       (word-extra (if (and (not (zerop wsp)) (char= previous-char #\Space))
-                                       wsp
-                                       0.0f0)))
-                   (incf pen (+ (* sx (coerce (zpb-ttf:advance-width previous-glyph) 'single-float))
-                                (coerce kern 'single-float)
-                                lsp
-                                word-extra))))
-               (setf (aref layout i)
-                     (list index pen
-                           (or (gethash index images)
-                               (setf (gethash index images)
-                                     (rasterize-glyph font glyph sx sy)))))
-               (setf previous-glyph glyph
-                     previous-char char))
-      (let ((total-advance (if (and previous-glyph (plusp len))
-                               (+ pen (* sx (coerce (zpb-ttf:advance-width previous-glyph) 'single-float))
-                                  (if (and (not (zerop wsp)) (char= previous-char #\Space))
-                                      wsp
-                                      0.0f0))
-                               0.0f0)))
-        (values layout (coerce total-advance 'single-float) key)))))
+    (multiple-value-bind (positions total-advance)
+        (layout-string font string :dpi-x dpi-x
+                                   :letter-spacing letter-spacing
+                                   :word-spacing word-spacing
+                                   :kerning-table kerning-table)
+      (let* ((key (face-key font dpi-x dpi-y))
+             (images (or (gethash key *glyph-images*)
+                         (progn
+                           (when (>= (hash-table-count *glyph-images*) *max-glyph-faces*)
+                             (clrhash *glyph-images*))
+                           (setf (gethash key *glyph-images*) (make-hash-table)))))
+             (sx (font-units->pixels-x dpi-x font))
+             (sy (font-units->pixels-y dpi-y font)))
+        (values (map 'vector
+                     (lambda (entry)
+                       (destructuring-bind (index pen) entry
+                         (list index pen
+                               (or (gethash index images)
+                                   (setf (gethash index images)
+                                         (rasterize-glyph font (zpb-ttf:index-glyph index loader)
+                                                          sx sy))))))
+                     positions)
+                total-advance
+                key)))))
 
 (defun layout-glyphs (font string dpi-x dpi-y)
   "Lay out STRING in FONT: return a vector of (GLYPH-INDEX PEN-X IMAGE),
@@ -141,34 +115,3 @@
     (declare (ignore advance))
     (values layout key)))
 
-
-(defun font-decorations (font string x y dpi-x dpi-y line-p)
-  "The underline, strikethrough and overline of STRING in FONT drawn at
-   baseline (X, Y), across the ink box or, when LINE-P, the line box:
-   a list of rectangles (LEFT TOP WIDTH HEIGHT) in pixels, y down, where
-   RENDER-ALPHA-MAP draws them.  NIL when FONT has none."
-  (when (or (font-underline font) (font-strikethrough font) (font-overline font))
-    (let* ((bbox (if line-p
-                     (font-cache-fetch (font-string-line-bboxes font) (cons dpi-x dpi-y) string)
-                     (font-cache-fetch (font-string-bboxes font) (cons dpi-x dpi-y) string)))
-           (left (+ x (xmin bbox)))
-           (width (- (xmax bbox) (xmin bbox))))
-      (when (plusp width)
-        (multiple-value-bind (thickness underline-offset ascend)
-            (with-font-loader (loader font)
-              (let ((sy (font-units->pixels-y dpi-y font)))
-                (values (* sy (zpb-ttf:underline-thickness loader))
-                        (* sy (zpb-ttf:underline-position loader))
-                        (* sy (zpb-ttf:ascender loader)))))
-          (let ((height (max 1 (round thickness)))
-                (bars '()))
-            (flet ((bar (top) (push (list left (round top) width height) bars)))
-              ;; UNDERLINE-OFFSET is negative: TrueType puts the underline
-              ;; below the baseline, and screen y grows downward.
-              (when (font-underline font)
-                (bar (- y underline-offset)))
-              (when (font-strikethrough font)
-                (bar (+ y (* 2 underline-offset))))
-              (when (font-overline font)
-                (bar (- (+ (- y ascend) underline-offset) thickness))))
-            (nreverse bars)))))))

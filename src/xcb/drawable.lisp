@@ -4,7 +4,7 @@
 ;;;; Copyright (C) 2026 Arthur Miller
 ;;;; SPDX-License-Identifier: LGPL-2.1-or-later (see LICENSE)
 
-(in-package #:xcb-truetype)
+(in-package #:runes/xcb)
 
 (defun %finalize (object fn)
   #+sbcl (sb-ext:finalize object fn :dont-save t)
