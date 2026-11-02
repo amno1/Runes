@@ -6,6 +6,7 @@
 
 (defun bounded-aref (vector index)
   "Return the element at INDEX, or the last element if INDEX is past the end."
+  (declare (type (or null simple-vector) vector) (fixnum index))
   (if (or (null vector) (zerop (length vector)))
       0
       (aref vector (min (1- (length vector)) (max 0 index)))))

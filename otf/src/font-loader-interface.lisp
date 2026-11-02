@@ -39,6 +39,7 @@
 (defun decode-utf-16be-from-fd (fd offset length)
   "Decode LENGTH bytes of UTF-16BE; a trailing odd byte is ignored and
 unpaired surrogates become U+FFFD."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) offset length))
   (let ((units (floor length 2))
         (out (make-string-output-stream))
         (i 0))
@@ -79,6 +80,8 @@ unpaired surrogates become U+FFFD."
 
 (defun cmap-subtable-length (fd sub-off fmt table-end)
   "Length of the cmap subtable at SUB-OFF from its own header, clamped to TABLE-END."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) sub-off table-end)
+           (type (unsigned-byte 16) fmt))
   (let ((declared (if (>= fmt 8)
                       (runes/otf:font-data-read-u32 fd (+ sub-off 4))
                       (runes/otf:font-data-read-u16 fd (+ sub-off 2)))))
@@ -101,6 +104,7 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
                (setf format-4 sub-off)))))))
 
 (defun setup-cmap12-lookup (loader fd sub-off table-end)
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) sub-off table-end))
   (let* ((sub-len (cmap-subtable-length fd sub-off 12 table-end))
          (cmap12 (runes/otf:read-cmap12 fd sub-off sub-len))
          (num-groups (min (runes/otf:cmap12-num-groups cmap12)
@@ -133,6 +137,7 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
                         do (funcall fn cp (+ gid (- cp start)))))))))))
 
 (defun setup-cmap4-lookup (loader fd sub-off table-end)
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) sub-off table-end))
   (let* ((sub-len (cmap-subtable-length fd sub-off 4 table-end))
          (sub-end (+ sub-off sub-len))
          (cmap4 (runes/otf:read-cmap4 fd sub-off sub-len))
@@ -141,6 +146,7 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
                        (max 0 (floor (- sub-len 16) 8))))
          (ro-base (+ sub-off 16 (* 6 seg-len))))
     (labels ((segment-glyph (s cp)
+               (declare (type (unsigned-byte 16) s) (type (unsigned-byte 32) cp))
                (let ((start (runes/otf:cmap4-start-code-ref cmap4 s))
                      (delta (runes/otf:cmap4-id-delta-ref cmap4 s))
                      (ro-off (runes/otf:cmap4-id-range-offsets-ref cmap4 s)))
@@ -188,6 +194,8 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
   "Read an hmtx/vmtx style table: LONG-COUNT (advance, bearing) pairs
 followed by bare bearings for the remaining glyphs. Return a vector of
 advances and a vector of GLYPH-COUNT bearings."
+  (declare (type runes/otf:font-data data) (type (unsigned-byte 32) offset size)
+           (type (unsigned-byte 16) long-count glyph-count))
   (let* ((long-count (min long-count (floor size 4)))
          (advances (make-array long-count))
          (bearings (make-array (max glyph-count long-count) :initial-element 0))
@@ -204,6 +212,7 @@ advances and a vector of GLYPH-COUNT bearings."
 
 (defun read-kerning-format-0 (loader body kend)
   "Format 0: an ordered list of (left, right, value) pairs at BODY."
+  (declare (type (unsigned-byte 32) body kend))
   (let* ((data (font-data loader))
          (n-pairs (min (runes/otf:font-data-read-u16 data body)
                        (floor (max 0 (- kend body 8)) 6)))
@@ -219,6 +228,7 @@ advances and a vector of GLYPH-COUNT bearings."
 
 (defun read-kerning-class-table (data pos kend)
   "Return the first glyph and the vector of offsets of the class table at POS."
+  (declare (type runes/otf:font-data data) (type (unsigned-byte 32) pos kend))
   (if (> (+ pos 4) kend)
       (values 0 (vector))
       (let* ((first (runes/otf:font-data-read-u16 data pos))
@@ -233,6 +243,7 @@ advances and a vector of GLYPH-COUNT bearings."
   "Format 2: a class-based kerning array. The class-table offsets, and the
 pre-multiplied row and column offsets they hold, are relative to the
 start of the subtable; a pair's value is at SUB-OFF + left + right."
+  (declare (type (unsigned-byte 32) sub-off body kend))
   (let ((data (font-data loader)))
     (when (<= (+ body 8) kend)
       (multiple-value-bind (left-first left-offsets)
@@ -261,6 +272,7 @@ start of the subtable; a pair's value is at SUB-OFF + left + right."
   "The subtables of a version 0 'kern' table.  Their header: version u16,
 length u16, coverage u16 with the format in the high byte and flags in the
 low byte."
+  (declare (type (unsigned-byte 32) koff kend))
   (let ((data (font-data loader))
         (n-tables (runes/otf:font-data-read-u16 (font-data loader) (+ koff 2)))
         (sub-off (+ koff 4)))
@@ -281,6 +293,7 @@ low byte."
   "The subtables of a version 1.0 'kern' table.  Their header: length u32,
 coverage u16 with flags in the high byte and the format in the low byte,
 tupleIndex u16."
+  (declare (type (unsigned-byte 32) koff kend))
   (let* ((data (font-data loader))
          (n-tables (min (runes/otf:font-data-read-u32 data (+ koff 4))
                         (floor (max 0 (- kend koff 8)) 8)))
