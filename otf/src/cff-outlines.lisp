@@ -118,6 +118,104 @@ divides that by N^3."
   "X as a contour coordinate: an integer when it is one, else a float."
   (if (integerp x) x (float x 1.0)))
 
+;;; The same approximation without rational arithmetic, which spent most of
+;;; its time reducing fractions.  The points come from 16.16 charstring
+;;; values, so each is an integer number of 1/65536 font units: the curve is
+;;; computed in those integers, and each piece of the subdivision into N
+;;; parts directly from the cubic's blossom.  The result is exactly that of
+;;; CUBIC->QUADRATICS, which remains for points that are not 16.16 values.
+
+(defun fixed-units (v)
+  "V (font units, an integer or a float) times 65536, or NIL if that is not
+an integer."
+  (if (integerp v)
+      (* v 65536)
+      (multiple-value-bind (mantissa exponent sign) (integer-decode-float v)
+        (let ((shift (+ exponent 16)))
+          (when (>= shift 0)
+            (* sign (ash mantissa shift)))))))
+
+(defun ratio-units (numerator denominator)
+  "NUMERATOR / DENOMINATOR as a contour coordinate, as UNITS gives it: an
+integer, or the float nearest the exact quotient."
+  (declare (integer numerator) (type (integer 1) denominator))
+  (multiple-value-bind (q r) (floor numerator denominator)
+    (cond ((zerop r) q)
+          ;; Both exact as doubles: the double quotient is correctly
+          ;; rounded, and rounding it again to a single float gives the
+          ;; float nearest the exact quotient, unless it lies exactly
+          ;; halfway between two single floats.
+          ((and (< (abs numerator) (expt 2 53)) (< denominator (expt 2 53)))
+           (let ((d (/ (float numerator 1d0) (float denominator 1d0))))
+             (if (= (ldb (byte 29 0) (integer-decode-float d)) (ash 1 28))
+                 (float (/ numerator denominator) 1.0)
+                 (coerce d 'single-float))))
+          (t (float (/ numerator denominator) 1.0)))))
+
+(defun cubic->quadratics-fixed (x0 y0 x1 y1 x2 y2 x3 y3 tolerance)
+  "As CUBIC->QUADRATICS, for points given times 65536 as integers: a list of
+((control-x . control-y) . (end-x . end-y)) in contour coordinates."
+  (declare (integer x0 y0 x1 y1 x2 y2 x3 y3))
+  (let* ((dx (+ (- x3 (* 3 x2)) (* 3 x1) (- x0)))
+         (dy (+ (- y3 (* 3 y2)) (* 3 y1) (- y0)))
+         ;; The same double as for the unscaled points: the scale is 2^32.
+         (err (* (/ (sqrt 3d0) 36)
+                 (sqrt (* (float (+ (* dx dx) (* dy dy)) 1d0) (expt 2d0 -32)))))
+         (n (max 1 (ceiling (expt (/ err tolerance) 1/3))))
+         (n3 (* n n n))
+         (pieces '()))
+    (flet ((blossom (u v w p0 p1 p2 p3)
+             ;; n^3 times the blossom of the cubic at u/n, v/n, w/n.
+             (let ((a (- n u)) (b (- n v)) (c (- n w)))
+               (+ (* a b c p0)
+                  (* (+ (* a b w) (* a v c) (* u b c)) p1)
+                  (* (+ (* a v w) (* u b w) (* u v c)) p2)
+                  (* u v w p3))))
+           (fixnum-blossom (u v w p0 p1 p2 p3)
+             ;; The same in fixnums, when the caller has checked they fit.
+             (declare (type (integer 0 64) u v w) (type (signed-byte 34) p0 p1 p2 p3))
+             (let ((a (- n u)) (b (- n v)) (c (- n w)))
+               (declare (type (integer 0 64) a b c))
+               (+ (* a b c p0)
+                  (* (+ (* a b w) (* a v c) (* u b c)) p1)
+                  (* (+ (* a v w) (* u b w) (* u v c)) p2)
+                  (* u v w p3)))))
+      (declare (inline fixnum-blossom))
+      (macrolet ((pieces-with (blossom)
+                   `(dotimes (j n)
+                      (let* ((k (1+ j))
+                             (qx0 (,blossom j j j x0 x1 x2 x3)) (qy0 (,blossom j j j y0 y1 y2 y3))
+                             (qx1 (,blossom j j k x0 x1 x2 x3)) (qy1 (,blossom j j k y0 y1 y2 y3))
+                             (qx2 (,blossom j k k x0 x1 x2 x3)) (qy2 (,blossom j k k y0 y1 y2 y3))
+                             (qx3 (,blossom k k k x0 x1 x2 x3)) (qy3 (,blossom k k k y0 y1 y2 y3))
+                             (end-den (* n3 65536))
+                             (control-den (* 4 end-den)))
+                        (push (cons (cons (ratio-units (- (* 3 (+ qx1 qx2)) qx0 qx3) control-den)
+                                          (ratio-units (- (* 3 (+ qy1 qy2)) qy0 qy3) control-den))
+                                    (cons (ratio-units qx3 end-den) (ratio-units qy3 end-den)))
+                              pieces)))))
+        ;; |coordinate| < 2^17 font units and N <= 64: every product and sum
+        ;; stays below 2^60, a fixnum.
+        (if (and (<= n 64)
+                 (every (lambda (p) (typep p '(signed-byte 34))) (list x0 y0 x1 y1 x2 y2 x3 y3)))
+            (pieces-with fixnum-blossom)
+            (pieces-with blossom))))
+    (nreverse pieces)))
+
+(defun curve-pieces (current cx0 cy0 cx1 cy1 x y)
+  "The quadratic pieces of the curve from CURRENT, as CUBIC->QUADRATICS."
+  (let ((fx0 (fixed-units (car current))) (fy0 (fixed-units (cdr current)))
+        (fx1 (fixed-units cx0)) (fy1 (fixed-units cy0))
+        (fx2 (fixed-units cx1)) (fy2 (fixed-units cy1))
+        (fx3 (fixed-units x)) (fy3 (fixed-units y)))
+    (if (and fx0 fy0 fx1 fy1 fx2 fy2 fx3 fy3)
+        (cubic->quadratics-fixed fx0 fy0 fx1 fy1 fx2 fy2 fx3 fy3 *cubic-tolerance*)
+        (cubic->quadratics (cons (rational (car current)) (rational (cdr current)))
+                           (cons (rational cx0) (rational cy0))
+                           (cons (rational cx1) (rational cy1))
+                           (cons (rational x) (rational y))
+                           *cubic-tolerance*))))
+
 (defun outline->contours (outline)
   "TrueType-style contours of control points approximating OUTLINE."
   (map 'vector
@@ -137,11 +235,7 @@ divides that by N^3."
                           (:curve
                            (destructuring-bind (cx0 cy0 cx1 cy1 x y) args
                              (loop for (control . end)
-                                     in (cubic->quadratics (cons (rational (car current)) (rational (cdr current)))
-                                                           (cons (rational cx0) (rational cy0))
-                                                           (cons (rational cx1) (rational cy1))
-                                                           (cons (rational x) (rational y))
-                                                           *cubic-tolerance*)
+                                     in (curve-pieces current cx0 cy0 cx1 cy1 x y)
                                    do (add (car control) (cdr control) nil)
                                       (add (car end) (cdr end) t))
                              (setf current (cons x y)))))))
@@ -169,12 +263,18 @@ divides that by N^3."
         (vector (floor xmin) (floor ymin) (ceiling xmax) (ceiling ymax))
         (empty-bounding-box))))
 
+(defun initialize-cff-outline (glyph)
+  "Set the exact outline of a CFF glyph."
+  (setf (%cubic-contours glyph)
+        (cff-glyph-outline (font-loader glyph) (font-index glyph))))
+
 (defun initialize-cff-glyph (glyph)
-  "Set the exact outline, contours and bounding box of a CFF glyph."
-  (let* ((outline (cff-glyph-outline (font-loader glyph) (font-index glyph)))
-         (contours (outline->contours outline)))
-    (setf (%cubic-contours glyph) outline
-          (contours glyph) contours
+  "Set the exact outline, contours and bounding box of a CFF glyph.  The
+contours are approximated only now: CUBIC-CONTOURS does not need them."
+  (unless (slot-boundp glyph 'cubic-contours)
+    (initialize-cff-outline glyph))
+  (let ((contours (outline->contours (%cubic-contours glyph))))
+    (setf (contours glyph) contours
           (bounding-box glyph) (contours-bounding-box contours))))
 
 ;;; The exact outline of any glyph
@@ -189,8 +289,7 @@ given as the cubic curves that trace them exactly."))
   (cond
     ((slot-boundp glyph 'cubic-contours) (%cubic-contours glyph))
     ((cff-outlines-p (font-loader glyph))
-     (initialize-cff-glyph glyph)
-     (%cubic-contours glyph))
+     (initialize-cff-outline glyph))
     (t
      (setf (%cubic-contours glyph)
            (map 'vector
