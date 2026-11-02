@@ -41,6 +41,15 @@
   (list (font-source font) (font-size font) dpi-x dpi-y
         (and (font-antialias font) t)))
 
+(defun face-glyph-images (key)
+  "The table of glyph images of the face KEY, made when first asked for.
+Past *MAX-GLYPH-FACES* faces, all are dropped first."
+  (or (gethash key *glyph-images*)
+      (progn
+        (when (>= (hash-table-count *glyph-images*) *max-glyph-faces*)
+          (clrhash *glyph-images*))
+        (setf (gethash key *glyph-images*) (make-hash-table)))))
+
 (defun layout-styled-glyphs (font string &key (dpi-x 96) (dpi-y 96)
                                               (letter-spacing 0.0)
                                               (word-spacing 0.0)
@@ -56,11 +65,7 @@
                                    :word-spacing word-spacing
                                    :kerning-table kerning-table)
       (let* ((key (face-key font dpi-x dpi-y))
-             (images (or (gethash key *glyph-images*)
-                         (progn
-                           (when (>= (hash-table-count *glyph-images*) *max-glyph-faces*)
-                             (clrhash *glyph-images*))
-                           (setf (gethash key *glyph-images*) (make-hash-table)))))
+             (images (face-glyph-images key))
              (sx (font-units->pixels-x dpi-x font))
              (sy (font-units->pixels-y dpi-y font)))
         (values (map 'vector
