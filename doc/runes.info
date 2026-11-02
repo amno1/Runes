@@ -3,8 +3,7 @@ This is runes.info, produced by makeinfo version 7.3 from runes.texi.
 This manual is for Runes, font management, loading and text rendering in
 Common Lisp.
 
-   Copyright © 2012-2025 Michael Filonenko and contributors.
-Copyright © 2026 Arthur Miller.
+   Copyright © 2026 Arthur Miller.
 
    Runes is distributed under the GNU Lesser General Public License,
 version 2.1 or later, except ‘otf/’ and ‘decompress/’, which are under
@@ -28,8 +27,7 @@ and in client-side buffers, all in Common Lisp.
    This manual is for Runes, font management, loading and text rendering
 in Common Lisp.
 
-   Copyright © 2012-2025 Michael Filonenko and contributors.
-Copyright © 2026 Arthur Miller.
+   Copyright © 2026 Arthur Miller.
 
    Runes is distributed under the GNU Lesser General Public License,
 version 2.1 or later, except ‘otf/’ and ‘decompress/’, which are under
@@ -1619,47 +1617,47 @@ Index
 
 
 Tag Table:
-Node: Top637
-Node: Overview2136
-Node: Systems2625
-Node: Requirements5024
-Node: Quick start5892
-Node: Font manager7491
-Node: Font cache8155
-Node: Fonts9782
-Node: Font loaders11764
-Node: Targets and DPI12465
-Node: Metrics13138
-Node: Layout15103
-Node: Fitting and centring16483
-Node: Rasterizer17333
-Node: X11 bridge19924
-Node: Drawables20594
-Node: Drawing text22794
-Node: X11 caches23854
-Node: RENDER helpers24442
-Node: Client-side bridge25972
-Node: Font loader27938
-Node: Opening fonts28936
-Node: Font information29752
-Node: Glyphs31159
-Node: Outlines32044
-Node: Variable fonts33338
-Node: Loader conditions34312
-Node: OpenType tables34841
-Node: Font data35439
-Node: Table readers37086
-Node: Web fonts40278
-Node: OpenType conditions41226
-Node: CFF charstrings42005
-Node: CFF fonts42653
-Node: Sinks44147
-Node: Blending45192
-Node: Charstring internals46261
-Node: Decompression48397
-Node: Migrating from clx-truetype49869
-Node: Tests51209
-Node: Index51853
+Node: Top578
+Node: Overview2018
+Node: Systems2507
+Node: Requirements4906
+Node: Quick start5774
+Node: Font manager7373
+Node: Font cache8037
+Node: Fonts9664
+Node: Font loaders11646
+Node: Targets and DPI12347
+Node: Metrics13020
+Node: Layout14985
+Node: Fitting and centring16365
+Node: Rasterizer17215
+Node: X11 bridge19806
+Node: Drawables20476
+Node: Drawing text22676
+Node: X11 caches23736
+Node: RENDER helpers24324
+Node: Client-side bridge25854
+Node: Font loader27820
+Node: Opening fonts28818
+Node: Font information29634
+Node: Glyphs31041
+Node: Outlines31926
+Node: Variable fonts33220
+Node: Loader conditions34194
+Node: OpenType tables34723
+Node: Font data35321
+Node: Table readers36968
+Node: Web fonts40160
+Node: OpenType conditions41108
+Node: CFF charstrings41887
+Node: CFF fonts42535
+Node: Sinks44029
+Node: Blending45074
+Node: Charstring internals46143
+Node: Decompression48279
+Node: Migrating from clx-truetype49751
+Node: Tests51091
+Node: Index51735
 
 End Tag Table
 
