@@ -83,21 +83,98 @@
          (range-shift (- (* num-tables 16) search-range)))
     (values search-range entry-selector range-shift)))
 
+(defun read-woff1-directory (fd num-tables dir-end)
+  "The table directory of the WOFF font FD, each entry with its offset in
+the SFNT, in directory order; and the SFNT's size."
+  (let ((dst-offset (+ 12 (* 16 num-tables))))
+    (declare (type (unsigned-byte 64) dst-offset))
+    (values
+     (loop for i below num-tables
+           for rec-pos = (+ 44 (* i 20))
+           collect (let ((tag       (font-data-read-u32 fd rec-pos))
+                         (src-off   (font-data-read-u32 fd (+ rec-pos 4)))
+                         (comp-len  (font-data-read-u32 fd (+ rec-pos 8)))
+                         (orig-len  (font-data-read-u32 fd (+ rec-pos 12)))
+                         (orig-csum (font-data-read-u32 fd (+ rec-pos 16))))
+                     (when (or (> comp-len orig-len)
+                               (< src-off dir-end)
+                               (not (font-data-valid-range-p fd src-off comp-len)))
+                       (woff1-fail (woff1-tag-string tag)
+                                   "invalid table bounds (offset ~D, compLength ~D, origLength ~D)"
+                                   src-off comp-len orig-len))
+                     (prog1 (make-woff1-table-entry :tag tag :src-offset src-off
+                                                    :comp-length comp-len :orig-length orig-len
+                                                    :orig-checksum orig-csum :dst-offset dst-offset)
+                       (incf dst-offset (woff1-round4 orig-len)))))
+     dst-offset)))
+
+(defun woff1-copy-table (fd out e)
+  "Copy table entry E of FD into OUT at its SFNT offset, decompressing it
+when it is compressed."
+  (let* ((tag (woff1-table-entry-tag e))
+         (comp-len (woff1-table-entry-comp-length e))
+         (orig-len (woff1-table-entry-orig-length e))
+         (dst-off (woff1-table-entry-dst-offset e))
+         (raw-in (font-data-bytes fd))
+         (abs-src (+ (font-data-offset fd) (woff1-table-entry-src-offset e))))
+    (if (= comp-len orig-len)
+        (replace out raw-in :start1 dst-off :start2 abs-src :end2 (+ abs-src orig-len))
+        (let ((decompressed
+                (handler-case
+                    (decompress:zlib-decompress raw-in :size-hint orig-len
+                                                       :start abs-src :end (+ abs-src comp-len))
+                  (decompress:decompression-error (c)
+                    (woff1-fail (woff1-tag-string tag) "zlib decompression failed: ~A" c)))))
+          (unless (= (length decompressed) orig-len)
+            (woff1-fail (woff1-tag-string tag)
+                        "decompressed size ~D does not match origLength ~D"
+                        (length decompressed) orig-len))
+          (replace out decompressed :start1 dst-off :end2 orig-len)))))
+
+(defun woff1-verify-checksum (out e)
+  "Check the checksum of table entry E, copied into OUT.  A 'head' table's
+checkSumAdjustment counts as zero."
+  (let* ((tag (woff1-table-entry-tag e))
+         (dst-off (woff1-table-entry-dst-offset e))
+         (orig-len (woff1-table-entry-orig-length e))
+         (head-p (and (= tag +woff1-tag-head+) (>= orig-len 12)))
+         (saved (when head-p
+                  (prog1 (logior (ash (aref out (+ dst-off 8)) 24) (ash (aref out (+ dst-off 9)) 16)
+                                 (ash (aref out (+ dst-off 10)) 8) (aref out (+ dst-off 11)))
+                    (woff1-put-u32 out (+ dst-off 8) 0))))
+         (actual (woff1-checksum out dst-off orig-len)))
+    (when head-p
+      (woff1-put-u32 out (+ dst-off 8) saved))
+    (unless (= actual (woff1-table-entry-orig-checksum e))
+      (woff1-fail (woff1-tag-string tag) "checksum mismatch: expected #x~8,'0X, got #x~8,'0X"
+                  (woff1-table-entry-orig-checksum e) actual))))
+
+(defun woff1-set-checksum-adjustment (out head-entry)
+  "Recompute head.checkSumAdjustment over the reconstructed SFNT OUT."
+  (let ((head-off (woff1-table-entry-dst-offset head-entry))
+        (head-len (woff1-table-entry-orig-length head-entry)))
+    (when (< head-len 12)
+      (woff1-fail "head" "head table too short (~D bytes)" head-len))
+    (woff1-put-u32 out (+ head-off 8) 0)
+    (woff1-put-u32 out (+ head-off 8)
+                   (ldb (byte 32 0) (- #xB1B0AFBA (woff1-checksum out 0 (length out)))))))
+
 (defun decode-woff1 (source &key (verify-checksums nil))
   "Decode a WOFF 1.0 font from SOURCE (a FONT-DATA, byte vector, or pathname)
 and return a FONT-DATA over the reconstructed SFNT byte vector.
-When VERIFY-CHECKSUMS is true, each table'schecksum is checked against the
+When VERIFY-CHECKSUMS is true, each table's checksum is checked against the
 directory's origChecksum."
   (let* ((fd (ensure-font-data source))
          (buf-len (font-data-length fd)))
     (when (< buf-len 44)
       (woff1-fail "WOFF" "buffer length ~D is shorter than 44-byte WOFF 1.0 header" buf-len))
-    (let ((signature       (font-data-read-u32 fd 0))
-          (flavor          (font-data-read-u32 fd 4))
-          (total-length    (font-data-read-u32 fd 8))
-          (num-tables      (font-data-read-u16 fd 12))
-          (reserved        (font-data-read-u16 fd 14))
-          (total-sfnt-size (font-data-read-u32 fd 16)))
+    (let* ((signature       (font-data-read-u32 fd 0))
+           (flavor          (font-data-read-u32 fd 4))
+           (total-length    (font-data-read-u32 fd 8))
+           (num-tables      (font-data-read-u16 fd 12))
+           (reserved        (font-data-read-u16 fd 14))
+           (total-sfnt-size (font-data-read-u32 fd 16))
+           (dir-end (+ 44 (* 20 num-tables))))
       (unless (= signature +woff1-signature+)
         (woff1-fail "WOFF" "invalid WOFF 1.0 signature #x~8,'0X" signature))
       (unless (zerop reserved)
@@ -106,114 +183,35 @@ directory's origChecksum."
         (woff1-fail "WOFF" "WOFF 1.0 font has zero tables"))
       (when (> total-length buf-len)
         (woff1-fail "WOFF" "WOFF length ~D exceeds buffer length ~D" total-length buf-len))
-      (let ((dir-end (+ 44 (* 20 num-tables))))
-        (when (> dir-end total-length)
-          (woff1-fail "WOFF" "table directory overruns WOFF length"))
-        ;; Read table directory and compute output layout
-        (let* ((entries (make-array num-tables))
-               (sfnt-dir-size (+ 12 (* 16 num-tables)))
-               (dst-offset sfnt-dir-size))
-          (declare (type (unsigned-byte 64) dst-offset))
-          (dotimes (i num-tables)
-            (let* ((rec-pos (+ 44 (* i 20)))
-                   (tag       (font-data-read-u32 fd rec-pos))
-                   (src-off   (font-data-read-u32 fd (+ rec-pos 4)))
-                   (comp-len  (font-data-read-u32 fd (+ rec-pos 8)))
-                   (orig-len  (font-data-read-u32 fd (+ rec-pos 12)))
-                   (orig-csum (font-data-read-u32 fd (+ rec-pos 16))))
-              (when (or (> comp-len orig-len)
-                        (< src-off dir-end)
-                        (not (font-data-valid-range-p fd src-off comp-len)))
-                (woff1-fail (woff1-tag-string tag)
-                            "invalid table bounds (offset ~D, compLength ~D, origLength ~D)"
-                            src-off comp-len orig-len))
-              (setf (aref entries i)
-                    (make-woff1-table-entry :tag tag
-                                            :src-offset src-off
-                                            :comp-length comp-len
-                                            :orig-length orig-len
-                                            :orig-checksum orig-csum
-                                            :dst-offset dst-offset))
-              (incf dst-offset (woff1-round4 orig-len))))
-          (unless (= dst-offset total-sfnt-size)
-            (woff1-fail "WOFF" "computed SFNT size ~D does not match header totalSfntSize ~D"
-                        dst-offset total-sfnt-size))
-          ;; Allocate final SFNT buffer once and write header + tables
-          (let ((out (make-array dst-offset :element-type '(unsigned-byte 8) :initial-element 0))
-                (raw-in (font-data-bytes fd))
-                (base-off (font-data-offset fd))
-                (sorted-dir (sort (copy-seq entries) #'< :key #'woff1-table-entry-tag))
-                (head-entry nil)
-                (p 0))
-            (multiple-value-bind (search-range entry-selector range-shift)
-                (woff1-search-params num-tables)
-              (setf p (woff1-put-u32 out p flavor)
-                    p (woff1-put-u16 out p num-tables)
-                    p (woff1-put-u16 out p search-range)
-                    p (woff1-put-u16 out p entry-selector)
-                    p (woff1-put-u16 out p range-shift)))
-            ;; Decompress or copy each table into its destination slice in OUT
-            (loop for e across sorted-dir
-                  do (let ((tag       (woff1-table-entry-tag e))
-                           (src-off   (woff1-table-entry-src-offset e))
-                           (comp-len  (woff1-table-entry-comp-length e))
-                           (orig-len  (woff1-table-entry-orig-length e))
-                           (orig-csum (woff1-table-entry-orig-checksum e))
-                           (dst-off   (woff1-table-entry-dst-offset e)))
-                       (when (= tag +woff1-tag-head+)
-                         (setf head-entry e))
-                       ;; Write SFNT 16-byte Table Record
-                       (setf p (woff1-put-u32 out p tag)
-                             p (woff1-put-u32 out p orig-csum)
-                             p (woff1-put-u32 out p dst-off)
-                             p (woff1-put-u32 out p orig-len))
-                       ;; Populate table bytes
-                       (let ((abs-src (+ base-off src-off)))
-                         (if (= comp-len orig-len)
-                             (replace out raw-in
-                                      :start1 dst-off
-                                      :start2 abs-src
-                                      :end2 (+ abs-src orig-len))
-                             (let ((decompressed
-                                      (handler-case
-                                          (decompress:zlib-decompress raw-in :size-hint orig-len
-                                                                              :start abs-src
-                                                                              :end (+ abs-src comp-len))
-                                        (decompress:decompression-error (c)
-                                          (woff1-fail (woff1-tag-string tag)
-                                                      "zlib decompression failed: ~A" c)))))
-                               (unless (= (length decompressed) orig-len)
-                                 (woff1-fail (woff1-tag-string tag)
-                                             "decompressed size ~D does not match origLength ~D"
-                                             (length decompressed) orig-len))
-                               (replace out decompressed :start1 dst-off :end2 orig-len))))
-                       ;; Optional checksum verification
-                       (when verify-checksums
-                         (let ((saved-adj 0))
-                           (when (and (= tag +woff1-tag-head+) (>= orig-len 12))
-                             (setf saved-adj (logior (ash (aref out (+ dst-off 8)) 24)
-                                                     (ash (aref out (+ dst-off 9)) 16)
-                                                     (ash (aref out (+ dst-off 10)) 8)
-                                                     (aref out (+ dst-off 11))))
-                             (woff1-put-u32 out (+ dst-off 8) 0))
-                           (let ((actual (woff1-checksum out dst-off orig-len)))
-                             (when (and (= tag +woff1-tag-head+) (>= orig-len 12))
-                               (woff1-put-u32 out (+ dst-off 8) saved-adj))
-                             (unless (= actual orig-csum)
-                               (woff1-fail (woff1-tag-string tag)
-                                           "checksum mismatch: expected #x~8,'0X, got #x~8,'0X"
-                                           orig-csum actual)))))))
-            ;; Recompute head.checkSumAdjustment over the reconstructed SFNT
-            (when head-entry
-              (let ((head-off (woff1-table-entry-dst-offset head-entry))
-                    (head-len (woff1-table-entry-orig-length head-entry)))
-                (when (< head-len 12)
-                  (woff1-fail "head" "head table too short (~D bytes)" head-len))
-                (woff1-put-u32 out (+ head-off 8) 0)
-                (let ((total-csum (woff1-checksum out 0 (length out))))
-                  (woff1-put-u32 out (+ head-off 8)
-                                 (ldb (byte 32 0) (- #xB1B0AFBA total-csum))))))
-            (make-font-data out)))))))
+      (when (> dir-end total-length)
+        (woff1-fail "WOFF" "table directory overruns WOFF length"))
+      (multiple-value-bind (entries sfnt-size) (read-woff1-directory fd num-tables dir-end)
+        (unless (= sfnt-size total-sfnt-size)
+          (woff1-fail "WOFF" "computed SFNT size ~D does not match header totalSfntSize ~D"
+                      sfnt-size total-sfnt-size))
+        (let ((out (make-array sfnt-size :element-type '(unsigned-byte 8) :initial-element 0))
+              (p 0))
+          ;; The SFNT header, then a table record and the table for each
+          ;; entry, in tag order.
+          (multiple-value-bind (search-range entry-selector range-shift)
+              (woff1-search-params num-tables)
+            (setf p (woff1-put-u32 out p flavor)
+                  p (woff1-put-u16 out p num-tables)
+                  p (woff1-put-u16 out p search-range)
+                  p (woff1-put-u16 out p entry-selector)
+                  p (woff1-put-u16 out p range-shift)))
+          (dolist (e (sort (copy-list entries) #'< :key #'woff1-table-entry-tag))
+            (setf p (woff1-put-u32 out p (woff1-table-entry-tag e))
+                  p (woff1-put-u32 out p (woff1-table-entry-orig-checksum e))
+                  p (woff1-put-u32 out p (woff1-table-entry-dst-offset e))
+                  p (woff1-put-u32 out p (woff1-table-entry-orig-length e)))
+            (woff1-copy-table fd out e)
+            (when verify-checksums
+              (woff1-verify-checksum out e)))
+          (let ((head (find +woff1-tag-head+ entries :key #'woff1-table-entry-tag)))
+            (when head
+              (woff1-set-checksum-adjustment out head)))
+          (make-font-data out))))))
 
 ;;; ============================================================================
 ;;; Optional WOFF 1.0 Extended Metadata & Private Data Accessors
