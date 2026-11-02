@@ -93,22 +93,26 @@
   (let* ((b0 (gc-u8 c))
          (count (cond ((zerop b0) 0)
                       ((< b0 128) b0)
-                      (t (logand (logior (ash b0 8) (gc-u8 c)) #x7FFF)))))
+                      (t (logand (logior (ash b0 8) (gc-u8 c))
+                                 #x7FFF)))))
     (if (zerop count)
         :all
-        (let ((points (make-array count :fill-pointer 0)) (last 0) (seen 0))
-          ;; Whole runs are consumed, even one that runs past the count.
-          (loop while (< seen count)
-                do (let* ((control (gc-u8 c))
-                          (words (logbitp 7 control))
-                          (run (1+ (logand control #x7F))))
-                     (dotimes (i run)
-                       (let ((v (gc-int c (if words 2 1) nil)))
-                         (when (< (fill-pointer points) count)
-                           (setf last (ldb (byte 16 0) (+ last v)))
-                           (vector-push last points))))
-                     (incf seen run)))
-          points))))
+        (loop with last = 0
+              with seen = 0
+              with points = (make-array count :fill-pointer 0)
+              while (< seen count)
+              ;; One run: a control byte, then RUN values.  Whole runs are
+              ;; consumed, even one that runs past the count.
+              do (loop with control = (gc-u8 c)
+                       with size = (if (logbitp 7 control) 2 1)
+                       with run = (1+ (logand control #x7F))
+                       for i below run
+                       for v = (gc-int c size nil)
+                       when (< (fill-pointer points) count)
+                         do (setf last (ldb (byte 16 0) (+ last v)))
+                            (vector-push last points)
+                       finally (incf seen run))
+              finally (return points)))))
 
 (defun read-delta-run (c)
   "The next run at C, as two values: the count and the byte width (0 for zeros)."
