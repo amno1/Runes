@@ -57,7 +57,7 @@ long explanation for a small idea, but hopefully it also explains the entire
 avx-512 implementation.
 
 A prototype tokenizer for CFF/CFF2 charstrings is in
-`~/repos/skia/cff-simd/cff-tok.lisp`. Token length there depends only on the
+`experiments/cff-tok.lisp`. Token length there depends only on the
 first byte, so token starts can be found 64 bytes at a time: two `vpermi2b`
 lookups give each byte's length, then pointer doubling with `vpermi2b` (J², J⁴ …
 J⁶⁴) gives the compacted list of token offsets per block, with the next block's
