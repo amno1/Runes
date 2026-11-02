@@ -80,7 +80,7 @@ distance code may be empty (an error only if a distance is ever needed)."
             (incf (aref count l))
             (incf space (ash 1 (- 15 l))))))
       (cond
-        ((> space 32768) (berr "oversubscribed prefix code"))
+        ((> space 32768) (err "oversubscribed prefix code"))
         ((= space 32768)
          (build-table syms lens* m count root-bits
                       (case kind (:literal +literal-map+) (:distance +distance-map+))))
@@ -98,7 +98,7 @@ distance code may be empty (an error only if a distance is ever needed)."
                (loop for j from 0 below (ash 1 root-bits) by 2
                      do (setf (aref tab j) (logior (ash v 5) 1)))))
            tab))
-        (t (berr "incomplete prefix code"))))))
+        (t (err "incomplete prefix code"))))))
 
 (sb-ext:define-load-time-global +fixed-tables+
   (let ((lens (make-array 320 :element-type '(unsigned-byte 8))))
@@ -120,7 +120,7 @@ distance code may be empty (an error only if a distance is ever needed)."
          (cl-lens (make-array 19 :element-type '(unsigned-byte 8) :initial-element 0))
          (order +deflate-cl-order+))
     (declare (dynamic-extent cl-lens))
-    (when (or (> hlit 286) (> hdist 30)) (berr "too many length or distance codes"))
+    (when (or (> hlit 286) (> hdist 30)) (err "too many length or distance codes"))
     (dotimes (i hclen)
       (setf (aref cl-lens (aref order i)) (read-bits r 3)))
     (let ((cl-table (deflate-table cl-lens 0 19 :code-length))
@@ -132,17 +132,17 @@ distance code may be empty (an error only if a distance is ever needed)."
         (let ((sym (read-sym r cl-table)))
           (cond
             ((< sym 16) (setf (aref lens i) sym) (incf i))
-            ((> sym 18) (berr "invalid code length code"))
+            ((> sym 18) (err "invalid code length code"))
             (t (multiple-value-bind (value n)
                    (case sym
-                     (16 (when (zerop i) (berr "repeat with no previous length"))
+                     (16 (when (zerop i) (err "repeat with no previous length"))
                          (values (aref lens (1- i)) (+ 3 (read-bits r 2))))
                      (17 (values 0 (+ 3 (read-bits r 3))))
                      (t (values 0 (+ 11 (read-bits r 7)))))
-                 (when (> (+ i n) total) (berr "code lengths repeat past the end"))
+                 (when (> (+ i n) total) (err "code lengths repeat past the end"))
                  (fill lens value :start i :end (+ i n))
                  (incf i n))))))
-      (when (zerop (aref lens 256)) (berr "no end-of-block code"))
+      (when (zerop (aref lens 256)) (err "no end-of-block code"))
       ;; the distance lengths sit after the literal ones: copy them down to a
       ;; zero-padded 32-entry area so the table code sees one alphabet
       (let ((dlens (make-array 32 :element-type '(unsigned-byte 8) :initial-element 0)))
@@ -207,14 +207,16 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
              (type (unsigned-byte 64) val) (type sb-ext:word pos bits))
     ;; No calls inside the loop: SBCL gives every value that lives across a
     ;; call site a stack home, so the error exits (never taken on valid input)
-    ;; would push the loop's state to the stack.  This local BERR, which the
-    ;; checks here and in BR-REFILL expand to, records the message and leaves
-    ;; the loop instead; the error is signalled after it.
+    ;; would push the loop's state to the stack.  This local ERR has the same
+    ;; name as the global one on purpose: the checks here and in the macros
+    ;; (BR-REFILL, CHECK-END) expand to (ERR ...) and so reach this one, which
+    ;; records the message and leaves the loop without a call.  The error is
+    ;; signalled after the loop.
     (block decode
-    (flet ((berr (message)
+    (flet ((err (message)
              (setf error message)
              (return-from decode)))
-      (declare (inline berr))
+      (declare (inline err))
     (sb-sys:with-pinned-objects (buf)
       ;; OP/OCAP: output position and limit as raw addresses (see
       ;; COPY-BACK-POINTER); FP is recomputed from OP on the way out
@@ -257,22 +259,22 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
                ;; early root lookup 10 after that
                (br-need 43)
                ;; length entries hold +MATCH-FLAG+ | base<<4 | extra bits
-               (when (< sym +match-flag+) (berr "invalid length code"))
+               (when (< sym +match-flag+) (err "invalid length code"))
                (let ((len (+ (ldb (byte 9 4) sym) (ldb (byte (logand sym 15) 0) val))))
                  (declare (type index len))
                  (br-drop (logand sym 15))
                  (let ((d (br-sym dtab (progn))))
                    (declare (type index d))
-                   (when (< d +match-flag+) (berr "invalid distance code"))
+                   (when (< d +match-flag+) (err "invalid distance code"))
                    (let ((dist (+ (ldb (byte 15 4) d) (ldb (byte (logand d 15) 0) val))))
                    (declare (type index dist))
                    (br-drop (logand d 15))
-                   (when (> (+ dist base) op) (berr "distance too far back"))
+                   (when (> (+ dist base) op) (err "distance too far back"))
                    (copy-back-pointer op dist len))))
                (go top)
              done)))
         (setf fp (- op base))))))
-    (when error (berr error))
+    (when error (err error))
     (setf (reader-val r) val (reader-bits r) bits (reader-pos r) pos)
     (values fp status)))
 
@@ -292,11 +294,11 @@ the (possibly regrown) BUF and the new FP."
       (case type
         (0 (align-any r)
            (let* ((p (byte-pos r))
-                  (len (progn (when (> (+ p 4) (reader-limit r)) (berr "end of input"))
+                  (len (progn (when (> (+ p 4) (reader-limit r)) (err "end of input"))
                               (logior (aref (reader-in r) p) (ash (aref (reader-in r) (+ p 1)) 8))))
                   (nlen (logior (aref (reader-in r) (+ p 2)) (ash (aref (reader-in r) (+ p 3)) 8))))
-             (unless (= nlen (logxor len #xffff)) (berr "stored block length check failed"))
-             (when (> (+ p 4 len) (reader-limit r)) (berr "end of input"))
+             (unless (= nlen (logxor len #xffff)) (err "stored block length check failed"))
+             (when (> (+ p 4 len) (reader-limit r)) (err "end of input"))
              (setf buf (grow buf fp len))
              (replace buf (reader-in r) :start1 fp :start2 (+ p 4) :end2 (+ p 4 len))
              (incf fp len)
@@ -312,7 +314,7 @@ the (possibly regrown) BUF and the new FP."
                (if (eq status :end)
                    (return)
                    (setf buf (grow buf fp (max 4096 (length buf)))))))))
-        (t (berr "invalid block type")))
+        (t (err "invalid block type")))
       (when (= final 1) (return (values buf fp))))))
 
 (defun %inflate (in size-hint zlib)
@@ -323,12 +325,12 @@ the (possibly regrown) BUF and the new FP."
          (tail (reader-tail r)))
     (sb-sys:with-pinned-objects (in tail)
       (when zlib
-        (when (< len 2) (berr "end of input"))
+        (when (< len 2) (err "end of input"))
         (let ((cmf (aref in 0)) (flg (aref in 1)))
-          (unless (zerop (mod (+ (* 256 cmf) flg) 31)) (berr "header check failed"))
-          (unless (= (logand cmf 15) 8) (berr "unknown compression method"))
-          (when (> (ash cmf -4) 7) (berr "invalid window size"))
-          (when (logbitp 5 flg) (berr "preset dictionary required"))
+          (unless (zerop (mod (+ (* 256 cmf) flg) 31)) (err "header check failed"))
+          (unless (= (logand cmf 15) 8) (err "unknown compression method"))
+          (when (> (ash cmf -4) 7) (err "invalid window size"))
+          (when (logbitp 5 flg) (err "preset dictionary required"))
           (seek r 2)))
       (multiple-value-bind (buf fp)
           ;; + 258: the block loop wants room for a whole match before each
@@ -337,15 +339,15 @@ the (possibly regrown) BUF and the new FP."
                                       :element-type '(unsigned-byte 8))
                         0)
         (declare (type u8vec buf) (type index fp))
-        (when (> (- (* 8 (reader-pos r)) (reader-bits r)) (* 8 len)) (berr "end of input"))
+        (when (> (- (* 8 (reader-pos r)) (reader-bits r)) (* 8 len)) (err "end of input"))
         (when zlib
           (align-any r)
           (let ((p (byte-pos r)))
-            (when (> (+ p 4) len) (berr "end of input"))
+            (when (> (+ p 4) len) (err "end of input"))
             (unless (= (adler32 buf fp)
                        (logior (ash (aref in p) 24) (ash (aref in (+ p 1)) 16)
                                (ash (aref in (+ p 2)) 8) (aref in (+ p 3))))
-              (berr "Adler-32 check failed"))))
+              (err "Adler-32 check failed"))))
         (sb-kernel:%shrink-vector buf fp)))))
 
 (defun inflate (input &key size-hint)

@@ -28,8 +28,21 @@
 
 ;;; Out of line on purpose: every check in the decoders calls it, and only on
 ;;; corrupt input.
-(defun berr (fmt &rest args)
+(defun err (fmt &rest args)
   (error *error-type* :message (apply #'format nil fmt args)))
+
+;;; Signals the error FMT/ARGS when TEST is true.  A macro, so inside
+;;; INFLATE-BLOCK the ERR it expands to is that function's local one.
+(defmacro check-error (test fmt &rest args)
+  `(when ,test (err ,fmt ,@args)))
+
+;;; Signals the error FMT/ARGS unless TEST is true.
+(defmacro check-valid (test fmt &rest args)
+  `(unless ,test (err ,fmt ,@args)))
+
+;;; Signals "end of input" when reading up to END would go past LIMIT.
+(defmacro check-end (end limit)
+  `(check-error (> ,end ,limit) "end of input"))
 
 ;;; Long back-reference copies use 64-byte AVX-512 moves when SBCL has sb-simd
 ;;; with AVX512BW (the sb-simd-512 branch) *and* the compiling CPU supports

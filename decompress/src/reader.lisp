@@ -48,7 +48,8 @@
   "END, defaulting to IN's length, after checking 0 <= START <= END <= length."
   (let ((end (or end (length in))))
     (unless (<= 0 start end (length in))
-      (error "Bounds ~D..~D are not within an input of ~D bytes" start end (length in)))
+      (error "Bounds ~D..~D are not within an input of ~D bytes"
+             start end (length in)))
     end))
 
 (defmacro with-reader ((r) &body body)
@@ -64,7 +65,7 @@
      (setf val (logior val (ldb (byte 64 0)
                                 (ash (if (> (+ pos 8) limit)
                                          (progn
-                                           (when (> pos (+ limit 8)) (berr "end of input"))
+                                           (check-end pos (+ limit 8))
                                            (let ((%tail (reader-tail r)))
                                              (load64 %tail (- pos (reader-tbase r)))))
                                          (load64 in pos))
@@ -149,7 +150,7 @@ bits of VAL) was looked up already, e.g. before a refill."
   "Drop the bits up to the next byte boundary; they must be zero (sec. 9.2)."
   (with-reader (r)
     (let ((n (logand bits 7)))
-      (unless (zerop (ldb (byte n 0) val)) (berr "nonzero padding bits"))
+      (check-valid (zerop (ldb (byte n 0) val)) "nonzero padding bits")
       (br-drop n))))
 
 (defun byte-pos (r)
@@ -161,5 +162,5 @@ bits of VAL) was looked up already, e.g. before a refill."
 
 (defun skip-bytes (r n)
   (let ((p (+ (byte-pos r) n)))
-    (when (> p (reader-limit r)) (berr "end of input"))
+    (check-end p (reader-limit r))
     (seek r p)))

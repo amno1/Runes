@@ -45,7 +45,7 @@ optional inverse move-to-front."
         (cond ((zerop sym) (incf i))
               ((<= sym rlemax)
                (incf i (+ (ash 1 sym) (read-bits r sym)))
-               (when (> i size) (berr "context map run past its end")))
+               (check-error (> i size) "context map run past its end"))
               (t (setf (aref cmap i) (- sym rlemax)) (incf i)))))
     (when (= 1 (read-bit r))
       (let ((mtf (make-array 256 :element-type '(unsigned-byte 8))))
@@ -56,7 +56,7 @@ optional inverse move-to-front."
             (replace mtf mtf :start1 1 :end2 idx)
             (setf (aref mtf 0) v)))))
     (dotimes (k size cmap)
-      (when (>= (aref cmap k) ntrees) (berr "context map entry out of range")))))
+      (check-error (>= (aref cmap k) ntrees) "context map entry out of range"))))
 
 ;;; ---- copies and dictionary words --------------------------------------------
 
@@ -67,7 +67,8 @@ optional inverse move-to-front."
 
 ;;; One classification of (DIST, LEN) per back-reference, then a straight-line
 ;;; path per class that also sets P1/P2 (the last two output bytes, Brotli's
-;;; literal context) the cheapest way it can; deflate passes no P1/P2.  May write up to 63 bytes past the end; BUF is pinned.
+;;; literal context) the cheapest way it can; deflate passes no P1/P2.
+;;; May write up to 63 bytes past the end; BUF is pinned.
 (defmacro copy-back-reference (buf fp dist len &optional p1 p2)
   `(let* ((%src (- ,fp ,dist)) (%end (+ %src ,len)))
      (declare (type index %src %end) (ignorable %end))
@@ -131,14 +132,14 @@ optional inverse move-to-front."
   "Write the transformed static-dictionary word for (LEN, DIST) at FP, straight
 into BUF; return the new FP."
   (declare (type u8vec buf) (type index fp len dist max-dist target))
-  (unless (<= 4 len 24) (berr "dictionary copy length ~d out of range" len))
+  (check-valid (<= 4 len 24) "dictionary copy length ~d out of range" len)
   (let* ((nbits (svref +ndbits+ len))
          (word-id (- dist max-dist 1))
          (tid (ash word-id (- nbits)))
          (s (+ (svref +doffset+ len) (* (logand word-id (1- (ash 1 nbits))) len)))
          (e (+ s len)))
     (declare (type index s e))
-    (when (> tid 120) (berr "transform id ~d > 120" tid))
+    (check-error (> tid 120) "transform id ~d > 120" tid)
     (let* ((tr (svref +transforms+ tid))
            (prefix (svref tr 0)) (kind (svref tr 1)) (k (svref tr 2)) (suffix (svref tr 3)))
       (declare (type u8vec prefix suffix) (type fixnum kind k))
@@ -146,7 +147,7 @@ into BUF; return the new FP."
         (3 (setf s (min e (+ s k))))
         (4 (setf e (max s (- e k)))))
       (let* ((w0 (+ fp (length prefix))) (w1 (+ w0 (- e s))) (end (+ w1 (length suffix))))
-        (when (> end target) (berr "dictionary word overruns meta-block"))
+        (check-error (> end target) "dictionary word overruns meta-block")
         (replace buf prefix :start1 fp)
         (replace buf (dictionary) :start1 w0 :start2 s :end2 e)
         (replace buf suffix :start1 w1)
@@ -242,7 +243,7 @@ needs the window test."
                                      ((= %s 1) (let ((%x (1+ ,type))) (if (>= %x ,ntypes) 0 %x)))
                                      (t (- %s 2)))))
                     (declare (type index %new))
-                    (when (>= %new ,ntypes) (berr "block type ~d out of range" %new))
+                    (check-error (>= %new ,ntypes) "block type ~d out of range" %new)
                     (setf ,prev ,type ,type %new)
                     (let ((%c (aref blen (br-sym ,ctab))))
                       (setf ,count (+ (ash %c -5) (br-bits (logand %c 31)))))))
@@ -315,7 +316,7 @@ needs the window test."
                              (declare (type (integer 0 32) ndistbits))
                              (setf distance (+ (ash (+ offset dextra) npostfix)
                                                (logand d postfix-mask) ndirect 1)))))
-                      (when (< distance 1) (berr "invalid distance"))
+                      (check-error (< distance 1) "invalid distance")
                       (when (and (/= dcode 0) (<= distance (max-distance)))
                         (setf (aref rb (logand idx 3)) distance
                               (aref rb 4) (1+ idx))))))
@@ -324,7 +325,7 @@ needs the window test."
                  `(let ((max-dist (max-distance)))
                     (if (<= distance max-dist)
                         (progn
-                          (when (> clen (- target fp)) (berr "copy length overruns meta-block"))
+                          (check-error (> clen (- target fp)) "copy length overruns meta-block")
                           (copy-back-reference buf fp distance clen p1 p2))
                         (progn
                           (setf fp (dictionary-word buf fp clen distance max-dist target))
@@ -342,10 +343,10 @@ needs the window test."
             (case status
               ((0) (return))
               ((1 2 3 4))
-              (10 (berr "insert length overruns meta-block"))
-              (11 (berr "copy length overruns meta-block"))
-              (12 (berr "invalid distance"))
-              (t (berr "end of input")))
+              (10 (err "insert length overruns meta-block"))
+              (11 (err "copy length overruns meta-block"))
+              (12 (err "invalid distance"))
+              (t (err "end of input")))
             (when (> status 1)
               (setf cmd (aref st +st-cmd+) ilen (aref st +st-ilen+) clen (aref st +st-clen+))
               (when (= status 4) (setf distance (aref st +st-dist+)))))
@@ -360,7 +361,7 @@ needs the window test."
                   (ce (aref cmd-cpy cmd)))
               (setf ilen (+ (ash ie -5) (br-bits (logand ie 31)))
                     clen (+ (ash ce -5) (br-bits (logand ce 31)))))
-            (when (> ilen (- target fp)) (berr "insert length overruns meta-block")))
+            (check-error (> ilen (- target fp)) "insert length overruns meta-block"))
           (literal-run)
           (when (>= fp target) (return))
           (let ((idx (aref rb 4)))
@@ -371,7 +372,7 @@ needs the window test."
                   (t (explicit-distance)))
             (copy-or-dictionary)))))
     (setf (reader-val r) val (reader-bits r) bits (reader-pos r) pos)
-    (when (/= fp target) (berr "meta-block produced wrong length"))
+    (check-error (/= fp target) "meta-block produced wrong length")
     fp)))
 
 (defun compressed-meta-block (r buf fp mlen window rb)
@@ -426,7 +427,7 @@ for MLEN + slack).  Returns the new FP."
         (if (plusp n)
             (+ 17 n)
             (let ((m (read-bits r 3)))
-              (case m (0 17) (1 (berr "invalid window size")) (t (+ 8 m))))))))
+              (case m (0 17) (1 (err "invalid window size")) (t (+ 8 m))))))))
 
 (defun grow (buf fp n)
   "BUF with room for N more bytes (plus slack) after FP."
@@ -462,7 +463,7 @@ allocated once.  Signals BROTLI-ERROR on malformed input."
               (if (= mnibbles 3)
                   ;; metadata: skipped
                   (progn
-                    (when (plusp (read-bit r)) (berr "reserved bit set"))
+                    (check-error (plusp (read-bit r)) "reserved bit set")
                     (let ((nbytes (read-bits r 2)))   ; size of the length field
                       (if (zerop nbytes)
                           (align r)
@@ -475,7 +476,7 @@ allocated once.  Signals BROTLI-ERROR on malformed input."
                         (progn
                           (align r)
                           (let ((p (byte-pos r)))
-                            (when (> (+ p mlen) len) (berr "end of input"))
+                            (check-end (+ p mlen) len)
                             (replace buf in :start1 fp :start2 p :end2 (+ p mlen))
                             (seek r (+ p mlen))
                             (incf fp mlen)))
@@ -483,6 +484,6 @@ allocated once.  Signals BROTLI-ERROR on malformed input."
             (when (= islast 1) (return))))
         ;; the rest of the last byte is padding and must be zero
         (align r)
-        (when (> (- (* 8 (reader-pos r)) (reader-bits r)) (* 8 len)) (berr "end of input"))
+        (check-end (- (* 8 (reader-pos r)) (reader-bits r)) (* 8 len))
         ;; give back the unused tail in place instead of copying the output
         (sb-kernel:%shrink-vector buf fp)))))

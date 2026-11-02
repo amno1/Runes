@@ -735,7 +735,7 @@ Results in order (same-session A/B runs):
 
 1. `build-table` and `br-sym` generalised to any root size.
 2. As an `m8.64`; SBCL still spilled it (see below).
-3. Error checks record the message and leave the loop (a local inline `BERR`);
+3. Error checks record the message and leave the loop (a local inline `ERR`);
    the error is signalled afterwards. Stack references 98 → 69.
 4. Unrolled, as zlib-ng's fast path.
 5. Decode-table entries carry a match's base and extra bits (`build-table`'s

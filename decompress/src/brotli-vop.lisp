@@ -22,7 +22,7 @@
 
 (in-package #:decompress)
 
-;;; Word indices into ST.  The VOP reaches the distance tables and the ring
+;;; Word indices into ST. The VOP reaches the distance tables and the ring
 ;;; by index from +ST-DTAB+ and +ST-RB+, so each run of four must stay
 ;;; contiguous after its base (the numbered names only reserve the slots).
 (macrolet ((def (&rest names)
@@ -376,9 +376,10 @@
         (mapc #'funcall (reverse out-of-line))
         (emit-label done))))))))
 
-;;; As INFLATE-FAST: the VOP's twelve registers pack only where little else is
-;;; live, so it gets a function of its own.  It pins the objects whose
-;;; addresses go into ST for this call.
+;;; The VOP needs twelve registers at once. Inside COMMAND-LOOP too many other
+;;; values are in use around the call for SBCL to find twelve free registers,
+;;; so the VOP is called from this small function instead, as INFLATE-FAST
+;;; does. It also pins the objects whose addresses go into ST for this call.
 #+decompress-avx512
 (defun decompress::brotli-fast (val bits pos fp in buf tail st itab slice ctx d0 d1 d2 d3)
   (declare (optimize (speed 3) (safety 0) (debug 0))

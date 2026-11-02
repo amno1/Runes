@@ -240,10 +240,10 @@
           (mapc #'funcall (reverse out-of-line))
           (emit-label done)))))))
 
-;;; The VOP needs twelve registers, so it is called from this function of its
-;;; own, where nothing else is live; INFLATE-BLOCK calls it once per block.
-;;; (Inside INFLATE-BLOCK it packs only while that function's own register
-;;; use around the call happens to leave room.)
+;;; The VOP needs twelve registers at once, so it is called from this small
+;;; function, where nothing else needs a register; INFLATE-BLOCK calls it once
+;;; per block.  (Called inside INFLATE-BLOCK, it compiles only as long as that
+;;; function happens to leave twelve registers free around the call.)
 (defun decompress::inflate-fast (val bits pos fp in buf ltab dtab in-limit cap)
   (declare (optimize (speed 3) (safety 0) (debug 0))
            (type (unsigned-byte 64) val bits pos fp in-limit cap)

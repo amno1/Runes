@@ -85,7 +85,7 @@ it needs per symbol, e.g. a length base and extra-bit count)."
           (let ((s (if map (aref map (aref sorted i)) (aref sorted i))) (rev (aref revs i)))
             (if (<= l root-bits)
                 (loop for j of-type fixnum from rev below (ash 1 root-bits) by (ash 1 l)
-                      do (when (>= (logand (aref tab j) 31) 16) (berr "invalid prefix code"))
+                      do (check-error (>= (logand (aref tab j) 31) 16) "invalid prefix code")
                          (setf (aref tab j) (logior (ash s 5) l)))
                 (let* ((e (aref tab (logand rev rmask)))
                        (sub (ash e -5)) (sb (logand 7 (- (logand e 31) 16))))
@@ -116,11 +116,12 @@ it needs per symbol, e.g. a length base and extra-bit count)."
     (declare (dynamic-extent s l))
     (dotimes (i nsym)
       (let ((sym (read-bits r ab)))
-        (when (>= sym alphabet-size) (berr "prefix code symbol ~d out of range" sym))
+        (check-error (>= sym alphabet-size) "prefix code symbol ~d out of range" sym)
         (setf (aref s i) sym)))
     (loop for i from 1 below nsym
           do (loop for j from 0 below i
-                   do (when (= (aref s i) (aref s j)) (berr "duplicate prefix code symbol"))))
+                   do (check-error (= (aref s i) (aref s j))
+                        "duplicate prefix code symbol")))
     (ecase nsym
       (1)
       (2 (fill l 1 :end 2))
@@ -137,7 +138,8 @@ it needs per symbol, e.g. a length base and extra-bit count)."
                       (rotatef (aref l j) (aref l (1- j)))))
     (with-code-arrays (syms lens count 4)
       (dotimes (i nsym)
-        (setf (aref syms i) (aref s i) (aref lens i) (aref l i))
+        (setf (aref syms i) (aref s i)
+              (aref lens i) (aref l i))
         (incf (aref count (aref l i))))
       (build-table syms lens nsym count root-bits))))
 
@@ -169,7 +171,7 @@ it needs per symbol, e.g. a length base and extra-bit count)."
                     (incf m)
                     (incf (aref count len)))))
               ;; complete, unless it is a single (zero-bit) code
-              (unless (or (= m 1) (= space 32)) (berr "invalid code length code"))
+              (check-valid (or (= m 1) (= space 32)) "invalid code length code")
               (build-table syms lens m count 5)))))
     ;; the symbol code lengths, with repeat codes 16 (previous length) and 17
     ;; (zeros); only the used symbols are recorded
@@ -195,8 +197,8 @@ it needs per symbol, e.g. a length base and extra-bit count)."
                     (when (plusp repeat) (setf repeat (ash (- repeat 2) extra)))
                     (incf repeat (+ (read-bits r extra) 3))
                     (let ((delta (- repeat old)))
-                      (when (> (+ symbol delta) alphabet-size)
-                        (berr "code length repeat past the alphabet"))
+                      (check-error (> (+ symbol delta) alphabet-size)
+                        "code length repeat past the alphabet")
                       (if (plusp new-len)
                           (progn
                             (decf space (ash delta (- 15 new-len)))
@@ -208,7 +210,7 @@ it needs per symbol, e.g. a length base and extra-bit count)."
                                 (incf symbol))))
                           (setf symbol (min alphabet-size (+ symbol delta))))))))))
         ;; the lengths must describe a complete code, no more and no less
-        (unless (zerop space) (berr "incomplete or oversubscribed prefix code"))
+        (check-valid (zerop space) "incomplete or oversubscribed prefix code")
         (build-table syms lens m count root-bits)))))
 
 (defun read-prefix-code (r alphabet-size &optional (root-bits 8))
