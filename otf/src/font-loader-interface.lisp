@@ -106,10 +106,14 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
          (num-groups (min (runes/otf:cmap12-num-groups cmap12)
                           (max 0 (floor (- sub-len 16) 12)))))
     (flet ((group (i)
-             (let ((grp (runes/otf:cmap12-groups-ref cmap12 i)))
-               (values (runes/otf:sequential-map-group-start-char-code grp)
-                       (runes/otf:sequential-map-group-end-char-code grp)
-                       (runes/otf:sequential-map-group-start-glyph-id grp)))))
+             ;; SequentialMapGroup I: startCharCode, endCharCode and
+             ;; startGlyphID, read in place.  NUM-GROUPS keeps I inside the
+             ;; subtable.
+             (declare (type (unsigned-byte 32) i))
+             (let ((pos (+ sub-off 16 (* 12 i))))
+               (values (runes/otf:font-data-read-u32 fd pos)
+                       (runes/otf:font-data-read-u32 fd (+ pos 4))
+                       (runes/otf:font-data-read-u32 fd (+ pos 8))))))
       (setf (cmap-lookup-fn loader)
             (lambda (cp)
               ;; Binary search of the groups, which are sorted.
