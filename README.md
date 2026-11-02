@@ -6,14 +6,33 @@ installed fonts, loading and caching them, metrics, and line layout
 
 ## Systems & Packages
 
-- **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`, in `src/core/`): the font manager.  Font discovery, the `FONT` class, open font loaders, metrics, and glyph positions along a line (`layout-string`, `font-decorations`).  It draws nothing and rasterizes nothing, and depends on no graphics library.
-- **`runes/raster`** (package `RUNES/RASTER`, in `src/raster/`): rasterizes strings and single glyphs to A8 alpha maps with CL-VECTORS and CL-AA (`text-pixarray`, `layout-glyphs`, `glyph-image`).  A simple CPU text renderer, which the two bridges draw with.
-- **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`, in `src/xcb/`): text bridge for X11, drawing through XCB and RENDER glyph sets.
-- **`runes/wayland`** (package `RUNES/WAYLAND`, in `src/wayland/`): text bridge for client-side rendering, as on Wayland: cached glyph runs blended into the client's own pixels, through blend and fill functions the client passes, or into a plain `#x00RRGGBB` buffer.
-- Backward compatibility: `cl-truetype.asd` (now `runes` plus `runes/raster`) and `clxcb-truetype.asd` (`runes/xcb`) are provided as aliases.
-- **`runes/otf`** (package `RUNES/OTF`, nickname `OTF`, in `otf/`): the OpenType loader, formerly zpb-otf. Bounds-checked readers for ~50 OpenType tables, CFF/CFF2 charstrings (`runes/otf/charstring`), variable fonts, WOFF and WOFF2. MIT licensed; see `otf/README.md`.
-- **`zpb-ttf`** (`zpb-ttf.asd`, sources in `otf/src/`): the zpb-ttf API on top of `runes/otf`, kept so existing zpb-ttf programs work unchanged. BSD 2-Clause.
-- **`decompress`** (in `decompress/`): Brotli, zlib and raw deflate decoders with no dependencies, usable on their own. MIT licensed; see `decompress/README.md`.
+- **`runes`** (package `RUNES`, nicknames `TRUETYPE`, `CL-TRUETYPE`, in
+  `src/core/`): the font manager.  Font discovery, the `FONT` class, open font
+  loaders, metrics, and glyph positions along a line (`layout-string`,
+  `font-decorations`).  It draws nothing and rasterizes nothing, and depends on
+  no graphics library.
+- **`runes/raster`** (package `RUNES/RASTER`, in `src/raster/`): rasterizes
+  strings and single glyphs to A8 alpha maps with CL-VECTORS and CL-AA
+  (`text-pixarray`, `layout-glyphs`, `glyph-image`).  A simple CPU text
+  renderer, which the two bridges draw with.
+- **`runes/xcb`** (package `RUNES/XCB`, nicknames `XCB-TRUETYPE`, `XFT`, in
+  `src/xcb/`): text bridge for X11, drawing through XCB and RENDER glyph sets.
+- **`runes/wayland`** (package `RUNES/WAYLAND`, in `src/wayland/`): text bridge
+  for client-side rendering, as on Wayland: cached glyph runs blended into the
+  client's own pixels, through blend and fill functions the client passes, or
+  into a plain `#x00RRGGBB` buffer.
+- Backward compatibility: `cl-truetype.asd` (now `runes` plus `runes/raster`)
+  and `clxcb-truetype.asd` (`runes/xcb`) are provided as aliases.
+- **`runes/otf`** (package `RUNES/OTF`, nickname `OTF`, in `otf/`): the OpenType
+  loader, formerly zpb-otf. Bounds-checked readers for ~50 OpenType tables,
+  CFF/CFF2 charstrings (`runes/otf/charstring`), variable fonts, WOFF and
+  WOFF2. MIT licensed; see `otf/README.md`.
+- **`zpb-ttf`** (`zpb-ttf.asd`, sources in `otf/src/`): the zpb-ttf API on top
+  of `runes/otf`, kept so existing zpb-ttf programs work unchanged. BSD
+  2-Clause.
+- **`decompress`** (in `decompress/`): Brotli, zlib and raw deflate decoders
+  with no dependencies, usable on their own. MIT licensed; see
+  `decompress/README.md`.
 
 Antron renders text from `runes` alone: it takes fonts, metrics and
 layout from it and rasterizes the glyph outlines itself, so it does not
@@ -71,8 +90,8 @@ tables keyed on the connection.
 
 Load the system and build the font cache:
 
-    (asdf:load-system :clxcb-truetype)
-    (xcb-truetype:cache-fonts)
+    (asdf:load-system :runes/xcb)
+    (runes/xcb:cache-fonts)
 
 `cache-fonts` scans `*font-dirs*` (by default `/usr/share/fonts/`,
 `/usr/local/share/fonts/`, `~/.local/share/fonts/`, `~/.fonts/`, and on
@@ -87,10 +106,10 @@ Expose event for it:
     (xcb:with-x-connection (conn)
       (let* ((screen (first (xcb:conn-roots conn)))
              (win-id (xcb:generate-id conn))
-             (font   (make-instance 'xcb-truetype:font
-                                    :family    "DejaVu Sans"
-                                    :subfamily "Book"
-                                    :size      24)))
+             (font   (make-instance 'runes/xcb:font
+                                 :family    "DejaVu Sans"
+                                 :subfamily "Book"
+                                 :size      24)))
         (xcb:create-window conn 0 win-id (xcb:root screen) 100 100 400 200 0
                            xcb-const:+window-class-input-output+ 0
                            (logior xcb-const:+cw-back-pixel+
@@ -99,18 +118,18 @@ Expose event for it:
                            :event-mask xcb-const:+event-mask-exposure+)
         (xcb:map-window conn win-id)
         (xcb:flush conn)
-        (let ((win (make-instance 'xcb-truetype:window
-                                  :connection conn :id win-id :screen screen)))
+        (let ((win (make-instance 'runes/xcb:window
+                               :connection conn :id win-id :screen screen)))
           ;; ... wait for the window's Expose event, then:
-          (xcb-truetype:draw-text win font "Hello, clxcb-truetype" 10 60
-                                  :colour #xFFFFFF)
+          (runes/xcb:draw-text win font "Hello, Runes" 10 60
+                               :colour #xFFFFFF)
           (xcb:flush conn))))
 
 `examples/hello.lisp` is the complete program, with the event loop.
 Load and run it with:
 
     (load "examples/hello.lisp")
-    (clxcb-truetype-example:hello)
+    (runes-example:hello)
 
 You should see a simple message:
 
@@ -320,11 +339,11 @@ for everyone who worked on it, and for what is known of the history.
 
 ## History
 
-According to online research, clx-truetype grew out of the TrueType
-rendering written for McCLIM by Gilbert Baumann and Andy Hefner; we
-have not had this confirmed by them (see `AUTHORS`).  It was written
-and maintained by Michael Filonenko.  It is the standard text renderer for [StumpWM][stumpwm],
-via the [ttf-fonts][ttf-fonts] contrib module.
+According to online research, clx-truetype grew out of the TrueType rendering
+written for McCLIM by Gilbert Baumann and Andy Hefner; we have not had this
+confirmed by them (see `AUTHORS`).  It was written and maintained by Michael
+Filonenko.  It is the standard text renderer for [StumpWM][stumpwm], via the
+[ttf-fonts][ttf-fonts] contrib module.
 
 clxcb-truetype, now Runes, ported the X-specific portions of that library to XCB
 while keeping the client-side rasterization pipeline intact.
