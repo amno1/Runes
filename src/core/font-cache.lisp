@@ -38,12 +38,20 @@
   "Add the fonts in PATHNAME to CACHE, a table like *FONT-CACHE*: one font,
    or every font of a collection.  The file is read, and a WOFF or WOFF2
    file decoded, once for all of them.  A font in a collection is cached
-   as (PATHNAME . INDEX), any other as PATHNAME."
+   as (PATHNAME . INDEX), any other as PATHNAME.  A font already cached
+   from a file of a better format (see FORMAT-RANK) is kept."
   (flet ((add (font source)
-           (let ((subfamilies (or (gethash (zpb-ttf:family-name font) cache)
-                                  (setf (gethash (zpb-ttf:family-name font) cache)
-                                        (make-hash-table :test 'equal)))))
-             (setf (gethash (zpb-ttf:subfamily-name font) subfamilies) source))))
+           ;; A font without a family or subfamily name cannot be asked for
+           (let ((family (zpb-ttf:family-name font))
+                 (subfamily (zpb-ttf:subfamily-name font)))
+             (when (and family subfamily)
+               (let* ((subfamilies (or (gethash family cache)
+                                       (setf (gethash family cache)
+                                             (make-hash-table :test 'equal))))
+                      (old (gethash subfamily subfamilies)))
+                 (when (or (null old)
+                           (<= (format-rank source) (format-rank old)))
+                   (setf (gethash subfamily subfamilies) source)))))))
     ;; A file or a font that zpb-ttf cannot read is skipped; warnings are
     ;; not errors, and go on to the caller.
     (let ((data (handler-case (%sfnt-data pathname)
@@ -70,6 +78,15 @@
           (#x774F4646 (runes/otf:decode-woff1 data)) ; 'wOFF'
           (#x774F4632 (runes/otf:decode-woff2 data)) ; 'wOF2'
           (t data)))))
+
+(defun format-rank (source)
+  "How much a font cache entry is preferred over another of the same font:
+   0 for a plain TrueType or OpenType file, 1 for WOFF and 2 for WOFF2,
+   which have to be decoded every time they are opened, WOFF2 more slowly."
+  (let ((type (pathname-type (if (consp source) (car source) source))))
+    (cond ((string-equal type "woff") 1)
+          ((string-equal type "woff2") 2)
+          (t 0))))
 
 (defparameter *font-file-types* '("ttf" "otf" "ttc" "otc" "woff" "woff2")
   "The file types CACHE-FONTS reads.")

@@ -244,6 +244,17 @@ replace @code{*font-cache*} with what is found.  Every font of a
 collection is indexed.  The scan builds a new table and swaps it in
 when done, so other threads go on finding fonts meanwhile.  Call it
 once per image, and again after installing fonts.
+
+A font without a family or subfamily name is left out, since it cannot
+be asked for.  The cache holds one file per family and subfamily.  When
+two fonts have the same names, as when a font is installed in two
+formats, a plain TrueType or OpenType file is preferred over WOFF, and
+WOFF over WOFF2, since web fonts are decoded every time they are
+opened.  Between two files of the same kind, the one scanned later
+replaces the other: a font installed as both @file{.ttf} and
+@file{.otf}, or a collection whose fonts share their names.  Files in a
+directory are scanned before its subdirectories, in the order the file
+system lists them.
 @end defun
 
 @defvar *font-file-types*
