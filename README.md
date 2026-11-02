@@ -7,18 +7,17 @@ installed fonts, loading and caching them, metrics, and line layout
 ## Overview
 
 `runes` is meant to be a complete stop for managing and using fonts in Common
-Lisp. It aims to do Freetype's job of loading fonts and serving font metrics, as
-well as fontservers job of discovering and caching fonts. The aim is similar to
+Lisp. It aims to do Freetype's job of loading fonts and serving font metrics, 
+fontserver job of discovering and caching fonts. The aim is similar to
 Google's Fontations. The idea is that we should not have to call into foreign
 function libraries (Freetype, fontconfig, etc).
 
 Provided are:
 
 - `runes`: the font manager: finding the installed fonts, loading and caching
-  them, metrics, and line layout.  It draws nothing.
+  them, metrics, and line layout.
 - `runes/raster`: a simple CPU renderer that rasterizes glyphs to 8-bit alpha
-  maps with cl-vectors and cl-aa, cached per face.  `runes/raster-antron` does
-  the same with Antron's rasterizer.
+  maps with cl-vectors and cl-aa, cached per face.
 - `runes/xcb`: draws text on X11 through RENDER glyph sets, as Xft does.
 - `runes/wayland`: draws text into pixels the client owns, as on Wayland.
 - `zpb-ttf`: the zpb-ttf font loader API, on top of `runes/otf`, so zpb-ttf
