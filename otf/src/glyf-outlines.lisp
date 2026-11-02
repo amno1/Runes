@@ -26,46 +26,55 @@
 
 ;;; Reading a simple glyph
 
+(defun read-point-flags (fd pos n)
+  "The N point flags at POS, a flag with the repeat bit followed by its
+repeat count; and the position after them."
+  (let ((flags (make-array n :element-type '(unsigned-byte 8)))
+        (i 0))
+    (loop while (< i n)
+          do (let ((flag (runes/otf:font-data-read-u8 fd pos))
+                   (repeats 0))
+               (incf pos)
+               (when (logbitp 3 flag)
+                 (setf repeats (runes/otf:font-data-read-u8 fd pos))
+                 (incf pos))
+               ;; A repeat past the last point is dropped.
+               (loop repeat (min (1+ repeats) (- n i))
+                     do (setf (aref flags i) flag)
+                        (incf i))))
+    (values flags pos)))
+
 (defun read-simple-points (fd pos contour-count)
   "End points, x and y coordinates and on-curve flags of the simple glyph
 whose contour count is at POS - 10, as four vectors."
   (let ((ends (make-array contour-count)))
     (dotimes (i contour-count)
-      (setf (aref ends i) (runes/otf:font-data-read-u16 fd pos))
-      (incf pos 2))
+      (setf (aref ends i) (runes/otf:font-data-read-u16 fd (+ pos (* 2 i)))))
+    (incf pos (* 2 contour-count))
     (let* ((n (if (zerop contour-count) 0 (1+ (aref ends (1- contour-count)))))
-           (flags (make-array n :element-type '(unsigned-byte 8)))
            (xs (make-array n))
            (ys (make-array n)))
+      ;; Skip the instructions.
       (incf pos (+ 2 (runes/otf:font-data-read-u16 fd pos)))
-      (let ((i 0))
-        (loop while (< i n)
-              do (let ((flag (runes/otf:font-data-read-u8 fd pos)))
-                   (incf pos)
-                   (setf (aref flags i) flag)
-                   (incf i)
-                   (when (logbitp 3 flag)
-                     (let ((repeats (runes/otf:font-data-read-u8 fd pos)))
-                       (incf pos)
-                       (loop repeat repeats
-                             while (< i n)
-                             do (setf (aref flags i) flag)
-                                (incf i)))))))
-      (flet ((coordinates (out short-bit same-bit)
-               (let ((current 0))
-                 (dotimes (j n)
-                   (let ((flag (aref flags j)))
-                     (incf current
-                           (cond ((logbitp short-bit flag)
-                                  (let ((v (runes/otf:font-data-read-u8 fd pos)))
-                                    (incf pos)
-                                    (if (logbitp same-bit flag) v (- v))))
-                                 ((logbitp same-bit flag) 0)
-                                 (t (prog1 (runes/otf:font-data-read-i16 fd pos) (incf pos 2)))))
-                     (setf (aref out j) current))))))
-        (coordinates xs 1 4)
-        (coordinates ys 2 5))
-      (values ends xs ys (map 'vector (lambda (f) (logbitp 0 f)) flags)))))
+      (multiple-value-bind (flags flags-end) (read-point-flags fd pos n)
+        (setf pos flags-end)
+        (flet ((coordinates (out short-bit same-bit)
+                 ;; Each a byte (sign from SAME-BIT), the previous value
+                 ;; (SAME-BIT without SHORT-BIT), or a word.
+                 (let ((current 0))
+                   (dotimes (j n)
+                     (let ((flag (aref flags j)))
+                       (incf current
+                             (cond ((logbitp short-bit flag)
+                                    (let ((v (runes/otf:font-data-read-u8 fd pos)))
+                                      (incf pos)
+                                      (if (logbitp same-bit flag) v (- v))))
+                                   ((logbitp same-bit flag) 0)
+                                   (t (prog1 (runes/otf:font-data-read-i16 fd pos) (incf pos 2)))))
+                       (setf (aref out j) current))))))
+          (coordinates xs 1 4)
+          (coordinates ys 2 5))
+        (values ends xs ys (map 'vector (lambda (f) (logbitp 0 f)) flags))))))
 
 ;;; Phantom points
 
@@ -186,69 +195,79 @@ whose contour count is at POS - 10, as four vectors."
   (let ((a (abs a)) (b (abs b)))
     (if (> a b) (+ a (ash (* 3 b) -3)) (+ b (ash (* 3 a) -3)))))
 
+(defun read-components (fd pos)
+  "The component records of the composite glyph at POS, in order."
+  (loop for p = pos then next
+        for (component next) = (multiple-value-list (read-component fd p))
+        collect component
+        while (logbitp 5 (getf component :flags))))
+
+(defun transform-component-points (xs ys start end m)
+  "Apply the 2x2 matrix M to points START below END."
+  (loop for j from start below end
+        for x = (aref xs j)
+        for y = (aref ys j)
+        ;; Font units taken as raw 16.16, as FreeType does.
+        do (setf (aref xs j) (f+ (f* x (aref m 0)) (f* y (aref m 2)))
+                 (aref ys j) (f+ (f* x (aref m 1)) (f* y (aref m 3))))))
+
+(defun component-offset (component gid xs ys point-base start end delta-x delta-y)
+  "The offset of a component whose points are START below END: its x and y
+arguments, plus the variation deltas DELTA-X and DELTA-Y (16.16, or NIL),
+or the distance that moves its point ARG2 onto the glyph's point ARG1."
+  (if (getf component :xy)
+      (let ((x (getf component :arg1))
+            (y (getf component :arg2))
+            (m (getf component :transform)))
+        ;; SCALED_COMPONENT_OFFSET without UNSCALED_COMPONENT_OFFSET.
+        (when (and (getf component :transformed)
+                   (= (logand (getf component :flags) #x1800) #x0800))
+          (setf x (f* x (hypot-fixed (aref m 0) (aref m 2)))
+                y (f* y (hypot-fixed (aref m 3) (aref m 1)))))
+        (if delta-x
+            (values (+ x (fixed-round delta-x)) (+ y (fixed-round delta-y)))
+            (values x y)))
+      (let ((base (+ point-base (getf component :arg1)))
+            (child (+ start (getf component :arg2))))
+        (unless (and (< base start) (< child end))
+          (error 'unsupported-value
+                 :description "Compound glyph anchor point out of range"
+                 :location (format nil "glyph ~D" gid)
+                 :actual-value (list (getf component :arg1) (getf component :arg2))
+                 :expected-values '("existing point indices")))
+        (values (- (aref xs base) (aref xs child))
+                (- (aref ys base) (aref ys child))))))
+
 (defun load-composite-points (loader gid pos phantom out coords)
-  (let ((fd (font-data loader)))
-    (let ((components '()) (p pos))
-      ;; Read the component records, up to the last one.
-      (loop (multiple-value-bind (component next) (read-component fd p)
-              (push component components)
-              (setf p next)
-              (unless (logbitp 5 (getf component :flags)) (return))))
-      (setf components (nreverse components))
-      (let* ((count (+ (length components) 4))
-             (data (and coords (gvar-glyph-data loader gid)))
-             (dx nil) (dy nil)
-             (point-base (fill-pointer (op-xs out))))
-        (when data
-          (multiple-value-setq (dx dy) (composite-glyph-deltas data coords count))
-          (when dx
-            (setf phantom (add-phantom-deltas phantom dx dy (- count 4)))))
-        (loop for component in components
-              for i from 0
-              do (let* ((start (fill-pointer (op-xs out)))
-                        (component-phantom (load-glyph-points loader (getf component :glyph) out coords))
-                        (end (fill-pointer (op-xs out)))
-                        (flags (getf component :flags))
-                        (xs (op-xs out))
-                        (ys (op-ys out)))
-                   ;; USE_MY_METRICS takes the component's phantom points.
-                   (when (logbitp 9 flags)
-                     (setf phantom component-phantom))
-                   (when (getf component :transformed)
-                     (let ((m (getf component :transform)))
-                       (loop for j from start below end
-                             do (let ((x (aref xs j)) (y (aref ys j)))
-                                  ;; Font units taken as raw 16.16, as FreeType does.
-                                  (setf (aref xs j) (f+ (f* x (aref m 0)) (f* y (aref m 2)))
-                                        (aref ys j) (f+ (f* x (aref m 1)) (f* y (aref m 3))))))))
-                   (multiple-value-bind (ox oy)
-                       (if (getf component :xy)
-                           (let ((x (getf component :arg1)) (y (getf component :arg2))
-                                 (m (getf component :transform)))
-                             ;; SCALED_COMPONENT_OFFSET without UNSCALED_COMPONENT_OFFSET.
-                             (when (and (getf component :transformed)
-                                        (= (logand flags #x1800) #x0800))
-                               (setf x (f* x (hypot-fixed (aref m 0) (aref m 2)))
-                                     y (f* y (hypot-fixed (aref m 3) (aref m 1)))))
-                             (if dx
-                                 (values (+ x (fixed-round (aref dx i))) (+ y (fixed-round (aref dy i))))
-                                 (values x y)))
-                           ;; Point matching: the component's point ARG2 onto point ARG1.
-                           (let ((base (+ point-base (getf component :arg1)))
-                                 (child (+ start (getf component :arg2))))
-                             (unless (and (< base start) (< child end))
-                               (error 'unsupported-value
-                                      :description "Compound glyph anchor point out of range"
-                                      :location (format nil "glyph ~D" gid)
-                                      :actual-value (list (getf component :arg1) (getf component :arg2))
-                                      :expected-values '("existing point indices")))
-                             (values (- (aref xs base) (aref xs child))
-                                     (- (aref ys base) (aref ys child)))))
-                     (unless (and (zerop ox) (zerop oy))
-                       (loop for j from start below end
-                             do (incf (aref xs j) ox)
-                                (incf (aref ys j) oy))))))
-        phantom))))
+  (let* ((components (read-components (font-data loader) pos))
+         (count (+ (length components) 4))
+         (data (and coords (gvar-glyph-data loader gid)))
+         (dx nil) (dy nil)
+         (point-base (fill-pointer (op-xs out))))
+    (when data
+      (multiple-value-setq (dx dy) (composite-glyph-deltas data coords count))
+      (when dx
+        (setf phantom (add-phantom-deltas phantom dx dy (- count 4)))))
+    (loop for component in components
+          for i from 0
+          do (let* ((start (fill-pointer (op-xs out)))
+                    (component-phantom (load-glyph-points loader (getf component :glyph) out coords))
+                    (end (fill-pointer (op-xs out)))
+                    (xs (op-xs out))
+                    (ys (op-ys out)))
+               ;; USE_MY_METRICS takes the component's phantom points.
+               (when (logbitp 9 (getf component :flags))
+                 (setf phantom component-phantom))
+               (when (getf component :transformed)
+                 (transform-component-points xs ys start end (getf component :transform)))
+               (multiple-value-bind (ox oy)
+                   (component-offset component gid xs ys point-base start end
+                                     (and dx (aref dx i)) (and dy (aref dy i)))
+                 (unless (and (zerop ox) (zerop oy))
+                   (loop for j from start below end
+                         do (incf (aref xs j) ox)
+                            (incf (aref ys j) oy))))))
+    phantom))
 
 (defun glyph-outline-points (loader gid)
   "The outline points of GID at LOADER's instance, and its phantom points."
