@@ -345,62 +345,60 @@ BLEND-STATE is required for a CFF2 Private DICT that uses blend or vsindex.
 With UNHINTED-PRIVATE, only the entries an unhinted subfont needs are
 returned, though every operand is still parsed."
   (let* ((c (charstring-cursor dict))
-         (start (cursor-pos c))
          (stack (make-stack))
          (last-bcd nil)
          ;; Where the operands of the operator being read begin, for the
          ;; FontMatrix re-parse.
-         (operands-pos start)
+         (operands-pos (cursor-pos c))
          (entries '()))
-    (flet ((err (condition) (push (cons :error condition) entries)))
+    (labels ((err (condition)
+               (push (cons :error condition) entries))
+             (number (b0)
+               (if (= b0 30)
+                   (let ((bcd (parse-bcd c)))
+                     (stack-push-fixed stack (bcd-value bcd))
+                     (setf last-bcd bcd))
+                   (progn (setf last-bcd nil)
+                          (stack-push-int stack (parse-int c b0)))))
+             (operator (op)
+               (cond
+                 ;; FreeType ignores unknown operators and clears the stack.
+                 ((null op) (stack-clear stack))
+                 ((and (member op '(:blend :vsindex)) (null blend-state))
+                  (err (make-condition 'charstring-missing-resource
+                                       :message "blend or vsindex without a blend state")))
+                 ((eq op :blend) (stack-apply-blend stack blend-state))
+                 (t (entry op))))
+             (entry (op)
+               (when (eq op :vsindex)
+                 (blend-set-store-index blend-state (ldb (byte 16 0) (stack-get-int stack 0))))
+               (when (and (eq op :blue-scale) last-bcd)
+                 ;; FreeType computes BlueScale with a factor of 1000.
+                 (stack-pop-fixed stack)
+                 (stack-push-fixed stack (bcd-value last-bcd t)))
+               (let ((keep (or (not unhinted-private)
+                               (member op *unhinted-private-operators*))))
+                 (setf last-bcd nil)
+                 (if (eq op :font-matrix)
+                     ;; Re-parse the operands with dynamic scaling.
+                     (let ((matrix (progn
+                                     (stack-clear stack)
+                                     (parse-font-matrix
+                                      (make-cursor (cursor-bytes c) operands-pos (cursor-end c))))))
+                       (when (and matrix keep)
+                         (push (cons :font-matrix matrix) entries)))
+                     (unwind-protect
+                          (when keep
+                            (push (cons op (parse-dict-entry op stack)) entries))
+                       (stack-clear stack)
+                       (setf operands-pos (cursor-pos c)))))))
       (loop while (plusp (cursor-remaining c))
             do (handler-case
                    (let ((b0 (cursor-u8 c)))
-                     (cond
-                       ((or (= b0 28) (= b0 29) (<= 32 b0 254))
-                        (setf last-bcd nil)
-                        (stack-push-int stack (parse-int c b0)))
-                       ((= b0 30)
-                        (let ((bcd (parse-bcd c)))
-                          (stack-push-fixed stack (bcd-value bcd))
-                          (setf last-bcd bcd)))
-                       (t
-                        (let ((op (gethash (if (= b0 12) (+ 1200 (cursor-u8 c)) b0)
-                                           *dict-operators*)))
-                          (cond
-                            ;; FreeType ignores unknown operators and clears the stack.
-                            ((null op) (stack-clear stack))
-                            ((and (member op '(:blend :vsindex)) (null blend-state))
-                             (err (make-condition 'charstring-missing-resource
-                                                  :message "blend or vsindex without a blend state")))
-                            ((eq op :blend)
-                             (stack-apply-blend stack blend-state))
-                            (t
-                             (when (eq op :vsindex)
-                               (blend-set-store-index blend-state
-                                                      (ldb (byte 16 0) (stack-get-int stack 0))))
-                             (let ((keep (or (not unhinted-private)
-                                             (member op *unhinted-private-operators*))))
-                               (when (and (eq op :blue-scale) last-bcd)
-                                 ;; FreeType computes BlueScale with a factor of 1000.
-                                 (stack-pop-fixed stack)
-                                 (stack-push-fixed stack (bcd-value last-bcd t)))
-                               (cond
-                                 ((eq op :font-matrix)
-                                  ;; Re-parse the operands with dynamic scaling.
-                                  (stack-clear stack)
-                                  (setf last-bcd nil)
-                                  (let ((matrix (parse-font-matrix
-                                                 (make-cursor (cursor-bytes c) operands-pos (cursor-end c)))))
-                                    (when (and matrix keep)
-                                      (push (cons :font-matrix matrix) entries))))
-                                 (t
-                                  (setf last-bcd nil)
-                                  (unwind-protect
-                                       (when keep
-                                         (push (cons op (parse-dict-entry op stack)) entries))
-                                    (stack-clear stack)
-                                    (setf operands-pos (cursor-pos c))))))))))))
+                     (if (or (<= 28 b0 30) (<= 32 b0 254))   ; 31 is an operator
+                         (number b0)
+                         (operator (gethash (if (= b0 12) (+ 1200 (cursor-u8 c)) b0)
+                                            *dict-operators*))))
                  (charstring-error (e) (err e)))))
     (nreverse entries)))
 
