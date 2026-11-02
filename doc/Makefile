@@ -1,9 +1,11 @@
 # Builds the Runes manual from runes.texi.
 #   make          runes.info, for Emacs and info
 #   make html     runes.html, one page
-#   make pdf      runes.pdf (needs TeX)
+#   make pdf      runes.pdf
+# All need Texinfo (makeinfo, texi2pdf); the PDF also needs TeX, such as
+# TeX Live (pdftex and the texinfo.tex macros).
 
-all: runes.info
+all: runes.info runes.pdf
 
 runes.info: runes.texi
 	makeinfo runes.texi

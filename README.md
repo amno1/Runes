@@ -112,8 +112,9 @@ the font manager, the rasterizer, both bridges, the zpb-ttf loader,
 the OpenType tables, the CFF interpreter and the decompressors.  Build
 it with `make -C doc` and read it in Emacs with `C-u C-h i
 doc/runes.info`, or with `info -f doc/runes.info`.  `make -C doc html`
-gives one HTML page.  `doc/design-notes.md` explains the design
-changes from clx-truetype.
+gives one HTML page, and `make -C doc pdf` a PDF.  Building the manual
+needs Texinfo; the PDF also needs TeX, such as TeX Live.
+`doc/design-notes.md` explains the design changes from clx-truetype.
 
 ## Systems & Packages
 
