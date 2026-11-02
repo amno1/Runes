@@ -98,6 +98,23 @@ phantom point."
                               (= (zpb-ttf:left-side-bearing g)
                                  (- (zpb-ttf:xmin g) (car (aref (zpb-ttf::%phantom-points g) 0))))))))))
 
+;;; avar 2.0, with the normalized coordinates Fontations' fvar.rs tests expect.
+
+(defun normalized-bits (file coordinates)
+  (zpb-ttf:with-font-loader (loader (merge-pathnames file *test-fonts-dir*))
+    (mapcar (lambda (c) (* c 16384)) (zpb-ttf::normalize-coordinates loader coordinates))))
+
+(defun check-avar2 ()
+  (loop for (user expected) in '(((("AVAR" . 100) ("AVWK" . 0)) (16384 16384))
+                                 ((("AVAR" . 50) ("AVWK" . 0)) (8192 8192))
+                                 ((("AVAR" . 0) ("AVWK" . 50)) (0 8192)))
+        do (check (format nil "avar2checker: ~S normalizes as Fontations does" user)
+                  (equal (normalized-bits "avar2checker.ttf" user) expected)))
+  ;; Hidden axes moved by avar 2.0 at wght=1000, one of them clamped to 1.
+  (let ((n (normalized-bits "Amstelvar-avar2.A.ttf" '(("wght" . 1000)))))
+    (check "Amstelvar-avar2.A: hidden axes follow avar 2.0, clamped to 1"
+           (equal (list (nth 1 n) (nth 2 n) (nth 3 n) (nth 11 n)) '(-5370 16384 2254 16384)))))
+
 (defun run-gvar-tests ()
   (let ((runes/otf/charstring-test::*failures* 0)
         (runes/otf/charstring-test::*count* 0))
@@ -110,6 +127,7 @@ phantom point."
         (check (format nil "~A: ~D outlines match FreeType" name count) (zerop bad))))
     (dolist (name '("vazirmatn_var_trimmed.ttf" "hvar_with_truncated_adv_index_map.ttf"))
       (check-side-bearings name))
+    (check-avar2)
     (format t "~%Results: ~D tests run, ~D failures.~%"
             runes/otf/charstring-test::*count* runes/otf/charstring-test::*failures*)
     (unless (zerop runes/otf/charstring-test::*failures*)

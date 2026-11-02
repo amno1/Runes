@@ -14,6 +14,8 @@ license. Full license texts are in `licenses/`.
 | `chromacheck-cbdt.ttf`, `chromacheck-colr.ttf`, `chromacheck-sbix.ttf`, `chromacheck-svg.ttf` | © 2018 Roel Nieskens; © 2018 Google LLC | MIT (`licenses/ChromaCheck.txt`) | https://github.com/RoelN/ChromaCheck |
 | `vazirmatn_var_trimmed.ttf` | The Vazirmatn project (Saber Rastikerdar); subset by the Fontations authors | SIL OFL 1.1 (`licenses/OFL.txt`) | https://github.com/rastikerdar/vazirmatn, via Fontations' `font-test-data` |
 | `material_symbols_subset.ttf` | © 2020-2022 Google LLC; subset by the Fontations authors | Apache 2.0 (`licenses/Apache-2.0.txt`) | Google Material Symbols, via Fontations' `font-test-data` |
+| `avar2checker.ttf` ("avar2 checker") | The fencer project authors (the font has no copyright notice) | Apache 2.0 (`licenses/Apache-2.0.txt`) | https://github.com/Lorp/fencer (`src/fonts`), via Fontations' `font-test-data` |
+| `Amstelvar-avar2.A.ttf` | The Amstelvar avar2 project authors (no copyright notice in the font); subset by the Fontations authors | SIL OFL 1.1 (`licenses/OFL.txt`) | https://github.com/googlefonts/amstelvar-avar2, via Fontations' `font-test-data` |
 | `hvar_with_truncated_adv_index_map.ttf`, `glyf_components.ttf` | © 2019 Fontations Developers (test fonts made for Fontations) | MIT (`licenses/Fontations-MIT.txt`) | https://github.com/googlefonts/fontations (`font-test-data`) |
 
 `reference/` holds the outlines FreeType 2.13 produces for the last four fonts,

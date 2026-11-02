@@ -29,7 +29,7 @@ Fonts with PostScript outlines, in a `CFF ` or `CFF2` table, are drawn by the `r
             (zpb-ttf:cubic-contours glyph))))
 ```
 
-Note: CFF support is still a work in progress. For example, glyphs built with the old `seac` operator signal an error, and `avar` 2.0 mappings are not applied; `doc/font-loader-details.md` lists what is not supported.
+Note: CFF support is still a work in progress. For example, glyphs built with the old `seac` operator signal an error; `doc/font-loader-details.md` lists what is not supported.
 
 WOFF and WOFF2 are web font formats: an OpenType font with its tables compressed, with zlib in WOFF and with Brotli in WOFF2 (WOFF2 also transforms the glyf, loca and hmtx tables to compress better). We only decompress. `open-font-loader` and `with-font-loader` recognise both formats and open them like any other font; `collection-index` picks a font of a WOFF2 collection. `otf:decode-woff1` and `otf:decode-woff2` unpack a file to a plain sfnt in memory (a WOFF2 collection becomes a TTC), and `otf:decode-woff1-metadata` and `otf:woff1-private-data` return a WOFF file's extended metadata and private data blocks:
 

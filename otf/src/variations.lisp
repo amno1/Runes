@@ -8,7 +8,8 @@
 ;;; TrueType outlines (with 'gvar', see gvar.lisp and glyf-outlines.lisp) are
 ;;; then drawn at that instance, advances and side bearings follow 'HVAR' and
 ;;; 'VVAR' or, without them, the phantom points, and the font-wide metrics
-;;; follow 'MVAR'. 'avar' 2.0 mappings beyond the segment maps are not applied.
+;;; follow 'MVAR'. An 'avar' 2.0 table's mappings are applied after its
+;;; segment maps, as Fontations and HarfBuzz do.
 
 (in-package #:zpb-ttf)
 
@@ -60,20 +61,81 @@ axis of LOADER's font, in user units; NIL for a font that does not vary.")
 ;;; avar 1.0 segment maps
 
 (defun avar-segment-maps (loader)
-  "For each axis, a vector of (from . to) 16.16 pairs from 'avar', or NIL."
+  "For each axis, a vector of (from . to) 16.16 pairs from 'avar', or NIL.
+The second value is the position just past the segment maps."
   (let ((info (table-info "avar" loader)))
     (when info
       (let* ((fd (font-data loader))
              (avar (runes/otf:read-avar fd (offset info) (size info)))
-             (pos (runes/otf:avar-axis-segment-maps-start avar)))
-        (loop repeat (runes/otf:avar-axis-count avar)
-              collect (let ((count (runes/otf:font-data-read-u16 fd pos)))
-                        (prog1 (coerce (loop for i below count
-                                             for p = (+ pos 2 (* i 4))
-                                             collect (cons (f2dot14-bits->fixed (runes/otf:font-data-read-i16 fd p))
-                                                           (f2dot14-bits->fixed (runes/otf:font-data-read-i16 fd (+ p 2)))))
-                                       'vector)
-                          (incf pos (+ 2 (* count 4))))))))))
+             (start (runes/otf:avar-axis-segment-maps-start avar))
+             (axis-count (runes/otf:avar-axis-count avar)))
+        (flet ((coord (p)
+                 (f2dot14-bits->fixed (runes/otf:font-data-read-i16 fd p))))
+          (if (zerop axis-count)
+              (values nil start)
+              ;; Each map is a count and COUNT (from to) pairs, and the next
+              ;; axis's map follows it.  I is stepped first, so the loop ends
+              ;; before reading past the last map.
+              (loop for i below axis-count
+                    for pos = start then (+ pos 2 (* count 4))
+                    for count = (runes/otf:font-data-read-u16 fd pos)
+                    collect (coerce (loop repeat count
+                                          for p from (+ pos 2) by 4
+                                          collect (cons (coord p) (coord (+ p 2))))
+                                    'vector)
+                      into maps
+                    finally (return (values maps (+ pos 2 (* count 4)))))))))))
+
+;;; avar 2.0: after the segment maps, each axis's coordinate moves by a
+;;; delta from an ItemVariationStore, computed at the coordinates the
+;;; segment maps gave (Fvar::user_to_normalized in Fontations).
+
+(defun avar2-mapping (loader maps-end)
+  "The ItemVariationStore of an 'avar' 2.0 table and the position of its
+axis index map (or NIL), from the offsets at MAPS-END; NIL for 'avar' 1.0
+or a table without a store."
+  (let* ((info (table-info "avar" loader))
+         (fd (font-data loader))
+         (start (offset info)))
+    (when (and (= (runes/otf:font-data-read-u16 fd start) 2)
+               (<= (+ maps-end 8) (+ start (size info))))
+      (let ((map-offset (runes/otf:font-data-read-u32 fd maps-end))
+            (store-offset (runes/otf:font-data-read-u32 fd (+ maps-end 4))))
+        (unless (zerop store-offset)
+          (values (runes/otf:read-item-variation-store fd (+ start store-offset))
+                  (unless (zerop map-offset) (+ start map-offset))))))))
+
+(defun fixed->f2dot14-bits (c)
+  "16.16 C to 2.14 bits, rounding as Fixed::to_f2dot14 does."
+  (ash (runes/otf/charstring::s32 (+ c 2)) -2))
+
+(defun avar2-delta (store map-pos fd axis at)
+  "The 'avar' 2.0 delta of AXIS at AT (normalized reals), or NIL when the
+store cannot be read, which leaves the axis alone."
+  (multiple-value-bind (outer inner)
+      (if map-pos (delta-set-index map-pos fd axis) (values 0 axis))
+    (ignore-errors (runes/otf/charstring:item-variation-delta store outer inner at))))
+
+(defun add-avar2-delta (c delta)
+  "16.16 C plus DELTA, which is in 2.14 units: times four, rounded half away
+from zero, added wrapping, and clamped to [-1, 1]."
+  (max #x-10000
+       (min #x10000
+            (runes/otf/charstring::s32
+             (+ c (runes/otf/charstring::round-half-away (/ delta 16384)))))))
+
+(defun apply-avar2 (loader maps-end coords)
+  "COORDS (16.16, after the segment maps) moved by 'avar' 2.0 deltas, all
+computed at the coordinates before any is added."
+  (multiple-value-bind (store map-pos) (avar2-mapping loader maps-end)
+    (if (null store)
+        coords
+        (let ((at (mapcar (lambda (c) (/ (fixed->f2dot14-bits c) 16384)) coords))
+              (fd (font-data loader)))
+          (loop for c in coords
+                for axis from 0
+                for delta = (avar2-delta store map-pos fd axis at)
+                collect (if delta (add-avar2-delta c delta) c))))))
 
 (defun apply-segment-map (maps coord)
   "COORD (16.16) mapped through one axis's segment map, as SegmentMaps::apply."
@@ -123,11 +185,14 @@ USER-COORDINATES, an alist of axis tag to user value."
                      do (setf (car cell)
                               (normalize-axis-value (runes/otf/charstring:float->fixed value)
                                                     min default max))))
-    (loop for maps in (avar-segment-maps loader)
-          for cell on coords
-          do (setf (car cell) (apply-segment-map maps (car cell))))
+    (multiple-value-bind (segment-maps maps-end) (avar-segment-maps loader)
+      (loop for maps in segment-maps
+            for cell on coords
+            do (setf (car cell) (apply-segment-map maps (car cell))))
+      (when maps-end
+        (setf coords (apply-avar2 loader maps-end coords))))
     ;; To 2.14, rounding as Fixed::to_f2dot14 does.
-    (mapcar (lambda (c) (/ (ash (runes/otf/charstring::s32 (+ c 2)) -2) 16384)) coords)))
+    (mapcar (lambda (c) (/ (fixed->f2dot14-bits c) 16384)) coords)))
 
 ;;; Selecting an instance
 

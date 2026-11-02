@@ -947,8 +947,8 @@ in user units, one per axis; @code{nil} for a font that does not vary.
 @deffn {Accessor} variation-coordinates loader
 The instance, as an alist of axis tag to user value; @code{nil} for the
 default.  Outlines, advances, side bearings and font-wide metrics follow
-it.  Coordinates go through @samp{fvar} and @samp{avar} 1.0;
-@samp{avar} 2.0 mappings are not applied.
+it.  Coordinates go through @samp{fvar} and @samp{avar}, including the
+@samp{avar} 2.0 mappings.
 @end deffn
 
 @deffn {Generic Function} variation-metric-delta loader tag
