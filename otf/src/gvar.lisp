@@ -241,19 +241,21 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
              ;; Points FROM below TO, between references REF1 and REF2 along
              ;; the contour, in one coordinate: IN the original values, OUT
              ;; the moved ones.
-             (let ((lo ref1) (hi ref2))
-               (when (> (aref in lo) (aref in hi)) (rotatef lo hi))
-               (let ((in1 (aref in lo)) (in2 (aref in hi))
-                     (out1 (aref out lo)) (out2 (aref out hi)))
-                 ;; References sharing a coordinate but moved apart leave it alone.
-                 (when (or (/= in1 in2) (= out1 out2))
-                   (loop with scale = (if (/= in1 in2) (f/ (f- out2 out1) (f- in2 in1)) 0)
-                         for i from from below to
-                         for coord = (aref in i)
-                         do (setf (aref out i)
-                                  (cond ((<= coord in1) (f+ coord (f- out1 in1)))
-                                        ((>= coord in2) (f+ coord (f- out2 in2)))
-                                        (t (f+ out1 (f* (f- coord in1) scale))))))))))
+             (loop with swap = (> (aref in ref1) (aref in ref2))
+                   with in1 = (aref in (if swap ref2 ref1))
+                   with in2 = (aref in (if swap ref1 ref2))
+                   with out1 = (aref out (if swap ref2 ref1))
+                   with out2 = (aref out (if swap ref1 ref2))
+                   with scale = (if (/= in1 in2) (f/ (f- out2 out1) (f- in2 in1)) 0)
+                   ;; References sharing a coordinate but moved apart leave
+                   ;; the points alone: an empty range.
+                   with stop = (if (or (/= in1 in2) (= out1 out2)) to from)
+                   for i from from below stop
+                   for coord = (aref in i)
+                   do (setf (aref out i)
+                            (cond ((<= coord in1) (f+ coord (f- out1 in1)))
+                                  ((>= coord in2) (f+ coord (f- out2 in2)))
+                                  (t (f+ out1 (f* (f- coord in1) scale)))))))
            (interp (from to ref1 ref2)
              (interp-coord xs out-x from to ref1 ref2)
              (interp-coord ys out-y from to ref1 ref2)))
