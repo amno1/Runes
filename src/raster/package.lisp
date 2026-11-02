@@ -28,6 +28,7 @@
    #:*max-glyph-faces*)
 
   (:documentation "A simple CPU text renderer: Runes fonts rasterized into
-   A8 alpha maps by CL-VECTORS and CL-AA, whole strings, or glyphs one at a
-   time and cached per face.  The runes/xcb and runes/wayland bridges draw
-   with it.  Antron rasterizes glyphs itself and does not use it."))
+   A8 alpha maps, whole strings, or glyphs one at a time and cached per face.
+   The runes/xcb and runes/wayland bridges draw with it.  Two systems build
+   this package: runes/raster rasterizes with CL-VECTORS and CL-AA,
+   runes/raster-antron with Antron's CPU rasterizer; load one of them."))

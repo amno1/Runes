@@ -48,7 +48,27 @@
   :serial t
   :components ((:file "package")
                (:file "raster")
-               (:file "glyph-images")))
+               (:file "glyph-images")
+               (:file "cl-vectors")))
+
+(asdf:defsystem #:runes/raster-antron
+  :description "runes/raster with Antron's CPU rasterizer in place of cl-vectors and cl-aa."
+  :author "Michael Filonenko, Arthur Miller and contributors (see AUTHORS)"
+  :license "LGPL-2.1-or-later (see LICENSE and COPYING)"
+  :homepage "https://github.com/amno1/runes"
+  :version "2.0.0"
+  :depends-on (#:runes
+               #:zpb-ttf
+               #:antron/core
+               #:cacle
+               #:trivial-garbage
+               #:bordeaux-threads)
+  :pathname "src/raster/"
+  :serial t
+  :components ((:file "package")
+               (:file "raster")
+               (:file "glyph-images")
+               (:file "antron")))
 
 (asdf:defsystem #:runes/xcb
   :description "Runes text drawn on X11 through XCB and RENDER, until Antron draws text."

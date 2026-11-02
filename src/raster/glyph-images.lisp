@@ -41,37 +41,6 @@
   (list (get-font-pathname font) (font-size font) dpi-x dpi-y
         (and (font-antialias font) t)))
 
-(defun rasterize-glyph (font glyph sx sy)
-  "Rasterize the zpb-ttf GLYPH of FONT, scaled by SX, SY pixels per font
-   unit, with its origin at a whole pixel.  Call with the font loader held."
-  (let* ((bbox (zpb-ttf:bounding-box glyph))
-         (x0 (floor   (* sx (zpb-ttf:xmin bbox))))
-         (x1 (ceiling (* sx (zpb-ttf:xmax bbox))))
-         (y0 (floor   (* sy (zpb-ttf:ymin bbox))))
-         (y1 (ceiling (* sy (zpb-ttf:ymax bbox))))
-         (width  (max 0 (- x1 x0)))
-         (height (max 0 (- y1 y0)))
-         (stride (* 4 (ceiling width 4)))
-         (data (make-array (* stride height) :element-type '(unsigned-byte 8)
-                                             :initial-element 0)))
-    (when (and (plusp width) (plusp height))
-      (let ((state (make-state font)))
-        ;; Y grows downward in the image, so the outline is flipped and
-        ;; the glyph's top, Y1 above the baseline, lands on row 0.
-        (update-state font state
-                      (paths-ttf:paths-from-glyph glyph
-                                                  :offset (paths:make-point (- x0) y1)
-                                                  :scale-x sx
-                                                  :scale-y (- sy)))
-        (cells-sweep font state
-                     (lambda (x y alpha)
-                       (when (and (< -1 x width) (< -1 y height))
-                         (setf (aref data (+ (* y stride) x))
-                               (min 255 (abs alpha))))))))
-    (%make-glyph-image :width width :height height :x (- x0) :y y1
-                       :advance (* sx (zpb-ttf:advance-width glyph))
-                       :data data)))
-
 (defun layout-styled-glyphs (font string &key (dpi-x 96) (dpi-y 96)
                                               (letter-spacing 0.0)
                                               (word-spacing 0.0)
