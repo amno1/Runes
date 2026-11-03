@@ -53,6 +53,7 @@
    #:font-lines-height
    #:line-box
    #:kern-offset
+   #:lookup-custom-kerning
    #:xmin
    #:ymin
    #:xmax

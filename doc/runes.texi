@@ -454,6 +454,13 @@ The kerning between @var{char1} and @var{char2} in fractional pixels,
 from @var{custom-table} if given, else from the font.
 @end defun
 
+@defun lookup-custom-kerning table char1 char2
+The kerning of @var{char1} and @var{char2} in @var{table}, as
+@code{kern-offset} reads it: a hash table or an alist keyed by
+@code{(@var{char1} . @var{char2})} or by the two-character string; @code{nil}
+when @var{table} does not have the pair.
+@end defun
+
 @defun line-box font dpi &key (multiplier 1.0) explicit-height
 Return @code{(values @var{ascent} @var{descent} @var{height}
 @var{leading})} in pixels, @var{ascent} and @var{descent} both
