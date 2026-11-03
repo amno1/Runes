@@ -132,7 +132,9 @@
   ;; Made by CFF-DRAW-GLYPH on first use, for all the subfont's glyphs: the
   ;; charstring context, and the transform as (matrix . scale).
   (context nil)
-  (transform nil))
+  (transform nil)
+  ;; Hinting parameters from the Private DICT (see hint.lisp).
+  (hint-params nil))
 
 (defun open-cff-font (table-data &key upem)
   "Read the CFF or CFF2 table in the FONT-DATA window TABLE-DATA. UPEM is
@@ -222,16 +224,18 @@ CFF2 Private DICT that blends."
            (subfont (make-cff-subfont :matrix matrix)))
       (unless (and range (<= (cdr range) (runes/otf:font-data-length fd)))
         (fail 'charstring-malformed "Private DICT out of bounds"))
-      (loop for (op . value) in (dict-entries (runes/otf:font-data-slice fd (car range) (- (cdr range) (car range)))
-                                              :blend-state (cff-blend-state font 0 coords)
-                                              :unhinted-private t)
-            do (case op
-                 (:subrs (setf (cff-subfont-subrs subfont)
-                               (read-cff-index fd (+ (car range) value) (cff-font-cff2-p font))))
-                 (:vsindex (setf (cff-subfont-vs-index subfont) value))
-                 ;; FreeType truncates the widths to integers.
-                 (:default-width-x (setf (cff-subfont-default-width subfont) (logandc2 value #xFFFF)))
-                 (:nominal-width-x (setf (cff-subfont-nominal-width subfont) (logandc2 value #xFFFF)))))
+      ;; Every entry, the hinting parameters included, as skrifa's PrivateDict.
+      (let ((entries (dict-entries (runes/otf:font-data-slice fd (car range) (- (cdr range) (car range)))
+                                   :blend-state (cff-blend-state font 0 coords))))
+        (loop for (op . value) in entries
+              do (case op
+                   (:subrs (setf (cff-subfont-subrs subfont)
+                                 (read-cff-index fd (+ (car range) value) (cff-font-cff2-p font))))
+                   (:vsindex (setf (cff-subfont-vs-index subfont) value))
+                   ;; FreeType truncates the widths to integers.
+                   (:default-width-x (setf (cff-subfont-default-width subfont) (logandc2 value #xFFFF)))
+                   (:nominal-width-x (setf (cff-subfont-nominal-width subfont) (logandc2 value #xFFFF)))))
+        (setf (cff-subfont-hint-params subfont) (private-dict-hint-params entries)))
       subfont)))
 
 ;;; Charstring context

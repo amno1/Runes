@@ -228,4 +228,5 @@
                               :components ((:file "charstring")
                                            (:file "blend")
                                            (:file "dict")
+                                           (:file "hint")
                                            (:file "cff")))))))
