@@ -35,6 +35,7 @@ Each blues vector holds (bottom . top) pairs."
 (defun make-blues (values)
   "Blues from the delta-decoded VALUES of a blues operator: a vector of
 (bottom . top) pairs, at most +MAX-BLUE-VALUES+, an odd last value dropped."
+  (declare (list values) (optimize (speed 3) (safety 1)))
   (coerce (loop for (bottom top) on values by #'cddr
                 for i below +max-blue-values+
                 while top
@@ -43,6 +44,7 @@ Each blues vector holds (bottom . top) pairs."
 
 (defun private-dict-hint-params (entries)
   "The hinting parameters among the Private DICT ENTRIES."
+  (declare (list entries) (optimize (speed 3) (safety 1)))
   (let ((params (make-hint-params)))
     (loop for (op . value) in entries
           do (case op
@@ -60,10 +62,10 @@ Each blues vector holds (bottom . top) pairs."
 ;;; Fixed: round, abs and twice wrap; half truncates toward zero.
 
 (declaim (inline fixed-round fixed-abs twice half midpoint trunc-1/64))
-(defun fixed-round (x) (declare (s32 x)) (s32 (logand (+ x #x8000) (lognot #xFFFF))))
-(defun fixed-abs (x) (declare (s32 x)) (s32 (abs x)))
-(defun twice (x) (declare (s32 x)) (s32 (* 2 x)))
-(defun half (x) (declare (s32 x)) (values (truncate x 2)))
+(defun fixed-round (x) (declare (s32 x) (optimize (speed 3) (safety 0))) (s32 (logand (+ x #x8000) (lognot #xFFFF))))
+(defun fixed-abs (x) (declare (s32 x) (optimize (speed 3) (safety 0))) (s32 (abs x)))
+(defun twice (x) (declare (s32 x) (optimize (speed 3) (safety 0))) (s32 (* 2 x)))
+(defun half (x) (declare (s32 x) (optimize (speed 3) (safety 0))) (values (truncate x 2)))
 (defun midpoint (a b)
   "The point halfway between A and B, without overflowing."
   (declare (s32 a b))
@@ -112,20 +114,24 @@ pixels, 16.16)."
   "True when an ideographic font (language group 1) has no usable blue zones
 and the em box is to be hinted instead: no BlueValues, or only two zones
 outside the ICF em box."
+  (declare (hint-params params) (optimize (speed 3) (safety 1)))
   (let ((blues (hp-blues params)))
     (and (= (hp-language-group params) 1)
          (case (length blues)
            (0 t)
            (2 (destructuring-bind (low high) (coerce blues 'list)
-                (and (< (car low) +icf-bottom+) (< (cdr low) +icf-bottom+)
-                     (> (car high) +icf-top+) (> (cdr high) +icf-top+))))))))
+                (and (< (the s32 (car low)) +icf-bottom+) (< (the s32 (cdr low)) +icf-bottom+)
+                     (> (the s32 (car high)) +icf-top+) (> (the s32 (cdr high)) +icf-top+))))))))
 
 (defun collect-blue-zones (params darken-y)
   "The blue zones of PARAMS: the first of BlueValues is a bottom zone, the
 rest top zones, then every OtherBlues zone is a bottom zone; zones of
 negative height are left out.  The second value is the tallest height."
+  (declare (hint-params params) (s32 darken-y) (optimize (speed 3) (safety 1)))
   (let ((zones '()) (max-height 0))
+    (declare (s32 max-height))
     (flet ((add (bottom top bottom-p)
+             (declare (s32 bottom top))
              (when (>= (fixed- top bottom) 0)
                (setf max-height (max max-height (fixed- top bottom)))
                (push (if bottom-p
@@ -137,10 +143,10 @@ negative height are left out.  The second value is the tallest height."
                                            :cs-top-edge (fixed+ top (twice darken-y))
                                            :cs-flat-edge bottom)))
                      zones))))
-      (loop for (bottom . top) across (hp-blues params)
+      (loop for (bottom . top) of-type (s32 . s32) across (hp-blues params)
             for i below +max-blues+
             do (add bottom top (null zones)))
-      (loop for (bottom . top) across (hp-other-blues params)
+      (loop for (bottom . top) of-type (s32 . s32) across (hp-other-blues params)
             for i below +max-other-blues+
             do (add bottom top t)))
     (values (coerce (nreverse zones) 'simple-vector) max-height)))
@@ -148,8 +154,11 @@ negative height are left out.  The second value is the tallest height."
 (defun nearest-family-edge (flat edges units-per-pixel)
   "The edge among EDGES closest to FLAT and less than a pixel away, the
 first one when two are as close, or NIL; the second value is the distance."
+  (declare (s32 flat units-per-pixel) (list edges) (optimize (speed 3) (safety 0)))
   (let ((best nil) (best-diff +fixed-max+))
+    (declare (s32 best-diff))
     (dolist (edge edges)
+      (declare (s32 edge))
       (let ((diff (fixed-abs (fixed- flat edge))))
         (when (and (< diff best-diff) (< diff units-per-pixel))
           (setf best edge best-diff diff)
@@ -159,6 +168,7 @@ first one when two are as close, or NIL; the second value is the distance."
 (defun snap-to-family-blues (zones params darken-y units-per-pixel)
   "Move each zone's flat edge to the nearest family zone edge within a
 pixel, so that the fonts of a family align."
+  (declare (simple-vector zones) (hint-params params) (s32 darken-y units-per-pixel) (optimize (speed 3) (safety 1)))
   (let ((family (coerce (hp-family-blues params) 'list)))
     (loop for zone across zones
           for flat = (bz-cs-flat-edge zone)
@@ -168,21 +178,23 @@ pixel, so that the fonts of a family align."
                  (multiple-value-bind (edge diff)
                      (nearest-family-edge flat (map 'list #'cdr (hp-family-other-blues params))
                                           units-per-pixel)
+                   (declare (s32 diff))
                    (when edge (setf (bz-cs-flat-edge zone) edge))
                    (when family
-                     (let* ((first-top (cdr (first family)))
+                     (let* ((first-top (the s32 (cdr (first family))))
                             (first-diff (fixed-abs (fixed- flat first-top))))
                        (when (and (< first-diff diff) (< first-diff units-per-pixel))
                          (setf (bz-cs-flat-edge zone) first-top)))))
                  ;; A top zone: the bottom edges of the other FamilyBlues zones.
                  (let ((edge (nearest-family-edge
-                              flat (mapcar (lambda (blue) (fixed+ (car blue) (twice darken-y)))
+                              flat (mapcar (lambda (blue) (fixed+ (the s32 (car blue)) (twice darken-y)))
                                            (rest family))
                               units-per-pixel)))
                    (when edge (setf (bz-cs-flat-edge zone) edge)))))))
 
 (defun make-hint-state-for (params scale)
   "The hinting state for a subfont with hinting PARAMS at SCALE (HintState::new)."
+  (declare (hint-params params) (s32 scale) (optimize (speed 3) (safety 1)))
   (let ((state (make-hint-state :scale scale
                                 :blue-scale (hp-blue-scale params)
                                 :blue-shift (hp-blue-shift params)
@@ -197,12 +209,14 @@ pixel, so that the fonts of a family align."
 (defun build-blue-zones (state params)
   "Set STATE's zones from PARAMS, its overshoot suppression and boost, and
 each zone's flat edge in device space (build_zones)."
+  (declare (hint-state state) (hint-params params) (optimize (speed 3) (safety 1)))
   (let ((darken-y (hs-darken-y state))
         (scale (hs-scale state)))
     (multiple-value-bind (zones max-height) (collect-blue-zones params darken-y)
+      (declare (simple-vector zones) (s32 max-height))
       (snap-to-family-blues zones params darken-y (fixed/ #x10000 scale))
       ;; A zone taller than 1/BlueScale lowers BlueScale.
-      (when (and (plusp max-height) (> (hs-blue-scale state) (fixed/ #x10000 max-height)))
+      (when (and (plusp max-height) (> (hs-blue-scale state) (the s32 (fixed/ #x10000 max-height))))
         (setf (hs-blue-scale state) (fixed/ #x10000 max-height)))
       ;; Below BlueScale, overshoots are suppressed and the zones boosted;
       ;; the boost stays under half a pixel, or the baseline could go negative.
@@ -252,15 +266,33 @@ means an invalid edge."
 
 (declaim (inline hint-flag-p hint-valid-p hint-bottom-p hint-top-p hint-pair-p
                  hint-pair-top-p hint-locked-p hint-synthetic-p lock-hint))
-(defun hint-flag-p (hint flags) (logtest (hint-flags hint) flags))
-(defun hint-valid-p (hint) (/= (hint-flags hint) 0))
-(defun hint-bottom-p (hint) (hint-flag-p hint (logior +ghost-bottom+ +pair-bottom+)))
-(defun hint-top-p (hint) (hint-flag-p hint (logior +ghost-top+ +pair-top+)))
-(defun hint-pair-p (hint) (hint-flag-p hint (logior +pair-bottom+ +pair-top+)))
-(defun hint-pair-top-p (hint) (hint-flag-p hint +pair-top+))
-(defun hint-locked-p (hint) (hint-flag-p hint +locked+))
-(defun hint-synthetic-p (hint) (hint-flag-p hint +synthetic+))
-(defun lock-hint (hint) (setf (hint-flags hint) (logior (hint-flags hint) +locked+)))
+(defun hint-flag-p (hint flags)
+  (declare (hint hint) (fixnum flags) (optimize (speed 3) (safety 0)))
+  (logtest (hint-flags hint) flags))
+(defun hint-valid-p (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (/= (hint-flags hint) 0))
+(defun hint-bottom-p (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (hint-flag-p hint (logior +ghost-bottom+ +pair-bottom+)))
+(defun hint-top-p (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (hint-flag-p hint (logior +ghost-top+ +pair-top+)))
+(defun hint-pair-p (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (hint-flag-p hint (logior +pair-bottom+ +pair-top+)))
+(defun hint-pair-top-p (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (hint-flag-p hint +pair-top+))
+(defun hint-locked-p (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (hint-flag-p hint +locked+))
+(defun hint-synthetic-p (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (hint-flag-p hint +synthetic+))
+(defun lock-hint (hint)
+  (declare (hint hint) (optimize (speed 3) (safety 0)))
+  (setf (hint-flags hint) (logior (hint-flags hint) +locked+)))
 
 ;; Ghost hints are stems of width -21 (bottom) and -20 (top).
 (defconstant +ghost-bottom-width+ (fixed-from-int -21))
@@ -270,6 +302,7 @@ means an invalid edge."
   "The character space coordinate and flags of STEM's bottom edge, or top
 edge unless BOTTOM-P; flags 0 when STEM is a ghost hint of the other edge.
 A stem of negative width is an inverted pair, its edges swapped."
+  (declare (stem-hint stem) (optimize (speed 3) (safety 0)))
   (let ((width (fixed- (stem-max stem) (stem-min stem))))
     (cond ((= width +ghost-bottom-width+)
            (if bottom-p (values (stem-max stem) +ghost-bottom+) (values 0 0)))
@@ -285,6 +318,7 @@ A stem of negative width is an inverted pair, its edges swapped."
 (defun setup-hint (hint stem index origin scale darken-y bottom-p)
   "Make HINT STEM's bottom edge, or top edge unless BOTTOM-P (Hint::setup).
 A stem already placed keeps its device position and is locked."
+  (declare (hint hint) (stem-hint stem) ((unsigned-byte 8) index) (s32 origin scale darken-y) (optimize (speed 3) (safety 0)))
   (multiple-value-bind (cs-coord flags) (stem-edge stem bottom-p)
     (setf (hint-flags hint) flags
           (hint-cs-coord hint) cs-coord)
@@ -304,6 +338,7 @@ A stem already placed keeps its device position and is locked."
 
 (defun zone-captures-p (zone edge fuzz)
   "True when ZONE, widened by FUZZ, holds EDGE's character space coordinate."
+  (declare (blue-zone zone) (hint edge) (s32 fuzz) (optimize (speed 3) (safety 0)))
   (<= (fixed- (bz-cs-bottom-edge zone) fuzz)
       (hint-cs-coord edge)
       (fixed+ (bz-cs-top-edge zone) fuzz)))
@@ -312,6 +347,7 @@ A stem already placed keeps its device position and is locked."
   "Where a ZONE puts a captured EDGE in device space.  OVERSHOOT is how far
 EDGE overshoots ZONE's flat edge in character space; an overshoot of at
 least BlueShift is kept at a pixel or more."
+  (declare (hint-state state) (blue-zone zone) (hint edge) (s32 overshoot) (optimize (speed 3) (safety 0)))
   (let ((rounded (fixed-round (hint-ds-coord edge)))
         (flat (bz-ds-flat-edge zone)))
     (cond ((hs-suppress-overshoot state) flat)
@@ -322,6 +358,7 @@ least BlueShift is kept at a pixel or more."
 (defun capture-adjustment (state bottom-edge top-edge)
   "How far the first zone that holds BOTTOM-EDGE or TOP-EDGE moves it, or
 NIL when no zone does."
+  (declare (hint-state state) (hint bottom-edge top-edge) (optimize (speed 3) (safety 0)))
   (loop with fuzz = (hs-blue-fuzz state)
         for zone across (hs-zones state)
         do (cond ((and (bz-bottom-p zone) (hint-bottom-p bottom-edge)
@@ -340,6 +377,7 @@ NIL when no zone does."
 (defun capture (state bottom-edge top-edge)
   "Align a stem's edges to a blue zone that holds one of them: both valid
 edges move by the same amount and are locked.  True when captured."
+  (declare (hint-state state) (hint bottom-edge top-edge) (optimize (speed 3) (safety 0)))
   (let ((adjustment (capture-adjustment state bottom-edge top-edge)))
     (when adjustment
       (dolist (edge (list bottom-edge top-edge))
@@ -353,6 +391,8 @@ edges move by the same amount and are locked.  True when captured."
 
 (defconstant +max-hints+ 96)
 
+(deftype hint-index () `(integer 0 ,+max-hints+))
+
 (deftype hint-mask () `(simple-bit-vector ,+max-hints+))
 
 (defun all-hints-mask ()
@@ -361,10 +401,11 @@ edges move by the same amount and are locked.  True when captured."
 (defun bytes-hint-mask (bytes)
   "The hint mask of a hintmask or cntrmask operator's BYTES, the first
 stem hint in the first byte's most significant bit; NIL when too long."
+  (declare ((simple-array (unsigned-byte 8) (*)) bytes) (optimize (speed 3) (safety 1)))
   (when (<= (length bytes) (/ +max-hints+ 8))
     (let ((mask (make-array +max-hints+ :element-type 'bit :initial-element 0)))
       (loop for byte across bytes
-            for base from 0 by 8
+            for base of-type fixnum from 0 by 8
             do (loop for bit below 8
                      do (setf (sbit mask (+ base bit)) (ldb (byte 1 (- 7 bit)) byte))))
       mask)))
@@ -379,22 +420,28 @@ stem hint in the first byte's most significant bit; NIL when too long."
 
 (defstruct (hint-map (:constructor %make-hint-map))
   (edges #() :type simple-vector)
-  (length 0 :type fixnum)
+  (length 0 :type hint-index)
   (valid-p nil)
   (scale 0 :type s32))
 
 (defun make-hint-map-for (scale)
+  (declare (s32 scale) (optimize (speed 3) (safety 0)))
   (%make-hint-map :edges (map-into (make-array +max-hints+) #'make-hint) :scale scale))
 
 (defun clear-hint-map (map)
+  (declare (hint-map map) (optimize (speed 3) (safety 0)))
   (setf (hint-map-length map) 0
         (hint-map-valid-p map) nil))
 
-(defun hint-map-edge (map i) (svref (hint-map-edges map) i))
+(declaim (inline hint-map-edge))
+(defun hint-map-edge (map i)
+  (declare (hint-map map) (hint-index i) (optimize (speed 3) (safety 0)))
+  (the hint (svref (hint-map-edges map) i)))
 
 (defun hint-map-transform (map coord)
   "COORD mapped to device space: scaled from the highest edge at or below
 it with that edge's scale, or uniformly below the first edge."
+  (declare (hint-map map) (s32 coord) (optimize (speed 3) (safety 0)))
   (let ((length (hint-map-length map)))
     (if (zerop length)
         (fixed* coord (hint-map-scale map))
@@ -412,6 +459,7 @@ it with that edge's scale, or uniformly below the first edge."
 
 (defun insertion-index (map coord)
   "The index of the first edge of MAP at or above COORD."
+  (declare (hint-map map) (s32 coord) (optimize (speed 3) (safety 0)))
   (or (position-if (lambda (edge) (>= (hint-cs-coord edge) coord))
                    (hint-map-edges map) :end (hint-map-length map))
       (hint-map-length map)))
@@ -419,6 +467,7 @@ it with that edge's scale, or uniformly below the first edge."
 (defun overlaps-in-character-space-p (map index first second pair-p)
   "True when edges inserted at INDEX would land on an existing edge,
 straddle one, or split a pair."
+  (declare (hint-map map) (hint-index index) (hint first second) (optimize (speed 3) (safety 0)))
   (and (< index (hint-map-length map))
        (let ((current (hint-map-edge map index)))
          (or (= (hint-cs-coord current) (hint-cs-coord first))
@@ -428,6 +477,7 @@ straddle one, or split a pair."
 (defun overlaps-in-device-space-p (map index first second pair-p)
   "True when edges inserted at INDEX would cross their neighbours in device
 space."
+  (declare (hint-map map) (hint-index index) (hint first second) (optimize (speed 3) (safety 0)))
   (or (and (plusp index)
            (< (hint-ds-coord first) (hint-ds-coord (hint-map-edge map (1- index)))))
       (and (< index (hint-map-length map))
@@ -439,6 +489,7 @@ space."
   "Set the device positions of unlocked edges from the INITIAL map.  A
 pair keeps its width: its middle goes through INITIAL and its edges are
 half a width away at MAP's scale."
+  (declare (hint-map map) ((or null hint-map) initial) (hint first second) (optimize (speed 3) (safety 0)))
   (unless (or (hint-locked-p first) (null initial))
     (if pair-p
         (let ((middle (hint-map-transform
@@ -451,6 +502,7 @@ half a width away at MAP's scale."
 
 (defun insert-edges-at (map index edges)
   "Put EDGES into MAP at INDEX, moving the ones above up."
+  (declare (hint-map map) (hint-index index) (list edges) (optimize (speed 3) (safety 0)))
   (let ((all (hint-map-edges map))
         (length (hint-map-length map))
         (count (length edges)))
@@ -464,6 +516,7 @@ half a width away at MAP's scale."
   "Insert the valid edges among BOTTOM and TOP into MAP, keeping it sorted,
 unless they overlap edges already there; unlocked edges are placed with
 the INITIAL map when there is one (HintMap::insert)."
+  (declare (hint-map map) (hint bottom top) ((or null hint-map) initial) (optimize (speed 3) (safety 0)))
   (let* ((pair-p (and (hint-valid-p bottom) (hint-valid-p top)))
          (first (copy-hint (if (hint-valid-p bottom) bottom top)))
          (second (copy-hint top))
@@ -480,11 +533,12 @@ the INITIAL map when there is one (HintMap::insert)."
 ;;; Adjusting edges to the pixel grid
 
 (declaim (inline fixed-fract))
-(defun fixed-fract (x) (declare (s32 x)) (logand x #xFFFF))
+(defun fixed-fract (x) (declare (s32 x) (optimize (speed 3) (safety 0))) (logand x #xFFFF))
 
 (defun smallest-moves (bottom-ds top-ds)
   "The smallest moves up and down, the down one negative, that put one of
 the edges at BOTTOM-DS and TOP-DS on a pixel boundary."
+  (declare (s32 bottom-ds top-ds) (optimize (speed 3) (safety 0)))
   (flet ((up (ds) (if (zerop (fixed-fract ds)) 0 (- #x10000 (fixed-fract ds)))))
     (values (min (up bottom-ds) (up top-ds))
             (max (- (fixed-fract bottom-ds)) (- (fixed-fract top-ds))))))
@@ -494,10 +548,12 @@ the edges at BOTTOM-DS and TOP-DS on a pixel boundary."
 for a single one) onto the pixel grid without crowding its neighbours.
 The second value is true when the move is not the best, and the third
 is the best move up."
+  (declare (hint-map map) (hint-index i j) (optimize (speed 3) (safety 0)))
   (let ((edges (hint-map-edges map))
         (last (1- (hint-map-length map))))
     (multiple-value-bind (move-up move-down)
         (smallest-moves (hint-ds-coord (svref edges i)) (hint-ds-coord (svref edges j)))
+      (declare (s32 move-up move-down))
       (let ((room-up (or (>= j last)
                          (>= (hint-ds-coord (svref edges (1+ j)))
                              (+ (hint-ds-coord (svref edges j)) move-up +min-counter+))))
@@ -512,6 +568,7 @@ is the best move up."
 
 (defun rescale-below (map i)
   "Set the scale of edge I-1, I above 0, so that it reaches edge I."
+  (declare (hint-map map) (hint-index i) (optimize (speed 3) (safety 0)))
   (let ((a (hint-map-edge map i))
         (b (hint-map-edge map (1- i))))
     (when (/= (hint-cs-coord a) (hint-cs-coord b))
@@ -523,6 +580,7 @@ is the best move up."
 boundary, from the bottom up, and set the scales between the edges.
 Hints that could not take their best move are moved up in a second pass
 if the first left room (HintMap::adjust)."
+  (declare (hint-map map) (optimize (speed 3) (safety 0)))
   (let ((edges (hint-map-edges map))
         (length (hint-map-length map))
         (saved '()))
@@ -532,6 +590,7 @@ if the first left room (HintMap::adjust)."
                     (j (if pair-p (1+ i) i)))
                (unless (hint-locked-p (svref edges i))
                  (multiple-value-bind (adjustment save-p move-up) (edge-adjustment map i j)
+                   (declare (s32 adjustment move-up))
                    ;; Only an unlocked edge above can make room later.
                    (when (and save-p (< j (1- length)) (not (hint-locked-p (svref edges (1+ j)))))
                      (push (cons j (- move-up adjustment)) saved))
@@ -542,7 +601,7 @@ if the first left room (HintMap::adjust)."
                (when pair-p (rescale-below map j))
                (setf i (1+ j))))
     ;; SAVED is last first, the order of FreeType's second pass.
-    (loop for (j . adjustment) in saved
+    (loop for (j . adjustment) of-type (hint-index . s32) in saved
           for edge = (svref edges j)
           when (>= (hint-ds-coord (svref edges (1+ j)))
                    (+ (hint-ds-coord edge) adjustment +min-counter+))
@@ -555,6 +614,7 @@ if the first left room (HintMap::adjust)."
 
 (defun insert-em-box-hints (map state initial)
   "Insert locked ghost hints just outside the ideographic em box."
+  (declare (hint-map map) (hint-state state) ((or null hint-map) initial) (optimize (speed 3) (safety 0)))
   (let ((scale (hs-scale state)))
     (flet ((ghost (cs-coord ds-offset flags)
              (make-hint :cs-coord cs-coord
@@ -570,12 +630,14 @@ if the first left room (HintMap::adjust)."
 
 (defun stem-edges (stem index origin scale)
   "The bottom and top hint edges of STEM, the INDEXth stem hint."
+  (declare (stem-hint stem) ((unsigned-byte 8) index) (s32 origin scale) (optimize (speed 3) (safety 0)))
   (values (setup-hint (make-hint) stem index origin scale 0 t)
           (setup-hint (make-hint) stem index origin scale 0 nil)))
 
 (defun insert-locked-stems (map state mask stems origin initial)
   "Insert the stems of MASK that are locked or captured by a blue zone,
 clearing them from MASK."
+  (declare (hint-map map) (hint-state state) (hint-mask mask) ((vector t) stems) (s32 origin) ((or null hint-map) initial) (optimize (speed 3) (safety 0)))
   (loop for stem across stems
         for i below +max-hints+
         when (= (sbit mask i) 1)
@@ -586,6 +648,7 @@ clearing them from MASK."
 
 (defun insert-other-stems (map state mask stems origin initial)
   "Insert the stems still in MASK."
+  (declare (hint-map map) (hint-state state) (hint-mask mask) ((vector t) stems) (s32 origin) ((or null hint-map) initial) (optimize (speed 3) (safety 0)))
   (loop for stem across stems
         for i below +max-hints+
         when (= (sbit mask i) 1)
@@ -594,6 +657,7 @@ clearing them from MASK."
 
 (defun insert-baseline-lock (map scale)
   "Lock y = 0 when no edge covers it, for glyphs without a baseline hint."
+  (declare (hint-map map) (s32 scale) (optimize (speed 3) (safety 0)))
   (let ((length (hint-map-length map)))
     (when (or (zerop length)
               (plusp (hint-cs-coord (hint-map-edge map 0)))
@@ -603,6 +667,7 @@ clearing them from MASK."
 
 (defun save-stem-positions (map stems)
   "Record in STEMS where MAP put their edges, so that later maps keep them."
+  (declare (hint-map map) ((vector t) stems) (optimize (speed 3) (safety 0)))
   (loop for i below (hint-map-length map)
         for edge = (hint-map-edge map i)
         unless (hint-synthetic-p edge)
@@ -616,10 +681,11 @@ clearing them from MASK."
   "Fill MAP from the STEMS active in MASK (all when NIL), placed through the
 INITIAL map, which is built first when not yet valid.  The initial map,
 INITIAL-P, holds every hint (HintMap::build)."
+  (declare (hint-map map) (hint-state state) ((or null hint-mask) mask) ((or null hint-map) initial) ((vector t) stems) (s32 origin) (optimize (speed 3) (safety 0)))
   (when (and (not initial-p) initial (not (hint-map-valid-p initial)))
     (build-hint-map initial state (all-hints-mask) nil stems origin t))
   (clear-hint-map map)
-  (let ((mask (copy-seq (or mask (all-hints-mask))))
+  (let ((mask (copy-seq (the hint-mask (or mask (all-hints-mask)))))
         (placed-by (if initial-p nil initial)))
     (when (hs-do-em-box-hints state)
       (insert-em-box-hints map state initial))
@@ -650,6 +716,7 @@ INITIAL-P, holds every hint (HintMap::build)."
   (pending-line nil))
 
 (defun make-hinting-sink (state inner)
+  (declare (hint-state state) (optimize (speed 3) (safety 0)))
   (%make-hinting-sink :state state :inner inner
                       :initial-map (make-hint-map-for (hs-scale state))
                       :map (make-hint-map-for (hs-scale state))))
@@ -659,37 +726,44 @@ INITIAL-P, holds every hint (HintMap::build)."
 device position, so with the hint map of the subpath's start, as
 FreeType does; a line back to the start in character space is left out,
 the close draws it."
+  (declare (hinting-sink sink) (optimize (speed 3) (safety 0)))
   (let ((start (hinting-sink-start-point sink))
         (line (hinting-sink-pending-line sink))
         (inner (hinting-sink-inner sink)))
     (setf (hinting-sink-start-point sink) nil
           (hinting-sink-pending-line sink) nil)
     (when start
-      (when (and line (not (equal start (subseq line 0 2))))
+      (when (and line (not (and (= (the s32 (first start)) (the s32 (first line)))
+                                (= (the s32 (second start)) (the s32 (second line))))))
         (sink-line-to inner (third line) (fourth line)))
       (sink-close inner))))
 
 (defun flush-pending-line (sink)
+  (declare (hinting-sink sink) (optimize (speed 3) (safety 0)))
   (let ((line (hinting-sink-pending-line sink)))
     (when line
       (setf (hinting-sink-pending-line sink) nil)
       (sink-line-to (hinting-sink-inner sink) (third line) (fourth line)))))
 
 (defun build-sink-map (sink map mask)
+  (declare (hinting-sink sink) (hint-map map) ((or null hint-mask) mask) (optimize (speed 3) (safety 0)))
   (build-hint-map map (hinting-sink-state sink) mask (hinting-sink-initial-map sink)
                   (hinting-sink-stems sink) 0))
 
 (defun hinted-y (sink y)
   "Y in device space through the current hint map, built when needed."
+  (declare (hinting-sink sink) (s32 y) (optimize (speed 3) (safety 0)))
   (let ((map (hinting-sink-map sink)))
     (unless (hint-map-valid-p map)
       (build-sink-map sink map (hinting-sink-mask sink)))
     (trunc-1/64 (hint-map-transform map y))))
 
 (defun scaled-x (sink x)
+  (declare (hinting-sink sink) (s32 x) (optimize (speed 3) (safety 0)))
   (trunc-1/64 (fixed* x (hs-scale (hinting-sink-state sink)))))
 
 (defmethod sink-hstem ((sink hinting-sink) min max)
+  (declare (s32 min max) (optimize (speed 3) (safety 0)))
   ;; Stems after the first map is built are ignored, as in FreeType.
   (let ((stems (hinting-sink-stems sink)))
     (when (and (< (length stems) +max-hints+)
@@ -716,15 +790,18 @@ the close draws it."
           (hinting-sink-mask sink) (all-hints-mask))))
 
 (defmethod sink-move-to ((sink hinting-sink) x y)
+  (declare (s32 x y) (optimize (speed 3) (safety 0)))
   (close-subpath sink)
   (setf (hinting-sink-start-point sink) (list x y))
   (sink-move-to (hinting-sink-inner sink) (scaled-x sink x) (hinted-y sink y)))
 
 (defmethod sink-line-to ((sink hinting-sink) x y)
+  (declare (s32 x y) (optimize (speed 3) (safety 0)))
   (flush-pending-line sink)
   (setf (hinting-sink-pending-line sink) (list x y (scaled-x sink x) (hinted-y sink y))))
 
 (defmethod sink-curve-to ((sink hinting-sink) cx0 cy0 cx1 cy1 x y)
+  (declare (s32 cx0 cy0 cx1 cy1 x y) (optimize (speed 3) (safety 0)))
   (flush-pending-line sink)
   (sink-curve-to (hinting-sink-inner sink)
                  (scaled-x sink cx0) (hinted-y sink cy0)

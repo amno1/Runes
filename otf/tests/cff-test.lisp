@@ -376,6 +376,149 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
       (check "and returns at the default instance"
              (= (zpb-ttf:ascender loader) default)))))
 
+;;; Hinting (skrifa's src/outline/cff/hint.rs tests), and hinted glyphs
+;;; against FreeType 2.15's, recorded from its Adobe CFF hinter.
+
+(defun skrifa-hint-state ()
+  "The hinting state of hint.rs' make_hint_state, at 64 units per pixel."
+  (flet ((blues (&rest values) (runes/otf/charstring::make-blues (mapcar #'f values))))
+    (runes/otf/charstring::make-hint-state-for
+     (runes/otf/charstring::make-hint-params
+      :blues (blues -15 0 536 547 571 582 714 726 760 772)
+      :other-blues (blues -255 -240)
+      :blue-scale (f 0.05d0) :blue-fuzz 0)
+     (runes/otf/charstring::fixed/ #x10000 (f 64)))))
+
+(defclass hinted-sink ()
+  ((contours :initform '() :accessor contours)))
+(defun add-point (s x y on)
+  ;; 26.6 pixels, as FreeType's outline.
+  (push (list (ash x -10) (ash y -10) on) (first (contours s))))
+(defmethod sink-move-to ((s hinted-sink) x y) (push '() (contours s)) (add-point s x y 1))
+(defmethod sink-line-to ((s hinted-sink) x y) (add-point s x y 1))
+(defmethod sink-curve-to ((s hinted-sink) a b c d x y)
+  (add-point s a b 0) (add-point s c d 0) (add-point s x y 1))
+(defmethod sink-close ((s hinted-sink)))
+
+(defun outline-string (sink)
+  "SINK's contours as FreeType's points, \"| x,y,on ...\" per contour; a
+last point on the first is left out, as FreeType does."
+  (format nil "~{| ~{~{~d,~d,~d~}~^ ~}~^ ~}"
+          (loop for contour in (reverse (contours sink))
+                for points = (reverse contour)
+                collect (if (and (rest points)
+                                 (equal (subseq (first (last points)) 0 2) (subseq (first points) 0 2)))
+                            (butlast points)
+                            points))))
+
+(defun hinted-outline (name gid ppem &optional (coords #()))
+  (multiple-value-bind (loader font) (open-test-font name)
+    (declare (ignore loader))
+    (let* ((subfont (cff-subfont font (cff-subfont-index font gid) coords))
+           (state (runes/otf/charstring::cff-hint-state font subfont ppem))
+           (sink (make-instance 'hinted-sink)))
+      (runes/otf/charstring::cff-draw-hinted-glyph font subfont gid sink state coords)
+      (outline-string sink))))
+
+(defun zone-list (state)
+  (map 'list (lambda (z)
+               (list (runes/otf/charstring::bz-cs-bottom-edge z)
+                     (runes/otf/charstring::bz-cs-top-edge z)
+                     (runes/otf/charstring::bz-cs-flat-edge z)
+                     (runes/otf/charstring::bz-ds-flat-edge z)
+                     (runes/otf/charstring::bz-bottom-p z)))
+       (runes/otf/charstring::hs-zones state)))
+
+(defun capture-result (state bottom-flags bottom-cs top-flags top-cs)
+  "Whether STATE captures the edges, and whether each is locked."
+  (let ((bottom (runes/otf/charstring::make-hint
+                 :flags bottom-flags :cs-coord bottom-cs :ds-coord (f 2.3d0)))
+        (top (runes/otf/charstring::make-hint
+              :flags top-flags :cs-coord top-cs :ds-coord (f 2.3d0))))
+    (list (runes/otf/charstring::capture state bottom top)
+          (runes/otf/charstring::hint-locked-p bottom)
+          (runes/otf/charstring::hint-locked-p top))))
+
+(defun cantarell-hint-map ()
+  "The hint map of hint.rs' hint_mapping: glyph 2 of cantarell_vf_trimmed
+at 8 ppem, whose subfont's parameters at (-1, -1) are Cantarell-VF's at -1."
+  (multiple-value-bind (loader font) (open-test-font "Cantarell-VF.otf")
+    (declare (ignore loader))
+    (let* ((state (runes/otf/charstring::cff-hint-state font (cff-subfont font 0 #(-1d0)) 8))
+           (scale (runes/otf/charstring::hs-scale state))
+           (stems (vector (runes/otf/charstring::make-stem-hint :min 1376256 :max 0)
+                          (runes/otf/charstring::make-stem-hint :min 16318464 :max 17563648)
+                          (runes/otf/charstring::make-stem-hint :min 45481984 :max 44171264))))
+      (runes/otf/charstring::build-hint-map
+       (runes/otf/charstring::make-hint-map-for scale) state nil
+       (runes/otf/charstring::make-hint-map-for scale) stems 0))))
+
+(defun edge-list (map)
+  (loop for i below (runes/otf/charstring::hint-map-length map)
+        for e = (runes/otf/charstring::hint-map-edge map i)
+        collect (list (runes/otf/charstring::hint-index e)
+                      (runes/otf/charstring::hint-cs-coord e)
+                      (runes/otf/charstring::hint-ds-coord e)
+                      (runes/otf/charstring::hint-scale e)
+                      (runes/otf/charstring::hint-flags e))))
+
+(defun test-hinting ()
+  (format t "~%--- Hinting (hint.rs, FreeType) ---~%")
+  (let ((state (skrifa-hint-state)))
+    (check "scaled_blue_zones"
+           (and (not (runes/otf/charstring::hs-do-em-box-hints state))
+                (= (runes/otf/charstring::hs-boost state) 27035)
+                (runes/otf/charstring::hs-suppress-overshoot state)
+                (equal (zone-list state)
+                       '((-983040 0 0 0 t)
+                         (35127296 35848192 35127296 589824 nil)
+                         (37421056 38141952 37421056 589824 nil)
+                         (46792704 47579136 46792704 786432 nil)
+                         (49807360 50593792 49807360 786432 nil)
+                         (-16711680 -15728640 -15728640 -262144 t)))))
+    (check "blue_zone_capture"
+           (let ((bottom runes/otf/charstring::+pair-bottom+)
+                 (top runes/otf/charstring::+pair-top+)
+                 (min (- (expt 2 31))))
+             (equal (list (capture-result state bottom 0 top 35127297)
+                          (capture-result state bottom min top min)
+                          (capture-result state bottom 0 0 35127297)
+                          (capture-result state 0 0 top 35127297))
+                    '((t t t) (nil nil nil) (t t nil) (t nil t))))))
+  (let ((map (cantarell-hint-map)))
+    (check "hint_mapping edges"
+           (equal (edge-list map)
+                  '((0 0 0 526 17) (1 16318464 131072 524 4)
+                    (1 17563648 141028 592 8) (2 45481984 393216 524 18))))
+    (check "hint_mapping transforms"
+           (loop for (coord expected) in '((0 0) (44302336 382564) (45481984 393216)
+                                           (16318464 131072) (17563648 141028) (49676288 426752)
+                                           (56754176 483344) (57868288 492252) (50069504 429896))
+                 always (= (runes/otf/charstring::hint-map-transform map coord) expected))))
+  (check "Cantarell-VF glyph 36 at 11 ppem, 0.5, as FreeType"
+         (string= (hinted-outline "Cantarell-VF.otf" 36 11 #(0.5d0))
+                  (concatenate 'string
+                    "| 278,0,1 328,0,0 383,12,0 424,32,1 404,98,1 373,86,0 333,79,0 "
+                    "299,79,1 192,79,0 125,151,0 125,264,1 125,371,0 185,432,0 "
+                    "289,432,1 327,432,0 372,424,0 404,411,1 429,481,1 387,501,0 "
+                    "339,512,0 291,512,1 137,512,0 32,409,0 32,251,1 32,99,0 131,0,0 "
+                    "| 255,576,1 289,576,0 310,597,0 310,630,1 310,664,0 289,686,0 "
+                    "255,686,1 222,686,0 201,664,0 201,630,1 201,597,0 222,576,0")))
+  (check "Cantarell-VF glyph 69 at 11 ppem, 0.5, as FreeType"
+         (string= (hinted-outline "Cantarell-VF.otf" 69 11 #(0.5d0))
+                  (concatenate 'string
+                    "| 282,0,1 355,0,0 418,21,0 471,64,1 471,268,1 262,268,1 "
+                    "262,192,1 383,192,1 383,59,1 399,106,1 372,88,0 335,78,0 "
+                    "294,78,1 191,78,0 126,140,0 126,244,1 126,363,0 187,432,0 "
+                    "296,432,1 339,432,0 389,422,0 427,406,1 452,480,1 410,500,0 "
+                    "356,512,0 302,512,1 138,512,0 32,405,0 32,234,1 32,96,0 132,0,0")))
+  (check "NotoSansJP-VF glyph 0 at 9 ppem, em box hints, as FreeType"
+         (string= (hinted-outline "NotoSansJP-VF.subset.otf" 0 9)
+                  (concatenate 'string
+                    "| 57,-96,1 518,-96,1 518,543,1 57,543,1 | 288,250,1 104,511,1 "
+                    "471,511,1 | 306,223,1 489,485,1 489,-38,1 | 104,-65,1 288,197,1 "
+                    "471,-65,1 | 86,485,1 269,223,1 86,-38,1"))))
+
 (defun run-cff-tests ()
   (let ((runes/otf/charstring-test::*failures* 0)
         (runes/otf/charstring-test::*count* 0))
@@ -389,6 +532,7 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
     (test-outlines)
     (test-instances)
     (test-metrics)
+    (test-hinting)
     (format t "~%Results: ~D tests run, ~D failures.~%"
             runes/otf/charstring-test::*count* runes/otf/charstring-test::*failures*)
     (unless (zerop runes/otf/charstring-test::*failures*)
