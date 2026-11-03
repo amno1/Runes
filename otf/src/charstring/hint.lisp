@@ -564,7 +564,7 @@ if the first left room (HintMap::adjust)."
       (insert-hint map (ghost (fixed- +icf-bottom+ +epsilon+) (- +min-counter+) +ghost-bottom+)
                    (make-hint) initial)
       (insert-hint map (make-hint)
-                   (ghost (fixed+ +icf-top+ +epsilon+ (twice (hs-darken-y state)))
+                   (ghost (fixed+ (fixed+ +icf-top+ +epsilon+) (twice (hs-darken-y state)))
                           +min-counter+ +ghost-top+)
                    initial))))
 
@@ -606,7 +606,7 @@ clearing them from MASK."
   (loop for i below (hint-map-length map)
         for edge = (hint-map-edge map i)
         unless (hint-synthetic-p edge)
-          do (let ((stem (svref stems (hint-index edge))))
+          do (let ((stem (aref stems (hint-index edge))))
                (if (hint-top-p edge)
                    (setf (stem-ds-max stem) (hint-ds-coord edge))
                    (setf (stem-ds-min stem) (hint-ds-coord edge)))
@@ -632,3 +632,108 @@ INITIAL-P, holds every hint (HintMap::build)."
       (save-stem-positions map stems))
     (setf (hint-map-valid-p map) t)
     map))
+
+;;; The hinting sink (HintingSink): takes the stem hints, masks and
+;;; outline of a charstring and passes the outline to INNER, x scaled and
+;;; y hinted, in pixels (16.16 kept to FreeType's 26.6 precision).
+
+(defstruct (hinting-sink (:constructor %make-hinting-sink))
+  (state nil :type hint-state)
+  inner
+  (stems (make-array 0 :adjustable t :fill-pointer t) :type vector)
+  (mask (all-hints-mask) :type hint-mask)
+  (initial-map nil :type hint-map)
+  (map nil :type hint-map)
+  ;; The last move in character space, and the last line in character
+  ;; and device space, held back until the next command.
+  (start-point nil)
+  (pending-line nil))
+
+(defun make-hinting-sink (state inner)
+  (%make-hinting-sink :state state :inner inner
+                      :initial-map (make-hint-map-for (hs-scale state))
+                      :map (make-hint-map-for (hs-scale state))))
+
+(defun close-subpath (sink)
+  "Close the open subpath.  The closing line is drawn from its held back
+device position, so with the hint map of the subpath's start, as
+FreeType does; a line back to the start in character space is left out,
+the close draws it."
+  (let ((start (hinting-sink-start-point sink))
+        (line (hinting-sink-pending-line sink))
+        (inner (hinting-sink-inner sink)))
+    (setf (hinting-sink-start-point sink) nil
+          (hinting-sink-pending-line sink) nil)
+    (when start
+      (when (and line (not (equal start (subseq line 0 2))))
+        (sink-line-to inner (third line) (fourth line)))
+      (sink-close inner))))
+
+(defun flush-pending-line (sink)
+  (let ((line (hinting-sink-pending-line sink)))
+    (when line
+      (setf (hinting-sink-pending-line sink) nil)
+      (sink-line-to (hinting-sink-inner sink) (third line) (fourth line)))))
+
+(defun build-sink-map (sink map mask)
+  (build-hint-map map (hinting-sink-state sink) mask (hinting-sink-initial-map sink)
+                  (hinting-sink-stems sink) 0))
+
+(defun hinted-y (sink y)
+  "Y in device space through the current hint map, built when needed."
+  (let ((map (hinting-sink-map sink)))
+    (unless (hint-map-valid-p map)
+      (build-sink-map sink map (hinting-sink-mask sink)))
+    (trunc-1/64 (hint-map-transform map y))))
+
+(defun scaled-x (sink x)
+  (trunc-1/64 (fixed* x (hs-scale (hinting-sink-state sink)))))
+
+(defmethod sink-hstem ((sink hinting-sink) min max)
+  ;; Stems after the first map is built are ignored, as in FreeType.
+  (let ((stems (hinting-sink-stems sink)))
+    (when (and (< (length stems) +max-hints+)
+               (not (hint-map-valid-p (hinting-sink-map sink))))
+      (vector-push-extend (make-stem-hint :min min :max max) stems))))
+
+(defmethod sink-hint-mask ((sink hinting-sink) bytes)
+  ;; An invalid mask means every hint, as in FreeType.
+  (let ((mask (or (bytes-hint-mask bytes) (all-hints-mask))))
+    (unless (equal mask (hinting-sink-mask sink))
+      (setf (hinting-sink-mask sink) mask
+            (hint-map-valid-p (hinting-sink-map sink)) nil))))
+
+(defmethod sink-counter-mask ((sink hinting-sink) bytes)
+  ;; A map built only to place and lock the stems of the counter mask.
+  (build-sink-map sink (make-hint-map-for (hs-scale (hinting-sink-state sink)))
+                  (or (bytes-hint-mask bytes) (all-hints-mask))))
+
+(defmethod sink-clear-hints ((sink hinting-sink))
+  (let ((scale (hs-scale (hinting-sink-state sink))))
+    (setf (fill-pointer (hinting-sink-stems sink)) 0
+          (hinting-sink-map sink) (make-hint-map-for scale)
+          (hinting-sink-initial-map sink) (make-hint-map-for scale)
+          (hinting-sink-mask sink) (all-hints-mask))))
+
+(defmethod sink-move-to ((sink hinting-sink) x y)
+  (close-subpath sink)
+  (setf (hinting-sink-start-point sink) (list x y))
+  (sink-move-to (hinting-sink-inner sink) (scaled-x sink x) (hinted-y sink y)))
+
+(defmethod sink-line-to ((sink hinting-sink) x y)
+  (flush-pending-line sink)
+  (setf (hinting-sink-pending-line sink) (list x y (scaled-x sink x) (hinted-y sink y))))
+
+(defmethod sink-curve-to ((sink hinting-sink) cx0 cy0 cx1 cy1 x y)
+  (flush-pending-line sink)
+  (sink-curve-to (hinting-sink-inner sink)
+                 (scaled-x sink cx0) (hinted-y sink cy0)
+                 (scaled-x sink cx1) (hinted-y sink cy1)
+                 (scaled-x sink x) (hinted-y sink y)))
+
+;; Subpaths are closed by the next move, see CLOSE-SUBPATH.
+(defmethod sink-close ((sink hinting-sink)))
+
+(defmethod sink-finish ((sink hinting-sink))
+  (close-subpath sink)
+  (sink-finish (hinting-sink-inner sink)))

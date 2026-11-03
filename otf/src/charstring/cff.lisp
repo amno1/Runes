@@ -277,16 +277,20 @@ it needs the charset and Standard Encoding."))
               (font-matrix-elements matrix))
             scale)))
 
+(defun subfont-context (font subfont)
+  "SUBFONT's charstring context, made once."
+  (or (cff-subfont-context subfont)
+      (setf (cff-subfont-context subfont)
+            (make-instance 'cff-charstring-context
+                           :global-subrs (cff-font-global-subrs font)
+                           :local-subrs (cff-subfont-subrs subfont)))))
+
 (defun cff-draw-glyph (font subfont gid sink &optional (coords #()))
   "Evaluate glyph GID of SUBFONT, sending its outline in font units (fixed
 point) to SINK, without degenerate commands. Return the charstring's
 advance width in charstring units: the stated width plus nominalWidthX,
 or defaultWidthX. COORDS are normalized coordinates of a CFF2 instance."
-  (let* ((context (or (cff-subfont-context subfont)
-                      (setf (cff-subfont-context subfont)
-                            (make-instance 'cff-charstring-context
-                                           :global-subrs (cff-font-global-subrs font)
-                                           :local-subrs (cff-subfont-subrs subfont)))))
+  (let* ((context (subfont-context font subfont))
          (transform (or (cff-subfont-transform subfont)
                         (setf (cff-subfont-transform subfont)
                               (multiple-value-call #'cons (cff-transform font subfont)))))
@@ -298,6 +302,39 @@ or defaultWidthX. COORDS are normalized coordinates of a CFF2 instance."
                                                                :matrix (car transform)
                                                                :scale (cdr transform))
                                      :blend-state blend)))
+    (if width
+        (fixed+ width (cff-subfont-nominal-width subfont))
+        (cff-subfont-default-width subfont))))
+
+;;; Hinted outlines
+
+(defun cff-hint-scale (font subfont ppem)
+  "The hinting scale of SUBFONT at PPEM pixels per em: charstring units to
+pixels, through 26.6 as FreeType, and adjusted for a font matrix of
+another units per em (skrifa's subfont and scale_for_hinting)."
+  (let ((scale (fixed/ (truncate (* ppem 64)) (cff-font-upem font))))
+    (multiple-value-bind (matrix forced-scale) (cff-transform font subfont)
+      (declare (ignore matrix))
+      (when forced-scale
+        (setf scale (fixed-mul-div scale (cff-font-upem font)
+                                   (font-matrix-scale (or (cff-subfont-matrix subfont)
+                                                          (cff-font-matrix font)))))))
+    (values (truncate (min (+ scale 32) +fixed-max+) 64))))
+
+(defun cff-hint-state (font subfont ppem)
+  "SUBFONT's hinting state at PPEM pixels per em."
+  (make-hint-state-for (cff-subfont-hint-params subfont) (cff-hint-scale font subfont ppem)))
+
+(defun cff-draw-hinted-glyph (font subfont gid sink state &optional (coords #()))
+  "As CFF-DRAW-GLYPH, but sending glyph GID hinted with STATE (from
+CFF-HINT-STATE), in pixels.  Fonts with a font matrix are not hinted yet."
+  (when (car (cff-transform font subfont))
+    (fail 'charstring-invalid-operation "hinting a font with a font matrix"))
+  (let ((width (evaluate-charstring (subfont-context font subfont)
+                                    (cff-index-ref (cff-font-charstrings font) gid)
+                                    (make-hinting-sink state (make-outline-filter sink))
+                                    :blend-state (cff-blend-state font (cff-subfont-vs-index subfont)
+                                                                  coords))))
     (if width
         (fixed+ width (cff-subfont-nominal-width subfont))
         (cff-subfont-default-width subfont))))
