@@ -219,3 +219,416 @@ each zone's flat edge in device space (build_zones)."
                      (fixed-round (fixed+ (fixed* (bz-cs-flat-edge zone) scale)
                                           (if (bz-bottom-p zone) (fixed-neg boost) boost)))))
       (setf (hs-zones state) zones))))
+
+;;; Stem hints and hint edges (StemHint and Hint)
+
+(defstruct (stem-hint (:conc-name stem-))
+  "A stem hint from a charstring: its edges in character space and, once
+used, in device space."
+  (used-p nil)
+  (min 0 :type s32)
+  (max 0 :type s32)
+  (ds-min 0 :type s32)
+  (ds-max 0 :type s32))
+
+;; Hint edge flags.  A ghost hint aligns a single edge, as the top and
+;; bottom of a sans serif I; a pair is one edge of a stem.
+(defconstant +ghost-bottom+ #x1)
+(defconstant +ghost-top+ #x2)
+(defconstant +pair-bottom+ #x4)
+(defconstant +pair-top+ #x8)
+(defconstant +locked+ #x10)
+(defconstant +synthetic+ #x20)
+
+(defstruct (hint (:copier copy-hint))
+  "One edge of a stem hint, in character and device space.  No flags
+means an invalid edge."
+  (flags 0 :type (unsigned-byte 8))
+  ;; Index of the stem hint it comes from, unless synthetic.
+  (index 0 :type (unsigned-byte 8))
+  (cs-coord 0 :type s32)
+  (ds-coord 0 :type s32)
+  (scale 0 :type s32))
+
+(declaim (inline hint-flag-p hint-valid-p hint-bottom-p hint-top-p hint-pair-p
+                 hint-pair-top-p hint-locked-p hint-synthetic-p lock-hint))
+(defun hint-flag-p (hint flags) (logtest (hint-flags hint) flags))
+(defun hint-valid-p (hint) (/= (hint-flags hint) 0))
+(defun hint-bottom-p (hint) (hint-flag-p hint (logior +ghost-bottom+ +pair-bottom+)))
+(defun hint-top-p (hint) (hint-flag-p hint (logior +ghost-top+ +pair-top+)))
+(defun hint-pair-p (hint) (hint-flag-p hint (logior +pair-bottom+ +pair-top+)))
+(defun hint-pair-top-p (hint) (hint-flag-p hint +pair-top+))
+(defun hint-locked-p (hint) (hint-flag-p hint +locked+))
+(defun hint-synthetic-p (hint) (hint-flag-p hint +synthetic+))
+(defun lock-hint (hint) (setf (hint-flags hint) (logior (hint-flags hint) +locked+)))
+
+;; Ghost hints are stems of width -21 (bottom) and -20 (top).
+(defconstant +ghost-bottom-width+ (fixed-from-int -21))
+(defconstant +ghost-top-width+ (fixed-from-int -20))
+
+(defun stem-edge (stem bottom-p)
+  "The character space coordinate and flags of STEM's bottom edge, or top
+edge unless BOTTOM-P; flags 0 when STEM is a ghost hint of the other edge.
+A stem of negative width is an inverted pair, its edges swapped."
+  (let ((width (fixed- (stem-max stem) (stem-min stem))))
+    (cond ((= width +ghost-bottom-width+)
+           (if bottom-p (values (stem-max stem) +ghost-bottom+) (values 0 0)))
+          ((= width +ghost-top-width+)
+           (if bottom-p (values 0 0) (values (stem-min stem) +ghost-top+)))
+          ((minusp width)
+           (if bottom-p
+               (values (stem-max stem) +pair-bottom+)
+               (values (stem-min stem) +pair-top+)))
+          (bottom-p (values (stem-min stem) +pair-bottom+))
+          (t (values (stem-max stem) +pair-top+)))))
+
+(defun setup-hint (hint stem index origin scale darken-y bottom-p)
+  "Make HINT STEM's bottom edge, or top edge unless BOTTOM-P (Hint::setup).
+A stem already placed keeps its device position and is locked."
+  (multiple-value-bind (cs-coord flags) (stem-edge stem bottom-p)
+    (setf (hint-flags hint) flags
+          (hint-cs-coord hint) cs-coord)
+    ;; A top edge moves up by twice the darkening.
+    (when (hint-top-p hint)
+      (setf (hint-cs-coord hint) (fixed+ (hint-cs-coord hint) (twice darken-y))))
+    (setf (hint-cs-coord hint) (fixed+ (hint-cs-coord hint) origin)
+          (hint-scale hint) scale
+          (hint-index hint) index)
+    (cond ((and (/= flags 0) (stem-used-p stem))
+           (setf (hint-ds-coord hint) (if (hint-top-p hint) (stem-ds-max stem) (stem-ds-min stem)))
+           (lock-hint hint))
+          (t (setf (hint-ds-coord hint) (fixed* (hint-cs-coord hint) scale))))
+    hint))
+
+;;; Capturing stem edges by blue zones
+
+(defun zone-captures-p (zone edge fuzz)
+  "True when ZONE, widened by FUZZ, holds EDGE's character space coordinate."
+  (<= (fixed- (bz-cs-bottom-edge zone) fuzz)
+      (hint-cs-coord edge)
+      (fixed+ (bz-cs-top-edge zone) fuzz)))
+
+(defun captured-position (state zone edge overshoot)
+  "Where a ZONE puts a captured EDGE in device space.  OVERSHOOT is how far
+EDGE overshoots ZONE's flat edge in character space; an overshoot of at
+least BlueShift is kept at a pixel or more."
+  (let ((rounded (fixed-round (hint-ds-coord edge)))
+        (flat (bz-ds-flat-edge zone)))
+    (cond ((hs-suppress-overshoot state) flat)
+          ((< overshoot (hs-blue-shift state)) rounded)
+          ((bz-bottom-p zone) (min rounded (fixed- flat #x10000)))
+          (t (max rounded (fixed+ flat #x10000))))))
+
+(defun capture-adjustment (state bottom-edge top-edge)
+  "How far the first zone that holds BOTTOM-EDGE or TOP-EDGE moves it, or
+NIL when no zone does."
+  (loop with fuzz = (hs-blue-fuzz state)
+        for zone across (hs-zones state)
+        do (cond ((and (bz-bottom-p zone) (hint-bottom-p bottom-edge)
+                       (zone-captures-p zone bottom-edge fuzz))
+                  (return (fixed- (captured-position
+                                   state zone bottom-edge
+                                   (fixed- (bz-cs-top-edge zone) (hint-cs-coord bottom-edge)))
+                                  (hint-ds-coord bottom-edge))))
+                 ((and (not (bz-bottom-p zone)) (hint-top-p top-edge)
+                       (zone-captures-p zone top-edge fuzz))
+                  (return (fixed- (captured-position
+                                   state zone top-edge
+                                   (fixed- (hint-cs-coord top-edge) (bz-cs-bottom-edge zone)))
+                                  (hint-ds-coord top-edge)))))))
+
+(defun capture (state bottom-edge top-edge)
+  "Align a stem's edges to a blue zone that holds one of them: both valid
+edges move by the same amount and are locked.  True when captured."
+  (let ((adjustment (capture-adjustment state bottom-edge top-edge)))
+    (when adjustment
+      (dolist (edge (list bottom-edge top-edge))
+        (when (hint-valid-p edge)
+          (setf (hint-ds-coord edge) (fixed+ (hint-ds-coord edge) adjustment))
+          (lock-hint edge)))
+      t)))
+
+;;; Hint masks (HintMask): which stem hints are active, bit I for the Ith
+;;; stem hint of the charstring
+
+(defconstant +max-hints+ 96)
+
+(deftype hint-mask () `(simple-bit-vector ,+max-hints+))
+
+(defun all-hints-mask ()
+  (make-array +max-hints+ :element-type 'bit :initial-element 1))
+
+(defun bytes-hint-mask (bytes)
+  "The hint mask of a hintmask or cntrmask operator's BYTES, the first
+stem hint in the first byte's most significant bit; NIL when too long."
+  (when (<= (length bytes) (/ +max-hints+ 8))
+    (let ((mask (make-array +max-hints+ :element-type 'bit :initial-element 0)))
+      (loop for byte across bytes
+            for base from 0 by 8
+            do (loop for bit below 8
+                     do (setf (sbit mask (+ base bit)) (ldb (byte 1 (- 7 bit)) byte))))
+      mask)))
+
+;;; The hint map (HintMap): the stem edges of the active hints, sorted by
+;;; character space coordinate, each with its device position and the
+;;; scale up to the next edge.  It maps any y coordinate to device space.
+
+;; The least room left between the edges of two stems, half a pixel.
+(defconstant +min-counter+ #x8000)
+(defconstant +epsilon+ 1)
+
+(defstruct (hint-map (:constructor %make-hint-map))
+  (edges #() :type simple-vector)
+  (length 0 :type fixnum)
+  (valid-p nil)
+  (scale 0 :type s32))
+
+(defun make-hint-map-for (scale)
+  (%make-hint-map :edges (map-into (make-array +max-hints+) #'make-hint) :scale scale))
+
+(defun clear-hint-map (map)
+  (setf (hint-map-length map) 0
+        (hint-map-valid-p map) nil))
+
+(defun hint-map-edge (map i) (svref (hint-map-edges map) i))
+
+(defun hint-map-transform (map coord)
+  "COORD mapped to device space: scaled from the highest edge at or below
+it with that edge's scale, or uniformly below the first edge."
+  (let ((length (hint-map-length map)))
+    (if (zerop length)
+        (fixed* coord (hint-map-scale map))
+        (let* ((i (1- (or (position-if (lambda (edge) (< coord (hint-cs-coord edge)))
+                                       (hint-map-edges map) :start 1 :end length)
+                          length)))
+               (edge (hint-map-edge map i))
+               (scale (if (and (zerop i) (< coord (hint-cs-coord edge)))
+                          (hint-map-scale map)
+                          (hint-scale edge))))
+          (fixed+ (fixed* (fixed- coord (hint-cs-coord edge)) scale)
+                  (hint-ds-coord edge))))))
+
+;;; Inserting the edges of a hint
+
+(defun insertion-index (map coord)
+  "The index of the first edge of MAP at or above COORD."
+  (or (position-if (lambda (edge) (>= (hint-cs-coord edge) coord))
+                   (hint-map-edges map) :end (hint-map-length map))
+      (hint-map-length map)))
+
+(defun overlaps-in-character-space-p (map index first second pair-p)
+  "True when edges inserted at INDEX would land on an existing edge,
+straddle one, or split a pair."
+  (and (< index (hint-map-length map))
+       (let ((current (hint-map-edge map index)))
+         (or (= (hint-cs-coord current) (hint-cs-coord first))
+             (and pair-p (<= (hint-cs-coord current) (hint-cs-coord second)))
+             (hint-pair-top-p current)))))
+
+(defun overlaps-in-device-space-p (map index first second pair-p)
+  "True when edges inserted at INDEX would cross their neighbours in device
+space."
+  (or (and (plusp index)
+           (< (hint-ds-coord first) (hint-ds-coord (hint-map-edge map (1- index)))))
+      (and (< index (hint-map-length map))
+           (let ((next (hint-ds-coord (hint-map-edge map index))))
+             (or (and pair-p (> (hint-ds-coord second) next))
+                 (> (hint-ds-coord first) next))))))
+
+(defun place-with-initial-map (map initial first second pair-p)
+  "Set the device positions of unlocked edges from the INITIAL map.  A
+pair keeps its width: its middle goes through INITIAL and its edges are
+half a width away at MAP's scale."
+  (unless (or (hint-locked-p first) (null initial))
+    (if pair-p
+        (let ((middle (hint-map-transform
+                       initial (midpoint (hint-cs-coord first) (hint-cs-coord second))))
+              (half-width (fixed* (half (fixed- (hint-cs-coord second) (hint-cs-coord first)))
+                                  (hint-map-scale map))))
+          (setf (hint-ds-coord first) (fixed- middle half-width)
+                (hint-ds-coord second) (fixed+ middle half-width)))
+        (setf (hint-ds-coord first) (hint-map-transform initial (hint-cs-coord first))))))
+
+(defun insert-edges-at (map index edges)
+  "Put EDGES into MAP at INDEX, moving the ones above up."
+  (let ((all (hint-map-edges map))
+        (length (hint-map-length map))
+        (count (length edges)))
+    (replace all all :start1 (+ index count) :start2 index :end2 length)
+    (loop for edge in edges
+          for i from index
+          do (setf (svref all i) edge))
+    (setf (hint-map-length map) (+ length count))))
+
+(defun insert-hint (map bottom top initial)
+  "Insert the valid edges among BOTTOM and TOP into MAP, keeping it sorted,
+unless they overlap edges already there; unlocked edges are placed with
+the INITIAL map when there is one (HintMap::insert)."
+  (let* ((pair-p (and (hint-valid-p bottom) (hint-valid-p top)))
+         (first (copy-hint (if (hint-valid-p bottom) bottom top)))
+         (second (copy-hint top))
+         (edges (if pair-p (list first second) (list first))))
+    ;; A pair upside down, or one that does not fit, is ignored, as FreeType does.
+    (unless (or (and pair-p (< (hint-cs-coord top) (hint-cs-coord bottom)))
+                (> (+ (hint-map-length map) (length edges)) +max-hints+))
+      (let ((index (insertion-index map (hint-cs-coord first))))
+        (unless (overlaps-in-character-space-p map index first second pair-p)
+          (place-with-initial-map map initial first second pair-p)
+          (unless (overlaps-in-device-space-p map index first second pair-p)
+            (insert-edges-at map index edges)))))))
+
+;;; Adjusting edges to the pixel grid
+
+(declaim (inline fixed-fract))
+(defun fixed-fract (x) (declare (s32 x)) (logand x #xFFFF))
+
+(defun smallest-moves (bottom-ds top-ds)
+  "The smallest moves up and down, the down one negative, that put one of
+the edges at BOTTOM-DS and TOP-DS on a pixel boundary."
+  (flet ((up (ds) (if (zerop (fixed-fract ds)) 0 (- #x10000 (fixed-fract ds)))))
+    (values (min (up bottom-ds) (up top-ds))
+            (max (- (fixed-fract bottom-ds)) (- (fixed-fract top-ds))))))
+
+(defun edge-adjustment (map i j)
+  "How far to move the unlocked hint with edges I and J (the same edge
+for a single one) onto the pixel grid without crowding its neighbours.
+The second value is true when the move is not the best, and the third
+is the best move up."
+  (let ((edges (hint-map-edges map))
+        (last (1- (hint-map-length map))))
+    (multiple-value-bind (move-up move-down)
+        (smallest-moves (hint-ds-coord (svref edges i)) (hint-ds-coord (svref edges j)))
+      (let ((room-up (or (>= j last)
+                         (>= (hint-ds-coord (svref edges (1+ j)))
+                             (+ (hint-ds-coord (svref edges j)) move-up +min-counter+))))
+            (room-down (or (zerop i)
+                           (<= (hint-ds-coord (svref edges (1- i)))
+                               (- (+ (hint-ds-coord (svref edges i)) move-down) +min-counter+)))))
+        (cond ((and room-up room-down)
+               (values (if (< (- move-down) move-up) move-down move-up) nil move-up))
+              (room-up (values move-up nil move-up))
+              (room-down (values move-down (< move-up (- move-down)) move-up))
+              (t (values 0 t move-up)))))))
+
+(defun rescale-below (map i)
+  "Set the scale of edge I-1, I above 0, so that it reaches edge I."
+  (let ((a (hint-map-edge map i))
+        (b (hint-map-edge map (1- i))))
+    (when (/= (hint-cs-coord a) (hint-cs-coord b))
+      (setf (hint-scale b) (fixed/ (fixed- (hint-ds-coord a) (hint-ds-coord b))
+                                   (fixed- (hint-cs-coord a) (hint-cs-coord b)))))))
+
+(defun adjust-hint-map (map)
+  "Move every unlocked hint so that one of its edges is on a pixel
+boundary, from the bottom up, and set the scales between the edges.
+Hints that could not take their best move are moved up in a second pass
+if the first left room (HintMap::adjust)."
+  (let ((edges (hint-map-edges map))
+        (length (hint-map-length map))
+        (saved '()))
+    (loop with i = 0
+          while (< i length)
+          do (let* ((pair-p (hint-pair-p (svref edges i)))
+                    (j (if pair-p (1+ i) i)))
+               (unless (hint-locked-p (svref edges i))
+                 (multiple-value-bind (adjustment save-p move-up) (edge-adjustment map i j)
+                   ;; Only an unlocked edge above can make room later.
+                   (when (and save-p (< j (1- length)) (not (hint-locked-p (svref edges (1+ j)))))
+                     (push (cons j (- move-up adjustment)) saved))
+                   (dolist (k (if pair-p (list i j) (list i)))
+                     (setf (hint-ds-coord (svref edges k))
+                           (fixed+ (hint-ds-coord (svref edges k)) adjustment)))))
+               (when (plusp i) (rescale-below map i))
+               (when pair-p (rescale-below map j))
+               (setf i (1+ j))))
+    ;; SAVED is last first, the order of FreeType's second pass.
+    (loop for (j . adjustment) in saved
+          for edge = (svref edges j)
+          when (>= (hint-ds-coord (svref edges (1+ j)))
+                   (+ (hint-ds-coord edge) adjustment +min-counter+))
+            do (setf (hint-ds-coord edge) (fixed+ (hint-ds-coord edge) adjustment))
+               (when (hint-pair-p edge)
+                 (let ((below (svref edges (1- j))))
+                   (setf (hint-ds-coord below) (fixed+ (hint-ds-coord below) adjustment)))))))
+
+;;; Building the hint map
+
+(defun insert-em-box-hints (map state initial)
+  "Insert locked ghost hints just outside the ideographic em box."
+  (let ((scale (hs-scale state)))
+    (flet ((ghost (cs-coord ds-offset flags)
+             (make-hint :cs-coord cs-coord
+                        :ds-coord (fixed+ (fixed-round (fixed* cs-coord scale)) ds-offset)
+                        :scale scale
+                        :flags (logior flags +locked+ +synthetic+))))
+      (insert-hint map (ghost (fixed- +icf-bottom+ +epsilon+) (- +min-counter+) +ghost-bottom+)
+                   (make-hint) initial)
+      (insert-hint map (make-hint)
+                   (ghost (fixed+ +icf-top+ +epsilon+ (twice (hs-darken-y state)))
+                          +min-counter+ +ghost-top+)
+                   initial))))
+
+(defun stem-edges (stem index origin scale)
+  "The bottom and top hint edges of STEM, the INDEXth stem hint."
+  (values (setup-hint (make-hint) stem index origin scale 0 t)
+          (setup-hint (make-hint) stem index origin scale 0 nil)))
+
+(defun insert-locked-stems (map state mask stems origin initial)
+  "Insert the stems of MASK that are locked or captured by a blue zone,
+clearing them from MASK."
+  (loop for stem across stems
+        for i below +max-hints+
+        when (= (sbit mask i) 1)
+          do (multiple-value-bind (bottom top) (stem-edges stem i origin (hs-scale state))
+               (when (or (hint-locked-p bottom) (hint-locked-p top) (capture state bottom top))
+                 (insert-hint map bottom top initial)
+                 (setf (sbit mask i) 0)))))
+
+(defun insert-other-stems (map state mask stems origin initial)
+  "Insert the stems still in MASK."
+  (loop for stem across stems
+        for i below +max-hints+
+        when (= (sbit mask i) 1)
+          do (multiple-value-bind (bottom top) (stem-edges stem i origin (hs-scale state))
+               (insert-hint map bottom top initial))))
+
+(defun insert-baseline-lock (map scale)
+  "Lock y = 0 when no edge covers it, for glyphs without a baseline hint."
+  (let ((length (hint-map-length map)))
+    (when (or (zerop length)
+              (plusp (hint-cs-coord (hint-map-edge map 0)))
+              (minusp (hint-cs-coord (hint-map-edge map (1- length)))))
+      (insert-hint map (make-hint :flags (logior +ghost-bottom+ +locked+ +synthetic+) :scale scale)
+                   (make-hint) nil))))
+
+(defun save-stem-positions (map stems)
+  "Record in STEMS where MAP put their edges, so that later maps keep them."
+  (loop for i below (hint-map-length map)
+        for edge = (hint-map-edge map i)
+        unless (hint-synthetic-p edge)
+          do (let ((stem (svref stems (hint-index edge))))
+               (if (hint-top-p edge)
+                   (setf (stem-ds-max stem) (hint-ds-coord edge))
+                   (setf (stem-ds-min stem) (hint-ds-coord edge)))
+               (setf (stem-used-p stem) t))))
+
+(defun build-hint-map (map state mask initial stems origin &optional initial-p)
+  "Fill MAP from the STEMS active in MASK (all when NIL), placed through the
+INITIAL map, which is built first when not yet valid.  The initial map,
+INITIAL-P, holds every hint (HintMap::build)."
+  (when (and (not initial-p) initial (not (hint-map-valid-p initial)))
+    (build-hint-map initial state (all-hints-mask) nil stems origin t))
+  (clear-hint-map map)
+  (let ((mask (copy-seq (or mask (all-hints-mask))))
+        (placed-by (if initial-p nil initial)))
+    (when (hs-do-em-box-hints state)
+      (insert-em-box-hints map state initial))
+    (insert-locked-stems map state mask stems origin placed-by)
+    (if initial-p
+        (insert-baseline-lock map (hs-scale state))
+        (insert-other-stems map state mask stems origin initial))
+    (adjust-hint-map map)
+    (unless initial-p
+      (save-stem-positions map stems))
+    (setf (hint-map-valid-p map) t)
+    map))
