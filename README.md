@@ -1,16 +1,17 @@
 # Runes
 
-Pure Common Lisp TrueType and OpenType font management: finding the
-installed fonts, loading and caching them, metrics, and line layout
-(formerly *clxcb-truetype* + *zpb-ttf*).
+Runes provide a pure Common Lisp TrueType and OpenType font management: finding
+the installed fonts, loading and caching them, metrics, and line layout
+(formerly *clxcb-truetype* + *zpb-ttf*). Currently it is SBCL only, but I do
+plan to make portable.
 
 ## Overview
 
-`runes` is meant to be a complete stop for managing and using fonts in Common
-Lisp. It aims to do Freetype's job of loading fonts and serving font metrics, 
-fontserver job of discovering and caching fonts. The aim is similar to
-Google's Fontations. The idea is that we should not have to call into foreign
-function libraries (Freetype, fontconfig, etc).
+`runes` is meant to provide everything needed for managing and using fonts in
+Common Lisp. It aims to do Freetype's job of loading fonts and serving font
+metrics and fontserver's job of discovering and caching fonts. The aim is
+similar to Google's Fontations. The idea is that we should not have to call into
+foreign function libraries (Freetype, fontconfig, etc).
 
 Provided are:
 
@@ -18,12 +19,12 @@ Provided are:
   them, metrics, and line layout.
 - `runes/raster`: a simple CPU renderer that rasterizes glyphs to 8-bit alpha
   maps with cl-vectors and cl-aa, cached per face.
-- `runes/xcb`: draws text on X11 through RENDER glyph sets, as Xft does.
-- `runes/wayland`: draws text into pixels the client owns, as on Wayland.
+- `runes/xcb`: draws text on X11 through RENDER glyph sets, as Xft.
+- `runes/wayland`: draws text into client's pixel buffer, for Wayland.
 - `zpb-ttf`: the zpb-ttf font loader API, on top of `runes/otf`, so zpb-ttf
   programs work unchanged.  BSD 2-Clause.
 - `runes/otf`: the OpenType loader: TrueType and CFF/CFF2 outlines, variable
-  fonts, collections, WOFF and WOFF2.  Still a work in progress: the hinting
+  fonts, collections, WOFF and WOFF2. Still a work in progress: the hinting
   virtual machine is missing.  MIT.
 - `decompress`: Brotli, zlib and deflate decoders with no dependencies.  MIT.
 
@@ -38,10 +39,8 @@ layers were replaced with hash tables keyed on the connection.
 
 ## Requirements
 
-- SBCL, preferably.  The library is developed and tested on SBCL.
-  It uses portable libraries rather than SBCL-isms, so it may work on
-  other implementations, but I haven't tested them myself. Decompression code used
-  for web fonts (woff1 and woff2) is much slower in portable Lisp than in SBCL.
+- SBCL, preferably. The library is developed and tested on SBCL.
+  Decompression code needs explicitly SBCL. 
 - ASDF 3.x for building the library
 - UIOP for portable getenv and directory/file listing
 - [zpb-ttf][zpb-ttf] — TrueType font parser (included, on top of `runes/otf`)
@@ -106,13 +105,11 @@ You should see a simple message:
 
 ## Documentation
 
-The manual is `doc/runes.texi`, in Texinfo.  It documents every system:
-the font manager, the rasterizer, both bridges, the zpb-ttf loader,
-the OpenType tables, the CFF interpreter and the decompressors. Build
-it with `make -C doc` and read it in Emacs with `C-u C-h i
-doc/runes.info`, or with `info -f doc/runes.info`.  `make -C doc html`
-gives one HTML page, and `make -C doc pdf` a PDF.  Building the manual
-needs Texinfo; the PDF also needs TeX, such as TeX Live.
+The manual is `doc/runes.texi`, in Texinfo. Build it with `make -C doc`. It
+produces and info file so you can read it in Emacs with `C-u C-h i
+doc/runes.info`, or with `info -f doc/runes.info`. You can also generate html
+with `make -C doc html` as one HTML page, and a pdf with `make -C doc pdf`.
+Building the manual needs Texinfo; the PDF also needs TeX, such as TeX Live.
 `doc/design-notes.md` explains the design changes from clx-truetype.
 
 ## Differences from clx-truetype

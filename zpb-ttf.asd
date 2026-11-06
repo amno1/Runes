@@ -30,4 +30,11 @@
                              (:file "cff-outlines")
                              (:file "variations")
                              (:file "gpos-kerning")
-                             (:file "font-loader-interface")))))
+                             (:file "font-loader-interface")
+                             ;; TrueType bytecode hinting: the VM (wm) and its
+                             ;; instruction handlers, then the glyph scaler.
+                             (:module "ttf-hints"
+                              :serial t
+                              :components ((:file "wm")
+                                           (:file "hint-ops")
+                                           (:file "scaler")))))))
