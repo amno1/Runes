@@ -13,10 +13,16 @@
 (defun layout-string (font string &key (dpi-x 96)
                                        (letter-spacing 0.0)
                                        (word-spacing 0.0)
-                                       kerning-table)
+                                       kerning-table
+                                       ppem)
   "Lay out STRING in FONT on one line at DPI-X, applying LETTER-SPACING,
    WORD-SPACING (added after each space), and KERNING-TABLE (or the
-   font's kerning table).
+   font's kerning table).  With PPEM, a whole number of pixels per em that
+   matches the font's size at DPI-X, glyphs advance by their hinted widths
+   at PPEM (see ZPB-TTF:HINTED-ADVANCE-WIDTH) and kerns are rounded to
+   whole pixels, as a renderer that draws
+   hinted glyphs needs; a glyph that cannot be hinted advances by its
+   unhinted width.
    Returns (VALUES LAYOUT TOTAL-ADVANCE) where LAYOUT is a vector of
    (GLYPH-INDEX PEN-X), PEN-X in pixels from the start of the line."
   (with-font-loader (loader font)
@@ -29,7 +35,11 @@
            (previous-glyph nil)
            (previous-char nil))
       (flet ((advance (glyph char)
-               (+ (* sx (coerce (zpb-ttf:advance-width glyph) 'single-float))
+               (+ (if ppem
+                      (coerce (or (ignore-errors (zpb-ttf:hinted-advance-width glyph ppem))
+                                  (* sx (zpb-ttf:advance-width glyph)))
+                              'single-float)
+                      (* sx (coerce (zpb-ttf:advance-width glyph) 'single-float)))
                   (if (and (not (zerop wsp)) (char= char #\Space))
                       wsp
                       0.0f0))))
@@ -45,7 +55,11 @@
                                                   previous-glyph glyph loader)
                                                  'single-float)))))
                      (incf pen (+ (advance previous-glyph previous-char)
-                                  (coerce kern 'single-float)
+                                  ;; Hinted glyphs sit on whole pixels, so a
+                                  ;; kern is whole pixels too.
+                                  (if ppem
+                                      (coerce (round kern) 'single-float)
+                                      (coerce kern 'single-float))
                                   lsp))))
                  (setf (aref layout i) (list (zpb-ttf:font-index glyph) pen)
                        previous-glyph glyph

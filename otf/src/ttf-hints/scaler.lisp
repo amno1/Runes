@@ -320,6 +320,7 @@
                   (aref cy idx) (round-26-6 spy)
                   (aref zf idx) 0)))
         (let ((instr (read-simple-glyph-instructions fd pos contour-count)))
+          (setf (runes/otf/tt-hint::eng-unscaled-scale eng) scale)
           (run-glyph-bytecode-in-zone eng instr))
         (let ((base (fill-pointer (op-xs out))))
           (dotimes (i n)
@@ -340,7 +341,9 @@
          (count (+ (length components) 4))
          (data (and (plusp (length coords)) (gvar-glyph-data loader gid)))
          (dx nil) (dy nil)
-         (point-base (fill-pointer (op-xs out))))
+         (point-base (fill-pointer (op-xs out)))
+         ;; A composite nested in another one starts after its contours.
+         (contour-base (length (op-ends out))))
     (when data
       (multiple-value-setq (dx dy) (composite-glyph-deltas data coords count))
       (when dx
@@ -376,8 +379,11 @@
                                    uy (f* uy (hypot-fixed (aref m 3) (aref m 1)))))
                            (let ((sx (scale-funit ux scale))
                                  (sy (scale-funit uy scale)))
+                             ;; Rounded to the grid in y only: as FreeType's
+                             ;; v40 interpreter (and skrifa) places a
+                             ;; component horizontally at subpixel precision.
                              (if (logbitp 2 flags)
-                                 (values (round-26-6 sx) (round-26-6 sy))
+                                 (values sx (round-26-6 sy))
                                  (values sx sy))))
                          (let ((base (+ point-base (getf component :arg1)))
                                (child (+ start (getf component :arg2))))
@@ -397,7 +403,7 @@
         (when (plusp (length instr))
           (let* ((n (- (fill-pointer (op-xs out)) point-base))
                  (total (+ n 4))
-                 (n-contours (length (op-ends out)))
+                 (n-contours (- (length (op-ends out)) contour-base))
                  (z (runes/otf/tt-hint:ensure-zone-capacity
                      (runes/otf/tt-hint::eng-glyph eng) total n-contours :n-glyph-points n))
                  (ux (runes/otf/tt-hint:zone-unscaled-x z))
@@ -409,11 +415,11 @@
                  (zf (runes/otf/tt-hint:zone-flags z))
                  (zc (runes/otf/tt-hint:zone-contours z)))
             (dotimes (c n-contours)
-              (setf (aref zc c) (- (aref (op-ends out) c) point-base)))
+              (setf (aref zc c) (- (aref (op-ends out) (+ contour-base c)) point-base)))
             (dotimes (k n)
               (let ((vx (aref (op-xs out) (+ point-base k)))
                     (vy (aref (op-ys out) (+ point-base k))))
-                (setf (aref ux k) 0  (aref uy k) 0
+                (setf (aref ux k) vx (aref uy k) vy
                       (aref ox k) vx (aref oy k) vy
                       (aref cx k) vx (aref cy k) vy
                       (aref zf k) (if (aref (op-on out) (+ point-base k))
@@ -423,10 +429,12 @@
               (let ((idx (+ n k))
                     (px (car (aref scaled-phantom k)))
                     (py (cdr (aref scaled-phantom k))))
-                (setf (aref ux idx) 0  (aref uy idx) 0
+                (setf (aref ux idx) px (aref uy idx) py
                       (aref ox idx) px (aref oy idx) py
                       (aref cx idx) px (aref cy idx) py
                       (aref zf idx) 0)))
+            ;; The points of a composite glyph are scaled already.
+            (setf (runes/otf/tt-hint::eng-unscaled-scale eng) #x10000)
             (run-glyph-bytecode-in-zone eng instr)
             (dotimes (k n)
               (setf (aref (op-xs out) (+ point-base k)) (aref cx k)

@@ -8,20 +8,23 @@
 ;;; 1. Push Instructions
 ;;; ============================================================================
 
-(defun push-bytes (eng count)
-  (declare (tt-engine eng) (fixnum count) (optimize (speed 3) (safety 0)))
-  (let ((s (eng-stack eng)))
-    (dotimes (i count)
-      (vs-push s (fetch-u8 eng)))))
+(defmacro define-push (name fetch)
+  `(defun ,name (eng count)
+     (declare (tt-engine eng) (fixnum count) (optimize (speed 3) (safety 0)))
+     (let* ((s (eng-stack eng))
+            (top (vs-top s))
+            (arr (vs-values s)))
+       (when (> (+ top count) (length arr))
+         (hint-fail 'tt-hint-stack-overflow "TrueType value stack overflow"))
+       (dotimes (i count)
+         (setf (aref arr (+ top i)) (,fetch eng)))
+       (setf (vs-top s) (+ top count)))))
 
-(defun push-words (eng count)
-  (declare (tt-engine eng) (fixnum count) (optimize (speed 3) (safety 0)))
-  (let ((s (eng-stack eng)))
-    (dotimes (i count)
-      (vs-push s (fetch-i16 eng)))))
+(define-push push-bytes fetch-u8)
+(define-push push-words fetch-i16)
 
 ;;; ============================================================================
-;;; 2. Function & Control Flow Instructions (Fixed Bugs #3 and #4)
+;;; 2. Function & Control Flow Instructions
 ;;; ============================================================================
 
 (defun op-fdef (eng)
@@ -148,7 +151,7 @@
          (setf (gs-proj-x gs) cx (gs-proj-y gs) cy))))))
 
 ;;; ============================================================================
-;;; 4. Point Movement Instructions (Fixed Bugs #1, #2, #5, #6, #8)
+;;; 4. Point Movement Instructions
 ;;; ============================================================================
 
 (defun read-cvt-val (eng idx)
@@ -219,10 +222,16 @@
          (z1-id (gs-zp1 gs))
          (z1 (eng-zone eng z1-id))
          (rp0 (gs-rp0 gs))
-         (org-dist (f26- (zone-dual-project-orig gs z1 pt)
-                         (zone-dual-project-orig gs z0 rp0))))
-    (when (< (abs (f26- (abs org-dist) (gs-single-width-value gs)))
-             (gs-single-width-cutin gs))
+         ;; Out of the twilight zone the original distance is measured on the
+         ;; unscaled outline and scaled afterwards, as FreeType does.
+         (org-dist (if (or (zerop z1-id) (zerop (gs-zp0 gs)))
+                       (f26- (zone-dual-project-orig gs z1 pt)
+                             (zone-dual-project-orig gs z0 rp0))
+                       (mul-fix (zone-dual-project-unscaled gs z1 pt z0 rp0)
+                                (eng-unscaled-scale eng)))))
+    (when (and (plusp (gs-single-width-cutin gs))
+               (< (abs (f26- (abs org-dist) (gs-single-width-value gs)))
+                  (gs-single-width-cutin gs)))
       (setf org-dist (if (>= org-dist 0)
                          (gs-single-width-value gs)
                          (f26-neg (gs-single-width-value gs)))))
@@ -254,8 +263,9 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
          (z1-id (gs-zp1 gs))
          (z1 (eng-zone eng z1-id))
          (rp0 (gs-rp0 gs)))
-    (when (< (abs (f26- (abs cvt-dist) (gs-single-width-value gs)))
-             (gs-single-width-cutin gs))
+    (when (and (plusp (gs-single-width-cutin gs))
+               (< (abs (f26- (abs cvt-dist) (gs-single-width-value gs)))
+                  (gs-single-width-cutin gs)))
       (setf cvt-dist (if (>= cvt-dist 0)
                          (gs-single-width-value gs)
                          (f26-neg (gs-single-width-value gs)))))
@@ -310,6 +320,8 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
          (z2-id (gs-zp2 gs))
          (z2 (eng-zone eng z2-id)))
     (setf (gs-loop gs) 1)
+    ;; Like FreeType, do nothing when the loop count exceeds the stack.
+    (when (< (vs-len s) count) (setf count 0))
     (let ((dist (compute-ref-displacement eng use-rp1-p)))
       (dotimes (i count)
         (let ((pt (vs-pop s)))
@@ -340,6 +352,9 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
           (move-zone-point gs z z-id pt dist :touch nil))))))
 
 (defun op-shpix (eng)
+  (when (< (vs-len (eng-stack eng)) (1+ (gs-loop (eng-gs eng))))
+    (setf (gs-loop (eng-gs eng)) 1)
+    (return-from op-shpix))
   (let* ((gs (eng-gs eng))
          (s (eng-stack eng))
          (dist (vs-pop s))
@@ -363,7 +378,9 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
                   (aref (zone-flags z2) pt) (logior (aref (zone-flags z2) pt) +point-touched-y+))))))))
 
 (defun op-ip (eng)
-  "IP: Interpolate Point by the last relative stretch (Fixed Bug #2)."
+  "IP: Interpolate Point by the last relative stretch.  Out of the twilight
+zone the original distances are measured on the unscaled outline, as FreeType
+does; they only matter as a ratio."
   (let* ((gs (eng-gs eng))
          (s (eng-stack eng))
          (count (gs-loop gs))
@@ -373,79 +390,99 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
          (z2 (eng-zone eng z2-id))
          (rp1 (gs-rp1 gs))
          (rp2 (gs-rp2 gs))
-         (org-rp1 (zone-dual-project-orig gs z0 rp1))
-         (org-rp2 (zone-dual-project-orig gs z1 rp2))
+         (twilight (or (zerop (gs-zp0 gs)) (zerop (gs-zp1 gs)) (zerop z2-id)))
          (cur-rp1 (zone-project-cur gs z0 rp1))
          (cur-rp2 (zone-project-cur gs z1 rp2))
-         (org-range (f26- org-rp2 org-rp1))
+         (org-rp1 (if twilight (zone-dual-project-orig gs z0 rp1) 0))
+         (old-range (if twilight
+                        (f26- (zone-dual-project-orig gs z1 rp2) org-rp1)
+                        (zone-dual-project-unscaled gs z1 rp2 z0 rp1)))
          (cur-range (f26- cur-rp2 cur-rp1)))
     (setf (gs-loop gs) 1)
+    ;; Like FreeType, do nothing when the loop count exceeds the stack.
+    (when (< (vs-len s) count) (setf count 0))
     (dotimes (i count)
       (let* ((pt (vs-pop s))
-             (org-pt (zone-dual-project-orig gs z2 pt))
              (cur-pt (zone-project-cur gs z2 pt))
-             (org-dist (f26- org-pt org-rp1))
-             ;; In FreeType/Skrifa: if org_range == 0 or org_dist == 0, cur_dist = 0 -> cur_rp1
-             (new-proj
-               (cond
-                 ((or (zerop org-dist) (zerop org-range)) cur-rp1)
-                 ((= org-dist org-range) cur-rp2)
-                 (t (f26+ cur-rp1 (mul-div org-dist cur-range org-range))))))
-        (move-zone-point gs z2 z2-id pt (f26- new-proj cur-pt) :touch t)))))
+             (org-dist (if twilight
+                           (f26- (zone-dual-project-orig gs z2 pt) org-rp1)
+                           (zone-dual-project-unscaled gs z2 pt z0 rp1)))
+             (new-dist (cond ((zerop org-dist) 0)
+                             ((zerop old-range) org-dist)
+                             (t (mul-div org-dist cur-range old-range)))))
+        (move-zone-point gs z2 z2-id pt (f26- (f26+ cur-rp1 new-dist) cur-pt)
+                         :touch t)))))
 
-(defun iup-interpolate-contour (orig cur flags touch-mask start end)
-  (declare (type (simple-array s32 (*)) orig cur)
+(defun iup-interpolate-contour (orig unscaled cur flags touch-mask start end)
+  "IUP over the contour START..END of one axis: move the untouched points
+between touched ones.  As FreeType's _iup_worker_interpolate, the position
+between two touched points comes from the unscaled coordinates."
+  (declare (type (simple-array s32 (*)) orig unscaled cur)
            (type (simple-array (unsigned-byte 8) (*)) flags)
            (type (unsigned-byte 8) touch-mask)
            (fixnum start end)
            (optimize (speed 3) (safety 0)))
   (labels ((interp-range (from to ref1 ref2)
+             ;; Points FROM below TO, between the touched REF1 and REF2.
              (declare (fixnum from to ref1 ref2))
-             (let* ((swap (> (aref orig ref1) (aref orig ref2)))
-                    (r1 (if swap ref2 ref1))
-                    (r2 (if swap ref1 ref2))
-                    (o1 (aref orig r1))
-                    (o2 (aref orig r2))
-                    (c1 (aref cur r1))
-                    (c2 (aref cur r2))
-                    (d1 (f26- c1 o1))
-                    (d2 (f26- c2 o2))
-                    (org-span (f26- o2 o1))
-                    (cur-span (f26- c2 c1)))
-               (loop for i of-type fixnum from from below to
-                     for ox = (aref orig i)
-                     do (setf (aref cur i)
-                              (cond ((<= ox o1) (f26+ ox d1))
-                                    ((>= ox o2) (f26+ ox d2))
-                                    ((zerop org-span) (f26+ ox d1))
-                                    (t (f26+ c1 (mul-div (f26- ox o1) cur-span org-span)))))))))
-    (let ((touched (loop for i of-type fixnum from start to end
-                         when (logtest (aref flags i) touch-mask)
-                           collect i)))
+             (when (< from to)
+               (when (> (aref unscaled ref1) (aref unscaled ref2))
+                 (rotatef ref1 ref2))
+               (let* ((orus1 (aref unscaled ref1))
+                      (orus2 (aref unscaled ref2))
+                      (org1 (aref orig ref1))
+                      (org2 (aref orig ref2))
+                      (cur1 (aref cur ref1))
+                      (cur2 (aref cur ref2))
+                      (delta1 (f26- cur1 org1))
+                      (delta2 (f26- cur2 org2))
+                      (scale (if (or (= cur1 cur2) (= orus1 orus2))
+                                 0
+                                 (div-fix (f26- cur2 cur1) (f26- orus2 orus1)))))
+                 (declare (s32 orus1 orus2 org1 org2 cur1 cur2 delta1 delta2 scale))
+                 (loop for i of-type fixnum from from below to
+                       for a of-type s32 = (aref orig i)
+                       do (setf (aref cur i)
+                                (cond ((<= a org1) (f26+ a delta1))
+                                      ((>= a org2) (f26+ a delta2))
+                                      ((or (= cur1 cur2) (= orus1 orus2)) cur1)
+                                      (t (f26+ cur1 (mul-fix (f26- (aref unscaled i) orus1)
+                                                             scale))))))))))
+    (let ((first -1) (prev -1))
+      (declare (fixnum first prev))
+      (loop for i of-type fixnum from start to end
+            when (logtest (aref flags i) touch-mask)
+              do (cond ((< prev 0) (setf first i))
+                       (t (interp-range (1+ prev) i prev i)))
+                 (setf prev i))
       (cond
-        ((null touched))
-        ((null (rest touched))
-         (let* ((ref (first touched))
-                (delta (f26- (aref cur ref) (aref orig ref))))
-           (loop for i of-type fixnum from start to end
-                 unless (= i ref)
-                   do (setf (aref cur i) (f26+ (aref orig i) delta)))))
+        ((< prev 0))
+        ((= prev first)
+         ;; One touched point: the whole contour shifts with it.
+         (let ((delta (f26- (aref cur first) (aref orig first))))
+           (unless (zerop delta)
+             (loop for i of-type fixnum from start to end
+                   unless (= i first)
+                     do (setf (aref cur i) (f26+ (aref cur i) delta))))))
         (t
-         (loop for (r1 r2) on touched
-               while r2
-               do (interp-range (1+ r1) r2 r1 r2))
-         (let ((first (first touched))
-               (last (car (last touched))))
-           (interp-range (1+ last) (1+ end) last first)
-           (interp-range start first last first)))))))
+         (interp-range (1+ prev) (1+ end) prev first)
+         (interp-range start first prev first))))))
 
 (defun op-iup (eng x-axis-p)
   (let* ((gs (eng-gs eng))
          (z (eng-glyph eng))
          (n-contours (zone-n-contours z)))
-    (when (and x-axis-p (gs-backward-compatibility gs))
-      (return-from op-iup))
+    ;; In backward compatibility mode IUP runs until it has been done on
+    ;; both axes (FreeType, skrifa).
+    (when (gs-backward-compatibility gs)
+      (let ((done (and (gs-did-iup-x gs) (gs-did-iup-y gs))))
+        (if x-axis-p
+            (setf (gs-did-iup-x gs) t)
+            (setf (gs-did-iup-y gs) t))
+        (when done
+          (return-from op-iup))))
     (let ((orig (if x-axis-p (zone-orig-x z) (zone-orig-y z)))
+          (unscaled (if x-axis-p (zone-unscaled-x z) (zone-unscaled-y z)))
           (cur  (if x-axis-p (zone-cur-x z)  (zone-cur-y z)))
           (flags (zone-flags z))
           (mask (if x-axis-p +point-touched-x+ +point-touched-y+))
@@ -454,7 +491,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
       (dotimes (c n-contours)
         (let ((end (aref contours c)))
           (when (and (>= end start) (< end (zone-n-points z)))
-            (iup-interpolate-contour orig cur flags mask start end))
+            (iup-interpolate-contour orig unscaled cur flags mask start end))
           (setf start (1+ end)))))))
 
 (defun op-isect (eng)
@@ -472,13 +509,18 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
            (bx1 (aref (zone-cur-x z0) b1)) (by1 (aref (zone-cur-y z0) b1))
            (dax (- ax1 ax0)) (day (- ay1 ay0))
            (dbx (- bx1 bx0)) (dby (- by1 by0))
-           (denom (- (* day dbx) (* dax dby))))
-      (if (> (abs denom) 19)
-          (let ((val (- (* (- bx0 ax0) dby) (* (- by0 ay0) dbx))))
-            (setf (aref (zone-cur-x z2) pt) (f26+ ax0 (mul-div val dax (- denom)))
-                  (aref (zone-cur-y z2) pt) (f26+ ay0 (mul-div val day (- denom)))))
-          (setf (aref (zone-cur-x z2) pt) (ash (+ ax0 ax1 bx0 bx1) -2)
-                (aref (zone-cur-y z2) pt) (ash (+ ay0 ay1 by0 by1) -2)))
+           (dx (- bx0 ax0)) (dy (- by0 ay0))
+           ;; As FreeType and skrifa: the cross and dot products of the two
+           ;; directions stand in for sin and cos of the angle between them,
+           ;; and a tan below 1/19 (3 degrees) is a grazing intersection.
+           (disc (+ (mul-div dax (- dby) 64) (mul-div day dbx 64)))
+           (dot (+ (mul-div dax dbx 64) (mul-div day dby 64))))
+      (if (> (* 19 (abs disc)) (abs dot))
+          (let ((v (+ (mul-div dx (- dby) 64) (mul-div dy dbx 64))))
+            (setf (aref (zone-cur-x z2) pt) (f26+ ax0 (mul-div v dax disc))
+                  (aref (zone-cur-y z2) pt) (f26+ ay0 (mul-div v day disc))))
+          (setf (aref (zone-cur-x z2) pt) (truncate (+ ax0 ax1 bx0 bx1) 4)
+                (aref (zone-cur-y z2) pt) (truncate (+ ay0 ay1 by0 by1) 4)))
       (setf (aref (zone-flags z2) pt)
             (logior (aref (zone-flags z2) pt) +point-touched+)))))
 
@@ -541,9 +583,11 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
       ((<= #xB8 op #xBF) (push-words eng (1+ (- op #xB8))))
       ((<= #xC0 op #xDF) (op-mdrp eng (logand op #x1F)))
       ((<= #xE0 op #xFF) (op-mirp eng (logand op #x1F)))
-      ((<= #x68 op #x6B)
+      ((<= #x68 op #x69)
        (let ((val (vs-pop s)))
          (vs-push s (round-according-to-state (gs-round-state gs) val 0))))
+      ;; NROUND[ab] leaves the value as it is.
+      ((<= #x6A op #x6B) nil)
       ((<= #x6C op #x6F) nil)
       (t
        (case op
@@ -613,6 +657,8 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
          (#x2C (op-fdef eng))
          (#x2D (op-endf eng))
          ((#x2E #x2F) (op-mdap eng (= op #x2F)))
+         ;; IUP[a]: a = 0 (0x30) interpolates in y, a = 1 (0x31) in x, as in
+         ;; the spec, FreeType and skrifa.
          ((#x30 #x31) (op-iup eng (= op #x31)))
          ((#x32 #x33) (op-shp eng (= op #x33)))
          ((#x34 #x35) (op-shc eng (= op #x35)))
@@ -639,6 +685,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
           (let* ((count (gs-loop gs)) (z0 (eng-zp0 eng)) (z1-id (gs-zp1 gs)) (z1 (eng-zone eng z1-id))
                 (rp0 (gs-rp0 gs)))
             (setf (gs-loop gs) 1)
+            (when (< (vs-len s) count) (setf count 0))
             (let ((rp0-proj (zone-project-cur gs z0 rp0)))
               (dotimes (i count)
                 (let* ((pt (vs-pop s))
@@ -731,6 +778,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
          (#x80
           (let ((count (gs-loop gs)) (z0 (eng-zp0 eng)))
             (setf (gs-loop gs) 1)
+            (when (< (vs-len s) count) (setf count 0))
             (dotimes (i count)
               (let ((pt (vs-pop s)))
                 (zone-check-point z0 pt)
@@ -753,10 +801,15 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
             (when (logbitp 0 sel) (setf res 40))
             (when (and (logbitp 1 sel) (eng-rotated-p eng))   (setf res (logior res (ash 1 8))))
             (when (and (logbitp 2 sel) (eng-stretched-p eng)) (setf res (logior res (ash 1 9))))
-            (when (and (logbitp 5 sel) (not (gs-backward-compatibility gs)))
-              (setf res (logior res (ash 1 12))))
+            (when (and (logbitp 3 sel) (plusp (length (eng-axis-coords eng))))
+              (setf res (logior res (ash 1 10))))
+            ;; Smooth (non-mono) rendering with ClearType-style hinting, as
+            ;; FreeType's default target: grayscale (selector bit 5) is not
+            ;; reported, the others are.
             (when (logbitp 6 sel) (setf res (logior res (ash 1 13))))
             (when (logbitp 10 sel) (setf res (logior res (ash 1 17))))
+            (when (logbitp 11 sel) (setf res (logior res (ash 1 18))))
+            (when (logbitp 12 sel) (setf res (logior res (ash 1 19))))
             (vs-push s res)))
          (#x89 (op-idef eng))
          (#x8A (vs-roll s))
