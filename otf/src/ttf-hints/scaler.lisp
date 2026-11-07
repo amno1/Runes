@@ -21,18 +21,20 @@
 ;;; ============================================================================
 
 (defun read-unscaled-cvt (loader)
+  "The 'cvt' table as 16.16 numbers."
   (let ((info (table-info "cvt " loader)))
     (if (null info)
-        #()
+        (make-array 0 :element-type '(signed-byte 32))
         (let* ((fd (font-data loader))
                (off (offset info))
                (count (floor (size info) 2))
-               (cvt (make-array count :initial-element 0)))
+               (cvt (make-array count :element-type '(signed-byte 32) :initial-element 0)))
           (dotimes (i count cvt)
-            (setf (svref cvt i)
+            (setf (aref cvt i)
                   (fixed-from-int (runes/otf:font-data-read-i16 fd (+ off (* 2 i))))))))))
 
 (defun apply-cvar-deltas (loader cvt coords)
+  (declare (type fixed-array cvt) (type simple-vector coords))
   (let ((info (table-info "cvar" loader))
         (fvar-info (table-info "fvar" loader)))
     (when (and info fvar-info (plusp (length cvt)) (plusp (length coords)))
@@ -69,18 +71,20 @@
                   (when (> data-end stop) (return))
                   (let ((scalar (and peak (gvar-tuple-scalar peak intermediate coords))))
                     (when scalar
-                      (let* ((c (make-gvar-cursor :fd fd :pos data-pos :end data-end))
+                      (let* ((scalar scalar)
+                             (c (make-gvar-cursor :fd fd :pos data-pos :end data-end))
                              (pts (if (logbitp 13 tuple-idx)
                                       (read-packed-points c)
                                       (or shared-points (gvar-fail)))))
+                        (declare (type (signed-byte 32) scalar))
                         (if (eq pts :all)
-                            (read-dense c (length cvt)
-                                        (lambda (idx d)
-                                          (add-scaled-delta cvt idx d scalar)))
-                            (read-sparse c pts (length pts)
-                                         (lambda (idx d)
-                                           (when (< idx (length cvt))
-                                             (add-scaled-delta cvt idx d scalar))))))))
+                            (do-dense-deltas (idx d) c (length cvt)
+                              (add-fixed-delta cvt idx d scalar))
+                            (let ((pts pts))
+                              (declare (type (simple-array (unsigned-byte 16) (*)) pts))
+                              (do-sparse-deltas (idx d) c pts (length pts)
+                                (when (< idx (length cvt))
+                                  (add-fixed-delta cvt idx d scalar))))))))
                   (setf header-pos p
                         data-pos data-end)))))
         (gvar-data-error () nil))))
@@ -101,6 +105,10 @@
           (replace out (runes/otf:font-data-bytes fd) :start2 start :end2 (+ start len))
           out))))
 
+(declaim (ftype (function (t) (values (unsigned-byte 32) (unsigned-byte 32) (unsigned-byte 32)
+                                      (unsigned-byte 32) (unsigned-byte 32) &optional))
+                read-maxp-hint-limits))
+
 (defun read-maxp-hint-limits (loader)
   (let ((info (table-info "maxp" loader)))
     (if (or (null info) (< (size info) 32))
@@ -112,18 +120,61 @@
                   (max 8   (or (runes/otf:maxp-max-instruction-defs maxp) 0))
                   (max 32  (or (runes/otf:maxp-max-twilight-points maxp) 0)))))))
 
+(declaim (inline ppem->26.6 ppem->pixels))
+
+;; A size is a real number of pixels per em: an integer, a float, or a ratio.  The
+;; first three are done by inline arithmetic; a ratio, which has none, by the
+;; generic kind.  A million pixels is far more than any size.
+(defun ppem->26.6 (ppem)
+  "PPEM, any real number of pixels per em, in 26.6 fixed point, rounded."
+  (declare (real ppem))
+  (typecase ppem
+    ((signed-byte 32) (* ppem 64))
+    ((single-float -1f6 1f6) (values (round (* 64f0 ppem))))
+    ((double-float -1d6 1d6) (values (round (* 64d0 ppem))))
+    (ratio (locally (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+             (the (signed-byte 40) (values (round (* ppem 64))))))
+    (t (error 'unsupported-value :description "Size out of range"
+                                 :actual-value ppem :expected-values '("-1e6 to 1e6")))))
+
+(defun ppem->pixels (ppem)
+  "PPEM rounded to a whole number of pixels."
+  (declare (real ppem))
+  (typecase ppem
+    ((signed-byte 32) ppem)
+    ((single-float -1f6 1f6) (values (round ppem)))
+    ((double-float -1d6 1d6) (values (round ppem)))
+    (ratio (locally (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+             (the (signed-byte 40) (values (round ppem)))))
+    (t (error 'unsupported-value :description "Size out of range"
+                                 :actual-value ppem :expected-values '("-1e6 to 1e6")))))
+
 (defun compute-tt-scale (ppem upem)
-  (let ((ppem-26-6 (round (* ppem 64))))
+  (declare (real ppem) (type (unsigned-byte 16) upem))
+  (let ((ppem-26-6 (ppem->26.6 ppem)))
+    (declare (type (signed-byte 32) ppem-26-6))
     (values (runes/otf/tt-hint::mul-div ppem-26-6 #x10000 upem)
-            (round ppem)
+            (ppem->pixels ppem)
             ppem-26-6)))
 
-(defun make-tt-hint-engine (loader ppem &optional (coords (or (loader-gvar-coords loader) #())))
+(declaim (ftype (function (t &optional t) (values simple-vector &optional)) instance-coords))
+
+(defun instance-coords (loader &optional user-coords)
+  "The 2.14 coordinates hinting is done at: those of the USER-COORDS if given, else
+of LOADER's instance (none for a font without 'gvar' or at its default)."
+  (if user-coords
+      (map 'simple-vector #'runes/otf/charstring::f2dot14-from-real
+           (the list (normalize-coordinates loader user-coords)))
+      (or (the (or null simple-vector) (loader-gvar-coords loader)) #())))
+
+(defun make-tt-hint-engine (loader ppem &optional (coords (instance-coords loader)))
   "Create and initialize a TT-ENGINE for LOADER at PPEM and COORDS."
+  (declare (real ppem) (type simple-vector coords))
   (multiple-value-bind (max-stack max-storage max-fdefs max-idefs max-twilight)
       (read-maxp-hint-limits loader)
     (multiple-value-bind (scale int-ppem point-size)
         (compute-tt-scale ppem (units/em loader))
+      (declare (type (signed-byte 32) scale point-size) (fixnum int-ppem))
       (let* ((unscaled-cvt (apply-cvar-deltas loader (read-unscaled-cvt loader) coords))
              (cvt-len (length unscaled-cvt))
              (eng (runes/otf/tt-hint:make-tt-engine
@@ -137,7 +188,7 @@
              (prep (table-bytes-slice loader "prep"))
              (cvt (runes/otf/tt-hint::eng-cvt eng)))
         (dotimes (i cvt-len)
-          (let ((funit (fixed-round (svref unscaled-cvt i))))
+          (let ((funit (fixed-round (aref unscaled-cvt i))))
             (setf (aref cvt i) (runes/otf/tt-hint::mul-fix funit scale))))
         (setf (svref (runes/otf/tt-hint::eng-programs eng) 0) fpgm
               (svref (runes/otf/tt-hint::eng-programs eng) 1) prep
@@ -206,20 +257,23 @@ ACQUIRE-TT-ENGINE.  A cache only: a stale or racing read is harmless.")
 
 (defvar *tt-pool-tick* 0)
 
+(declaim (type fixnum *max-hinting-sizes* *tt-pool-tick*))
+
 (declaim (inline coords-equal))
 (defun coords-equal (a b)
   "True if the coordinate vectors A and B hold the same values."
   (declare (type simple-vector a b))
   (and (= (length a) (length b))
        (dotimes (i (length a) t)
-         (unless (eql (svref a i) (svref b i)) (return nil)))))
+         ;; The coordinates are 2.14 numbers.
+         (unless (= (the fixnum (svref a i)) (the fixnum (svref b i))) (return nil)))))
 
 (defun find-tt-pool-entry (loader ppem-key coords)
   "The pool entry for LOADER at PPEM-KEY and COORDS; made if there is none,
 dropping the least recently used ones if the font has too many."
-  (declare (type fixnum ppem-key))
+  (declare (type fixnum ppem-key) (type simple-vector coords))
   (sb-thread:with-mutex (*tt-engine-pool-lock*)
-    (let* ((entries (gethash loader *tt-engine-pools*))
+    (let* ((entries (the list (gethash loader *tt-engine-pools*)))
            (entry (find-if (lambda (e)
                              (and (= (pe-ppem-key e) ppem-key)
                                   (coords-equal (pe-coords e) coords)))
@@ -242,13 +296,11 @@ dropping the least recently used ones if the font has too many."
 (defun hinting-engine-sizes (loader)
   "The number of sizes LOADER has hinting engines for."
   (sb-thread:with-mutex (*tt-engine-pool-lock*)
-    (length (gethash loader *tt-engine-pools*))))
+    (length (the list (gethash loader *tt-engine-pools*)))))
 
 (defun acquire-tt-engine (loader ppem coords)
   (declare (type font-loader loader) (type real ppem) (type simple-vector coords))
-  (let* ((ppem-key (if (typep ppem 'fixnum)
-                       (the fixnum (* (the (signed-byte 32) ppem) 64))
-                       (the fixnum (round (* ppem 64)))))
+  (let* ((ppem-key (ppem->26.6 ppem))
          ;; The pool entry used last is found without the lock and the
          ;; lookups: text mostly asks for one size.
          (last **tt-last-pool-entry**)
@@ -344,6 +396,8 @@ FreeType scales the points of a variation instance."
 (defun run-glyph-bytecode-in-zone (eng bytes start end)
   "Reset per-glyph state and run the instructions START to END of the byte array
 BYTES on ENG's already-populated glyph zone."
+  (declare (type runes/otf/tt-hint:tt-engine eng) (fixnum start end)
+           (type (simple-array (unsigned-byte 8) (*)) bytes))
   (let* ((default-gs (runes/otf/tt-hint::eng-default-gs eng))
          (gs (runes/otf/tt-hint:reset-graphics-state-per-glyph
               (runes/otf/tt-hint::eng-gs eng) default-gs)))
@@ -397,14 +451,14 @@ point of each of the N-ENDS contours.  One is kept for each engine."
   (let ((need-points (+ (hb-n buffer) points))
         (need-ends (+ (hb-n-ends buffer) ends)))
     (when (> need-points (length (hb-xs buffer)))
-      (let ((capacity (max need-points (* 2 (length (hb-xs buffer))))))
-        (flet ((grown (old element-type)
-                 (let ((new (make-array capacity :element-type element-type)))
-                   (replace new old :end2 (hb-n buffer))
-                   new)))
-          (setf (hb-xs buffer) (grown (hb-xs buffer) '(signed-byte 32))
-                (hb-ys buffer) (grown (hb-ys buffer) '(signed-byte 32))
-                (hb-flags buffer) (grown (hb-flags buffer) '(unsigned-byte 8))))))
+      (let ((capacity (the fixnum (max need-points (* 2 (length (hb-xs buffer)))))))
+        (macrolet ((grown (old element-type)
+                     `(let ((new (make-array capacity :element-type ',element-type)))
+                        (replace new ,old :end2 (hb-n buffer))
+                        new)))
+          (setf (hb-xs buffer) (grown (hb-xs buffer) (signed-byte 32))
+                (hb-ys buffer) (grown (hb-ys buffer) (signed-byte 32))
+                (hb-flags buffer) (grown (hb-flags buffer) (unsigned-byte 8))))))
     (when (> need-ends (length (hb-ends buffer)))
       (let ((new (make-array (max need-ends (* 2 (length (hb-ends buffer))))
                              :element-type '(signed-byte 32))))
@@ -524,7 +578,7 @@ loaded: WHICH 0 for what it starts from, 1 for what it comes to."
 
 (declaim (ftype (function (font-loader runes/otf/tt-hint:tt-engine (unsigned-byte 32)
                            hint-buffer simple-vector)
-                          phantom-array)
+                          (values phantom-array &optional))
                 load-hinted-glyph-points))
 
 (defun load-hinted-glyph-points (loader eng gid out coords)
@@ -543,6 +597,7 @@ loaded: WHICH 0 for what it starts from, 1 for what it comes to."
             (when data
               (multiple-value-bind (dx dy)
                   (simple-glyph-deltas data coords (phantom-column phantom 0) (phantom-column phantom 1) '())
+                (declare (type (or null fixed-array) dx dy))
                 (when dx
                   ;; Only the horizontal phantom points move.
                   (dotimes (i 2)
@@ -562,7 +617,7 @@ loaded: WHICH 0 for what it starts from, 1 for what it comes to."
                   (when (> (length (the list *compound-glyph-stack*)) (the fixnum *max-compound-glyph-depth*))
                     (error 'unsupported-value :description "Compound glyph nesting too deep"
                                               :location (format nil "glyph ~D" gid)
-                                              :actual-value (length *compound-glyph-stack*)
+                                              :actual-value (length (the list *compound-glyph-stack*))
                                               :expected-values (list *max-compound-glyph-depth*)))
                   (when (member gid (the list (rest *compound-glyph-stack*)))
                     (error 'unsupported-value :description "Recursive compound glyph"
@@ -910,7 +965,7 @@ the arrays XS and YS, as TRANSFORM-COMPONENT-POINTS does."
          (contour-base (hb-n-ends out))
          (p pos))
     (declare (type (signed-byte 32) scale) (fixnum component-count count)
-             (type (unsigned-byte 32) p))
+             (type (unsigned-byte 32) p) (type (or null fixed-array) dx dy))
     (when data
       (multiple-value-setq (dx dy) (composite-glyph-deltas data coords count))
       (when dx
@@ -1069,10 +1124,7 @@ point-by-point comparison against FreeType's FT_Outline:
 the first, second and fourth as (SIGNED-BYTE 32) arrays, ON-CURVE as an
 (UNSIGNED-BYTE 8) array with 1 for on-curve, and the phantom points as
 X0 Y0 X1 Y1 X2 Y2 X3 Y3 in an array of eight."
-  (let ((coords-vec (if coords
-                        (map 'vector #'runes/otf/charstring::f2dot14-from-real
-                             (normalize-coordinates loader coords))
-                        (or (loader-gvar-coords loader) #()))))
+  (let ((coords-vec (instance-coords loader coords)))
     (with-pooled-tt-engine (eng loader ppem coords-vec)
       (let* ((out (engine-outline eng))
              (phantom (load-hinted-glyph-points loader eng gid out coords-vec))
@@ -1106,10 +1158,7 @@ the phantom points.  The arrays grow as the outlines need, and are kept."
 value: nothing is allocated for an outline that fits in what it holds.  The
 points of a simple glyph are copied once, from the engine's glyph zone."
   (declare (type outline-26dot6 outline))
-  (let ((coords-vec (if coords
-                        (map 'vector #'runes/otf/charstring::f2dot14-from-real
-                             (normalize-coordinates loader coords))
-                        (or (loader-gvar-coords loader) #()))))
+  (let ((coords-vec (instance-coords loader coords)))
     (with-pooled-tt-engine (eng loader ppem coords-vec)
       (let ((out (engine-outline eng)))
         (setf (runes/otf/tt-hint::eng-direct eng) :request)
@@ -1165,7 +1214,9 @@ points of a simple glyph are copied once, from the engine's glyph zone."
          (state (runes/otf/charstring::cff-hint-state font subfont ppem))
          (sink (make-instance 'outline-sink)))
     (runes/otf/charstring::cff-draw-hinted-glyph font subfont gid sink state (loader-coords loader))
-    (map 'vector #'copy-seq (reverse (outline-contours sink)))))
+    ;; (The sink's contours are vectors that grow, not simple ones.)
+    (map 'simple-vector (lambda (contour) (copy-seq (the vector contour)))
+         (reverse (the list (outline-contours sink))))))
 
 (declaim (inline f26dot6->pixels))
 (defun f26dot6->pixels (v)
@@ -1177,39 +1228,44 @@ value (/ V 64) has, without making a ratio."
       (ash v -6)
       (* (float v 1.0f0) 0.015625f0)))
 
-(declaim (inline points->contours))
-(defun points->contours (xs ys flags ends n-ends x-shift)
-  "The contours, as vectors of control points in pixels, of the hinted points in
+(defmacro define-points->contours (name ends-type)
+  `(progn
+     (declaim (inline ,name))
+     (defun ,name (xs ys flags ends n-ends x-shift)
+       "The contours, as vectors of control points in pixels, of the hinted points in
 the arrays XS, YS and FLAGS (the on-curve bit being the first), whose
 contours end at the first N-ENDS elements of ENDS; the x coordinates are
 moved by -X-SHIFT (26.6 pixels) first."
-  (declare (type (simple-array (signed-byte 32) (*)) xs ys)
-           (type (simple-array (unsigned-byte 8) (*)) flags)
-           (fixnum n-ends) (type (signed-byte 32) x-shift))
-  ;; ENDS is the hint buffer's (32-bit) or the zone's (16-bit): the types are
-  ;; known where this is inlined.
-  (let ((contours (make-array n-ends))
-        (start 0))
-    (declare (fixnum start))
-    (dotimes (c n-ends contours)
-      (let* ((end (aref ends c))
-             (contour (make-array (max 0 (- (1+ end) start)))))
-        (loop for i of-type fixnum from start to end
-              for j of-type fixnum from 0
-              do (setf (svref contour j)
-                       (make-control-point (f26dot6->pixels
-                                            (runes/otf/tt-hint::f26- (aref xs i) x-shift))
-                                           (f26dot6->pixels (aref ys i))
-                                           (logbitp 0 (aref flags i)))))
-        (setf (svref contours c) contour
-              start (1+ end))))))
+       (declare (type (simple-array (signed-byte 32) (*)) xs ys)
+                (type (simple-array (unsigned-byte 8) (*)) flags)
+                (type (simple-array ,ends-type (*)) ends)
+                (fixnum n-ends) (type (signed-byte 32) x-shift))
+       (let ((contours (make-array n-ends))
+             (start 0))
+         (declare (fixnum start))
+         (dotimes (c n-ends contours)
+           (let* ((end (aref ends c))
+                  (contour (make-array (max 0 (- (1+ end) start)))))
+             (loop for i of-type fixnum from start to end
+                   for j of-type fixnum from 0
+                   do (setf (svref contour j)
+                            (make-control-point (f26dot6->pixels
+                                                 (runes/otf/tt-hint::f26- (aref xs i) x-shift))
+                                                (f26dot6->pixels (aref ys i))
+                                                (logbitp 0 (aref flags i)))))
+             (setf (svref contours c) contour
+                   start (1+ end))))))))
+
+;; The hint buffer's contour ends are 32-bit numbers, the zone's 16-bit.
+(define-points->contours points->contours-s32 (signed-byte 32))
+(define-points->contours points->contours-u16 (unsigned-byte 16))
 
 (defun hint-buffer->contours (buffer)
   "The contours of the hinted outline in BUFFER as vectors of control points,
 in pixels."
   (declare (type hint-buffer buffer))
-  (points->contours (hb-xs buffer) (hb-ys buffer) (hb-flags buffer) (hb-ends buffer)
-                    (hb-n-ends buffer) 0))
+  (points->contours-s32 (hb-xs buffer) (hb-ys buffer) (hb-flags buffer) (hb-ends buffer)
+                        (hb-n-ends buffer) 0))
 
 (defgeneric hinted-contours (glyph ppem)
   (:documentation "Return the grid-fitted contours of GLYPH at PPEM pixels per em,
@@ -1219,9 +1275,11 @@ in pixel coordinates (where 1.0 is one pixel)."))
   (let ((loader (font-loader glyph))
         (gid (font-index glyph)))
     (if (cff-outlines-p loader)
-        (let ((*cubic-tolerance* (/ *cubic-tolerance* (/ (units/em loader) ppem))))
+        ;; The ppem is any real number: this is generic arithmetic.
+        (let ((*cubic-tolerance* (locally (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+                                   (/ *cubic-tolerance* (/ (units/em loader) ppem)))))
           (outline->contours (cff-hinted-outline loader gid ppem)))
-        (let ((coords (or (loader-gvar-coords loader) #())))
+        (let ((coords (instance-coords loader)))
           (with-pooled-tt-engine (eng loader ppem coords)
             (let ((out (engine-outline eng)))
               ;; A simple glyph stays in the glyph zone, and its contours are
@@ -1232,7 +1290,7 @@ in pixel coordinates (where 1.0 is one pixel)."))
                 (setf (runes/otf/tt-hint::eng-direct eng) nil)
                 (if in-zone
                     (let ((zone (runes/otf/tt-hint::eng-glyph eng)))
-                      (points->contours (runes/otf/tt-hint:zone-cur-x zone)
+                      (points->contours-u16 (runes/otf/tt-hint:zone-cur-x zone)
                                         (runes/otf/tt-hint:zone-cur-y zone)
                                         (runes/otf/tt-hint:zone-flags zone)
                                         (runes/otf/tt-hint:zone-contours zone)
@@ -1251,7 +1309,7 @@ commands in pixel coordinates."))
   (let ((loader (font-loader glyph)))
     (if (cff-outlines-p loader)
         (cff-hinted-outline loader (font-index glyph) ppem)
-        (map 'vector #'quadratic-contour->cubic (hinted-contours glyph ppem)))))
+        (map 'simple-vector #'quadratic-contour->cubic (the simple-vector (hinted-contours glyph ppem))))))
 
 (defgeneric hinted-advance-width (glyph ppem)
   (:documentation "Return the hinted advance width of GLYPH at PPEM pixels per em,
@@ -1261,8 +1319,10 @@ in whole pixels, from its hinted phantom points."))
   (let ((loader (font-loader glyph))
         (gid (font-index glyph)))
     (if (cff-outlines-p loader)
-        (float (* (advance-width glyph) (/ ppem (units/em loader))) 1.0)
-        (let ((coords (or (loader-gvar-coords loader) #())))
+        (locally (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+          ;; The ppem is any real number: this is generic arithmetic.
+          (float (* (advance-width glyph) (/ ppem (units/em loader))) 1.0))
+        (let ((coords (instance-coords loader)))
           (with-pooled-tt-engine (eng loader ppem coords)
             ;; The points are not wanted: a simple glyph's stay in the zone.
             (setf (runes/otf/tt-hint::eng-direct eng) :request)
