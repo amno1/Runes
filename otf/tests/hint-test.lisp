@@ -11,7 +11,10 @@
 ;;;   python3 -I freetype-hinted-dump.py DejaVuSans.ttf 9,12,16 0 599 3
 ;;;   python3 -I freetype-hinted-dump.py fonts/LiberationSans-Regular.ttf 12,17,24 0 1500 21 advance
 ;;;
-;;; (the outlines of Liberation Sans: every 21st glyph of those, plus a few
+;;;   python3 -I freetype-hinted-dump.py /usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf 12,16,24 0 1500 13 wght=700
+;;;
+;;; (the last for the variable font Adwaita Sans at wght=700, see
+;;; COMPARE-VARIABLE; the outlines of Liberation Sans: every 21st glyph of those, plus a few
 ;;; from a wider recording; the advances in fonts/reference/*-advances.txt).
 ;;; Outlines in *EXCLUSIONS*, if any, differ still, and the test checks that
 ;;; they do, so that a fix, or a change that moves other glyphs, is noticed:
@@ -99,6 +102,77 @@ few of each."
                      (format t "  advance differs: glyph ~D at ~D ppem~%" gid ppem))))))
     (values count bad)))
 
+(defvar *adwaita-candidates*
+  '("/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf"
+    "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf"
+    "/usr/share/fonts/truetype/adwaita/AdwaitaSans-Regular.ttf"))
+
+(defun compare-variable (loader)
+  "Compare the hinted outlines of a variable font's instance with FreeType's:
+return the numbers of recorded entries, of those that differ, and of those that
+differ by more than one 64th of a pixel in some point.
+
+FreeType keeps the normalized axis coordinates at 16.16 and this library, like
+Fontations, at 2.14, which moves a few points whose deltas are inferred by a
+64th; so a few entries are not equal, and the test bounds how many."
+  (let ((count 0) (differ 0) (far 0))
+    (with-open-file (in (merge-pathnames "fonts/reference/AdwaitaSans-wght700-hinted.txt" *tests-dir*))
+      (loop for line = (read-line in nil) while line
+            do (destructuring-bind (ppem gid &rest expected)
+                   (with-input-from-string (s line)
+                     (loop for x = (read s nil) while x collect x))
+                 (incf count)
+                 (let ((got (hinted-points loader ppem gid)))
+                   (unless (equal got expected)
+                     (incf differ)
+                     (when (or (eq got :error)
+                               (/= (length got) (length expected))
+                               (some (lambda (a b) (> (abs (- a b)) 1)) got expected))
+                       (incf far)
+                       (when (<= far 3)
+                         (format t "  differs: glyph ~D at ~D ppem~%" gid ppem))))))))
+    (values count differ far)))
+
+(defun zone-snapshot (zone n)
+  (list (subseq (runes/otf/tt-hint:zone-unscaled-x zone) 0 n)
+        (subseq (runes/otf/tt-hint:zone-unscaled-y zone) 0 n)
+        (subseq (runes/otf/tt-hint:zone-orig-x zone) 0 n)
+        (subseq (runes/otf/tt-hint:zone-cur-y zone) 0 n)
+        (subseq (runes/otf/tt-hint:zone-flags zone) 0 n)))
+
+(defun check-decoder-fallback (loader)
+  "The glyph decoder reads without checks when the font data holds all a glyph's
+points, and with them near its end.  Decode simple glyphs with the font data
+cut where each glyph's data ends, which makes the checked decoder run, and
+return the numbers of glyphs decoded and of those that decode differently."
+  (let* ((fd (zpb-ttf::font-data loader))
+         (glyf (zpb-ttf::offset (zpb-ttf::table-info "glyf" loader)))
+         (zone (runes/otf/tt-hint::allocate-zone 128 16))
+         (count 0) (different 0))
+    (dotimes (gid (min 1500 (zpb-ttf:glyph-count loader)))
+      (multiple-value-bind (offset length) (zpb-ttf::glyph-loca-info loader gid)
+        (when (plusp length)
+          (let* ((pos (+ glyf offset))
+                 (contours (runes/otf:font-data-read-i16 fd pos)))
+            (when (plusp contours)
+              (let* ((n (1+ (runes/otf:font-data-read-u16 fd (+ pos 10 (* 2 (1- contours))))))
+                     (full (progn
+                             (zpb-ttf::decode-simple-glyph-into-zone
+                              fd (+ pos 10) contours
+                              (runes/otf/tt-hint:ensure-zone-capacity zone (+ n 4) contours
+                                                                      :n-glyph-points n)
+                              n 18432)
+                             (zone-snapshot zone n)))
+                     (cut (runes/otf:font-data-slice fd 0 (+ pos length))))
+                (zpb-ttf::decode-simple-glyph-into-zone
+                 cut (+ pos 10) contours
+                 (runes/otf/tt-hint:ensure-zone-capacity zone (+ n 4) contours :n-glyph-points n)
+                 n 18432)
+                (incf count)
+                (unless (equalp full (zone-snapshot zone n))
+                  (incf different))))))))
+    (values count different)))
+
 (defun check-engine-eviction (loader)
   "Engines are kept for at most *MAX-HINTING-SIZES* sizes of a font, the
 least recently used going first, and an evicted size hints as before."
@@ -117,6 +191,14 @@ least recently used going first, and an evicted size hints as before."
                                    0 4))))
       (setf zpb-ttf::*max-hinting-sizes* limit))))
 
+(defun check-bad-glyph-index (loader)
+  "A glyph index past the font's glyphs is an error, not a read past the table."
+  (let ((count (zpb-ttf:glyph-count loader)))
+    (and (handler-case (progn (zpb-ttf:hint-outline-26dot6 loader count 12) nil)
+           (error () t))
+         (handler-case (progn (zpb-ttf:hint-outline-26dot6 loader 70000 12) nil)
+           (error () t)))))
+
 (defun run-hint-tests ()
   (let ((runes/otf/charstring-test::*failures* 0)
         (runes/otf/charstring-test::*count* 0))
@@ -131,6 +213,12 @@ least recently used going first, and an evicted size hints as before."
                              (zerop bad))
                       (check (format nil "~A: the excluded outlines still differ" label)
                              (zerop fixed)))
+                    (check (format nil "~A: a glyph index out of range is an error" label)
+                           (check-bad-glyph-index loader))
+                    (multiple-value-bind (count different) (check-decoder-fallback loader)
+                      (check (format nil "~A: ~D glyphs decode the same with and without the unchecked reads"
+                                     label count)
+                             (and (plusp count) (zerop different))))
                     (multiple-value-bind (bounded same) (check-engine-eviction loader)
                       (check (format nil "~A: engines are kept for a bounded number of sizes" label)
                              bounded)
@@ -142,6 +230,20 @@ least recently used going first, and an evicted size hints as before."
       (compare "LiberationSans-Regular"
                (merge-pathnames "fonts/LiberationSans-Regular.ttf" *tests-dir*)
                "LiberationSans")
+      (let ((adwaita (find-if #'probe-file *adwaita-candidates*)))
+        (if adwaita
+            (let ((loader (zpb-ttf:open-font-loader adwaita)))
+              (unwind-protect
+                   (progn
+                     (setf (zpb-ttf:variation-coordinates loader) '(("wght" . 700)))
+                     (multiple-value-bind (count differ far) (compare-variable loader)
+                       (check (format nil "Adwaita Sans wght=700: ~D hinted outlines, at most 16 differ from FreeType's"
+                                      count)
+                              (<= differ 16))
+                       (check "Adwaita Sans wght=700: none differs by more than a 64th of a pixel"
+                              (zerop far))))
+                (zpb-ttf:close-font-loader loader)))
+            (format t "  [SKIP] Adwaita Sans is not installed.~%")))
       (let ((dejavu (find-if #'probe-file *dejavu-candidates*)))
         (if dejavu
             (compare "DejaVu Sans" dejavu "DejaVuSans")
