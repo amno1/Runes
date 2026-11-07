@@ -166,6 +166,7 @@
   ;; restores the post-prep copies before the next glyph only if it is.
   (tables-dirty nil :type boolean)
   (scratch nil)
+  (gvar-scratch nil)                    ; work arrays of the variation deltas
   (tables nil)
   (rotated-p nil :type boolean)
   (stretched-p nil :type boolean)

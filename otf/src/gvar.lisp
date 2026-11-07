@@ -16,6 +16,20 @@
   "16.16 values, each wrapped to 32 bits as Rust's i32 does."
   '(simple-array (signed-byte 32) (*)))
 
+(defstruct (gvar-scratch (:conc-name gs-))
+  "Work arrays for the deltas of one glyph, kept to be used again: the points'
+16.16 coordinates FX and FY, their deltas DX and DY, the moved points OUT-X
+and OUT-Y of one tuple, which of them are TOUCHED, and the REFS of a contour."
+  (fx (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
+  (fy (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
+  (dx (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
+  (dy (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
+  (out-x (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
+  (out-y (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
+  (touched (make-array 0 :element-type 'bit) :type simple-bit-vector)
+  (refs (make-array 0 :element-type '(unsigned-byte 32))
+   :type (simple-array (unsigned-byte 32) (*))))
+
 ;; The charstring package's fixed-point operations, inline and typed: the
 ;; same results.
 (declaim (inline wrap32 f+ f- f* f/ fixed-from-int fixed-round))
@@ -403,10 +417,10 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
 
 ;;; Simple glyphs (gvar/deltas.rs)
 
-(defun interpolate-untouched (xs ys out-x out-y touched start end)
+(defun interpolate-untouched (xs ys out-x out-y touched refs start end)
   "Infer deltas for the untouched points of the contour START..END (IUP)."
   (declare (type fixed-array xs ys out-x out-y) (simple-bit-vector touched)
-           (fixnum start end))
+           (type (simple-array (unsigned-byte 32) (*)) refs) (fixnum start end))
   (labels ((interp-coord (in out from to ref1 ref2)
              ;; Points FROM below TO, between references REF1 and REF2 along
              ;; the contour, in one coordinate: IN the original values, OUT
@@ -430,12 +444,18 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
            (interp (from to ref1 ref2)
              (interp-coord xs out-x from to ref1 ref2)
              (interp-coord ys out-y from to ref1 ref2)))
-    (let ((refs (loop for i from start to end when (= 1 (sbit touched i)) collect i)))
+    ;; The touched points of the contour, in order, in REFS.
+    (let ((count 0))
+      (declare (fixnum count))
+      (loop for i of-type fixnum from start to end
+            when (= 1 (sbit touched i))
+              do (setf (aref refs count) i)
+                 (incf count))
       (cond
-        ((null refs))
+        ((zerop count))
         ;; A single reference carries the whole contour with it.
-        ((null (rest refs))
-         (loop with ref = (first refs)
+        ((= count 1)
+         (loop with ref = (aref refs 0)
                with dx = (f- (aref out-x ref) (aref xs ref))
                with dy = (f- (aref out-y ref) (aref ys ref))
                for i from start to end
@@ -445,11 +465,11 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
         (t
          ;; Between each two references, then around the end of the contour:
          ;; after the last one to the end, and from the start to the first.
-         (loop for (ref next) on refs
-               while next
-               do (interp (1+ ref) next ref next))
-         (let ((first (first refs))
-               (final (car (last refs))))
+         (dotimes (k (1- count))
+           (let ((ref (aref refs k)) (next (aref refs (1+ k))))
+             (interp (1+ ref) next ref next)))
+         (let ((first (aref refs 0))
+               (final (aref refs (1- count))))
            (interp (1+ final) (1+ end) final first)
            (interp start first final first)))))))
 
@@ -464,41 +484,44 @@ the typed arrays of the glyph path."
   (declare (type fixed-array array) (fixnum i) (type (signed-byte 32) delta scalar))
   (setf (aref array i) (f+ (aref array i) (scaled-delta delta scalar))))
 
-(defun add-dense-deltas (c scalar dx dy)
-  "Add a tuple's deltas for every point, read at cursor C, to DX and DY."
-  (declare (gvar-cursor c) (type (signed-byte 32) scalar) (type fixed-array dx dy))
-  (let ((n (length dx)))
+(defun add-dense-deltas (c scalar dx dy n)
+  "Add a tuple's deltas for the N points, read at cursor C, to DX and DY."
+  (declare (gvar-cursor c) (type (signed-byte 32) scalar) (type fixed-array dx dy)
+           (fixnum n))
+  (progn
     (do-dense-deltas (i d) c n (add-fixed-delta dx i d scalar))
     (do-dense-deltas (i d) c n (add-fixed-delta dy i d scalar))))
 
-(defun interpolate-contours (fx fy out-x out-y touched ends n-ends)
+(defun interpolate-contours (fx fy out-x out-y touched refs ends n-ends n)
   "Infer the deltas of the untouched points of every contour (IUP); ENDS holds
-the N-ENDS contour end points."
+the N-ENDS contour end points, and there are N points."
   (declare (type fixed-array fx fy out-x out-y) (simple-bit-vector touched)
-           (type (simple-array (unsigned-byte 16) (*)) ends) (fixnum n-ends))
+           (type (simple-array (unsigned-byte 32) (*)) refs)
+           (type (simple-array (unsigned-byte 16) (*)) ends) (fixnum n-ends n))
   (let ((start 0))
     (declare (fixnum start))
     (dotimes (c n-ends)
       (let ((end (aref ends c)))
         ;; A contour ending before the previous one is skipped.
         (when (>= end start)
-          (when (>= end (length fx)) (gvar-fail))
-          (interpolate-untouched fx fy out-x out-y touched start end)
+          (when (>= end n) (gvar-fail))
+          (interpolate-untouched fx fy out-x out-y touched refs start end)
           (setf start (1+ end)))))))
 
-(defun add-sparse-deltas (c scalar points fx fy ends n-ends dx dy)
-  "Add a tuple's deltas for POINTS, read at cursor C, to DX and DY, with
-those of the other points inferred from them.  FX and FY are the points'
-16.16 coordinates."
+(defun add-sparse-deltas (c scalar points sc n ends n-ends)
+  "Add a tuple's deltas for POINTS, read at cursor C, to the deltas of the
+scratch SC, with those of the other points inferred from them (IUP).  There
+are N points."
   (declare (gvar-cursor c) (type (signed-byte 32) scalar)
            (type (simple-array (unsigned-byte 16) (*)) points)
-           (type fixed-array fx fy dx dy) (fixnum n-ends)
+           (type gvar-scratch sc) (fixnum n n-ends)
            (type (simple-array (unsigned-byte 16) (*)) ends))
-  (let* ((n (length fx))
-         (out-x (copy-seq fx))
-         (out-y (copy-seq fy))
-         (touched (make-array n :element-type 'bit :initial-element 0)))
-    (declare (type fixed-array out-x out-y))
+  (let ((fx (gs-fx sc)) (fy (gs-fy sc)) (dx (gs-dx sc)) (dy (gs-dy sc))
+        (out-x (gs-out-x sc)) (out-y (gs-out-y sc)) (touched (gs-touched sc)))
+    (dotimes (i n)
+      (setf (aref out-x i) (aref fx i)
+            (aref out-y i) (aref fy i)
+            (sbit touched i) 0))
     ;; Point numbers past the glyph's points are skipped.
     (do-sparse-deltas (i d) c points (length points)
       (when (< i n)
@@ -507,27 +530,44 @@ those of the other points inferred from them.  FX and FY are the points'
     (do-sparse-deltas (i d) c points (length points)
       (when (< i n)
         (add-fixed-delta out-y i d scalar)))
-    (interpolate-contours fx fy out-x out-y touched ends n-ends)
+    (interpolate-contours fx fy out-x out-y touched (gs-refs sc) ends n-ends n)
     (dotimes (i n)
       (setf (aref dx i) (f+ (aref dx i) (f- (aref out-x i) (aref fx i)))
             (aref dy i) (f+ (aref dy i) (f- (aref out-y i) (aref fy i)))))))
 
-(defun glyph-deltas-from-fixed (data coords fx fy ends n-ends)
-  "16.16 deltas for the points whose 16.16 coordinates are FX and FY, as two
-arrays; ENDS holds the N-ENDS contour end points. NIL if the data is malformed."
-  (declare (type fixed-array fx fy) (type (simple-array (unsigned-byte 16) (*)) ends)
-           (fixnum n-ends))
-  (let* ((n (length fx))
-         (dx (make-array n :element-type '(signed-byte 32) :initial-element 0))
-         (dy (make-array n :element-type '(signed-byte 32) :initial-element 0)))
+(defun gvar-scratch-for (sc count)
+  "SC, or a new scratch if it is NIL, with room for COUNT points; its deltas
+for them are zero."
+  (declare (fixnum count))
+  (let ((sc (or sc (make-gvar-scratch))))
+    (when (< (length (gs-fx sc)) count)
+      (let ((cap (max count 64 (* 2 (length (gs-fx sc))))))
+        (flet ((fixed () (make-array cap :element-type '(signed-byte 32))))
+          (setf (gs-fx sc) (fixed) (gs-fy sc) (fixed) (gs-dx sc) (fixed) (gs-dy sc) (fixed)
+                (gs-out-x sc) (fixed) (gs-out-y sc) (fixed)
+                (gs-touched sc) (make-array cap :element-type 'bit)
+                (gs-refs sc) (make-array cap :element-type '(unsigned-byte 32))))))
+    (let ((dx (gs-dx sc)) (dy (gs-dy sc)))
+      (dotimes (i count)
+        (setf (aref dx i) 0
+              (aref dy i) 0)))
+    sc))
+
+(defun scratch-glyph-deltas (data coords sc count ends n-ends)
+  "Fill the deltas in SC, whose FX and FY hold the 16.16 coordinates of COUNT
+points; ENDS holds the N-ENDS contour end points.  True, or NIL if the data
+is malformed."
+  (declare (type gvar-scratch sc) (fixnum count n-ends)
+           (type (simple-array (unsigned-byte 16) (*)) ends))
+  (let ((dx (gs-dx sc)) (dy (gs-dy sc)))
     (handler-case
         (progn
           (map-active-tuples data coords
                              (lambda (scalar points c)
                                (if (eq points :all)
-                                   (add-dense-deltas c scalar dx dy)
-                                   (add-sparse-deltas c scalar points fx fy ends n-ends dx dy))))
-          (values dx dy))
+                                   (add-dense-deltas c scalar dx dy count)
+                                   (add-sparse-deltas c scalar points sc count ends n-ends))))
+          t)
       (gvar-data-error () nil))))
 
 (defun simple-glyph-deltas (data coords xs ys ends)
@@ -536,26 +576,29 @@ as two arrays; XS and YS are the font unit coordinates of all its points
 and ENDS (a list) its contour end points. NIL if the data is malformed."
   (declare (simple-vector xs ys))
   (let* ((n (length xs))
-         (fx (make-array n :element-type '(signed-byte 32)))
-         (fy (make-array n :element-type '(signed-byte 32)))
+         (sc (gvar-scratch-for (make-gvar-scratch) n))
          (ends (coerce ends '(simple-array (unsigned-byte 16) (*)))))
-    (dotimes (i n)
-      (setf (aref fx i) (fixed-from-int (svref xs i))
-            (aref fy i) (fixed-from-int (svref ys i))))
-    (glyph-deltas-from-fixed data coords fx fy ends (length ends))))
+    (let ((fx (gs-fx sc)) (fy (gs-fy sc)))
+      (dotimes (i n)
+        (setf (aref fx i) (fixed-from-int (svref xs i))
+              (aref fy i) (fixed-from-int (svref ys i)))))
+    (when (scratch-glyph-deltas data coords sc n ends (length ends))
+      ;; Exact-size arrays, as the callers expect.
+      (values (subseq (gs-dx sc) 0 n) (subseq (gs-dy sc) 0 n)))))
 
-(defun zone-glyph-deltas (data coords ux uy count ends n-ends)
+(defun zone-glyph-deltas (data coords ux uy count ends n-ends sc)
   "Like SIMPLE-GLYPH-DELTAS for the COUNT points (phantom points included) in
 the first elements of the arrays UX and UY of font unit coordinates, and the
-N-ENDS contour end points in ENDS."
+N-ENDS contour end points in ENDS, with the work arrays SC (from
+GVAR-SCRATCH-FOR).  The deltas are in SC's DX and DY: true, or NIL if the data
+is malformed."
   (declare (type fixed-array ux uy) (fixnum count n-ends)
-           (type (simple-array (unsigned-byte 16) (*)) ends))
-  (let ((fx (make-array count :element-type '(signed-byte 32)))
-        (fy (make-array count :element-type '(signed-byte 32))))
+           (type (simple-array (unsigned-byte 16) (*)) ends) (type gvar-scratch sc))
+  (let ((fx (gs-fx sc)) (fy (gs-fy sc)))
     (dotimes (i count)
       (setf (aref fx i) (fixed-from-int (aref ux i))
-            (aref fy i) (fixed-from-int (aref uy i))))
-    (glyph-deltas-from-fixed data coords fx fy ends n-ends)))
+            (aref fy i) (fixed-from-int (aref uy i)))))
+  (scratch-glyph-deltas data coords sc count ends n-ends))
 
 ;;; Composite glyphs
 
