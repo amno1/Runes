@@ -31,6 +31,8 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (define-condition regrettable-value (error)
   ((actual-value
     :initarg :actual-value
@@ -59,18 +61,18 @@
   ((size
     :initarg :size
     :initform 8
-    :accessor size)
+    :reader %size)
    (actual-value
     :reader %actual-value)
    (expected-values
     :reader %expected-values)))
 
 (defmethod actual-value ((c regrettable-hex-value))
-  (format nil "#x~v,'0X" (size c) (%actual-value c)))
+  (format nil "#x~v,'0X" (%size c) (%actual-value c)))
 
 (defmethod expected-values ((c regrettable-hex-value))
   (mapcar (lambda (v)
-            (format nil "#x~v,'0X" (size c) v))
+            (format nil "#x~v,'0X" (%size c) v))
           (%expected-values c)))
 
 (define-condition bad-magic (regrettable-hex-value)
