@@ -51,15 +51,18 @@ whose contour count is at POS - 10, as four vectors."
   (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos)
            (type (unsigned-byte 16) contour-count))
   (let ((ends (make-array contour-count)))
+    (declare (simple-vector ends))
     (dotimes (i contour-count)
       (setf (aref ends i) (runes/otf:font-data-read-u16 fd (+ pos (* 2 i)))))
     (incf pos (* 2 contour-count))
     (let* ((n (if (zerop contour-count) 0 (1+ (aref ends (1- contour-count)))))
            (xs (make-array n))
            (ys (make-array n)))
+      (declare (simple-vector xs ys) (type (unsigned-byte 16) n))
       ;; Skip the instructions.
       (incf pos (+ 2 (runes/otf:font-data-read-u16 fd pos)))
       (multiple-value-bind (flags flags-end) (read-point-flags fd pos n)
+        (declare (type (simple-array (unsigned-byte 8) (*)) flags))
         (setf pos flags-end)
         (flet ((coordinates (out short-bit same-bit)
                  ;; Each a byte (sign from SAME-BIT), the previous value
@@ -79,7 +82,10 @@ whose contour count is at POS - 10, as four vectors."
                        (setf (aref out j) current))))))
           (coordinates xs 1 4)
           (coordinates ys 2 5))
-        (values ends xs ys (map 'vector (lambda (f) (logbitp 0 f)) flags))))))
+        (values ends xs ys
+                (let ((on (make-array n)))
+                  (dotimes (i n on)
+                    (setf (svref on i) (logbitp 0 (aref flags i))))))))))
 
 ;;; Phantom points
 

@@ -157,18 +157,38 @@
 (defvar *tt-engine-pool-lock* (sb-thread:make-mutex :name "tt-engine-pool-lock"))
 (defvar *tt-engine-pools* (make-hash-table :test 'eq :weakness :key))
 
+(sb-ext:defglobal **tt-last-pool-entry** nil
+  "(WEAK-POINTER-TO-LOADER PPEM-KEY COORDS . POOL-ENTRY) of the last
+ACQUIRE-TT-ENGINE.  A cache only: a stale or racing read is harmless.")
+
+(defun find-tt-pool-entry (loader ppem-key coords)
+  "The pool entry, ((PPEM-KEY . COORDS) . ENGINES), for LOADER at PPEM-KEY
+and COORDS; made if there is none."
+  (sb-thread:with-mutex (*tt-engine-pool-lock*)
+    (let ((alist (gethash loader *tt-engine-pools*)))
+      (or (find-if (lambda (entry)
+                     (and (= (caar entry) ppem-key)
+                          (equalp (cdar entry) coords)))
+                   alist)
+          (let ((new-entry (cons (cons ppem-key (copy-seq coords)) nil)))
+            (setf (gethash loader *tt-engine-pools*) (cons new-entry alist))
+            new-entry)))))
+
 (defun acquire-tt-engine (loader ppem coords)
   (let* ((ppem-key (round (* ppem 64)))
+         ;; The pool entry used last is found without the lock and the
+         ;; lookups: text mostly asks for one size.
+         (last **tt-last-pool-entry**)
          (pool-entry
-           (sb-thread:with-mutex (*tt-engine-pool-lock*)
-             (let ((alist (gethash loader *tt-engine-pools*)))
-               (or (find-if (lambda (entry)
-                              (and (= (caar entry) ppem-key)
-                                   (equalp (cdar entry) coords)))
-                            alist)
-                   (let ((new-entry (cons (cons ppem-key (copy-seq coords)) nil)))
-                     (setf (gethash loader *tt-engine-pools*) (cons new-entry alist))
-                     new-entry)))))
+           (if (and last
+                    (eq (sb-ext:weak-pointer-value (car last)) loader)
+                    (= (cadr last) ppem-key)
+                    (or (eq (caddr last) coords) (equalp (caddr last) coords)))
+               (cdddr last)
+               (let ((entry (find-tt-pool-entry loader ppem-key coords)))
+                 (setf **tt-last-pool-entry**
+                       (list* (sb-ext:make-weak-pointer loader) ppem-key (cdar entry) entry))
+                 entry)))
          (eng (sb-ext:atomic-pop (cdr pool-entry))))
     (values (or eng (make-tt-hint-engine loader ppem coords))
             pool-entry)))
@@ -273,8 +293,37 @@
                   (load-hinted-composite-points loader eng gid (+ pos 10) phantom out coords))
                 (load-hinted-simple-points loader eng gid fd (+ pos 10) contour-count phantom out coords)))))))
 
+(defun append-hinted-points (out n cx cy zf)
+  "Append the first N points of the zone arrays CX, CY and ZF to OUT, in one
+go: the vectors of OUT grow once, and are written without the checks that
+VECTOR-PUSH-EXTEND and AREF on an adjustable vector make for each element."
+  (declare (fixnum n) (type (simple-array (signed-byte 32) (*)) cx cy)
+           (type (simple-array (unsigned-byte 8) (*)) zf)
+           (optimize (speed 3) (safety 0)))
+  (flet ((grow (v)
+           (let ((need (+ (fill-pointer v) n)))
+             (when (> need (array-dimension v 0))
+               (adjust-array v (max need (* 2 (array-dimension v 0)))))
+             (setf (fill-pointer v) need)
+             (- need n))))
+    (declare (inline grow))
+    (let ((bx (grow (op-xs out))) (by (grow (op-ys out))) (bo (grow (op-on out))))
+      (declare (fixnum bx by bo))
+      (sb-kernel:with-array-data ((dx (op-xs out)) (sx) (ex)) 
+        (declare (ignore ex) (simple-vector dx) (fixnum sx))
+        (dotimes (i n) (setf (svref dx (+ sx bx i)) (aref cx i))))
+      (sb-kernel:with-array-data ((dy (op-ys out)) (sy) (ey))
+        (declare (ignore ey) (simple-vector dy) (fixnum sy))
+        (dotimes (i n) (setf (svref dy (+ sy by i)) (aref cy i))))
+      (sb-kernel:with-array-data ((do (op-on out)) (so) (eo))
+        (declare (ignore eo) (simple-vector do) (fixnum so))
+        (dotimes (i n)
+          (setf (svref do (+ so bo i))
+                (logtest (aref zf i) runes/otf/tt-hint:+point-on-curve+)))))))
+
 (defun load-hinted-simple-points (loader eng gid fd pos contour-count phantom out coords)
   (multiple-value-bind (ends xs ys on) (read-simple-points fd pos contour-count)
+    (declare (simple-vector ends xs ys on))
     (let* ((n (length xs))
            (total (+ n 4))
            (scale (runes/otf/tt-hint::eng-scale eng))
@@ -299,6 +348,10 @@
              (cy (runes/otf/tt-hint:zone-cur-y z))
              (zf (runes/otf/tt-hint:zone-flags z))
              (zc (runes/otf/tt-hint:zone-contours z)))
+        (declare (type (simple-array (signed-byte 32) (*)) ux uy ox oy cx cy)
+                 (type (simple-array (unsigned-byte 8) (*)) zf)
+                 (type (simple-array (unsigned-byte 16) (*)) zc)
+                 (type (signed-byte 32) scale))
         (dotimes (c contour-count)
           (setf (aref zc c) (aref ends c)))
         (dotimes (i n)
@@ -334,10 +387,7 @@
                 (runes/otf/tt-hint::eng-composite-p eng) nil)
           (run-glyph-bytecode-in-zone eng instr))
         (let ((base (fill-pointer (op-xs out))))
-          (dotimes (i n)
-            (vector-push-extend (aref cx i) (op-xs out))
-            (vector-push-extend (aref cy i) (op-ys out))
-            (vector-push-extend (logtest (aref zf i) runes/otf/tt-hint:+point-on-curve+) (op-on out)))
+          (append-hinted-points out n cx cy zf)
           (loop for end across ends
                 do (vector-push-extend (+ base end) (op-ends out))))
         ;; In backward compatibility mode the program does not change the
