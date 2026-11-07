@@ -13,13 +13,18 @@
 
 (in-package #:runes/otf/charstring)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defun f2dot14-from-real (x)
   "Raw 2.14 bits of the normalized coordinate X, clamped to [-2, 2)."
+  (declare (type real x)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (max -32768 (min 32767 (round-half-away (* (rational x) 16384)))))
 
 (defun fixed-mul-div (a b c)
   "A * B / C, rounded, like font-types' Fixed::mul_div (FreeType's FT_MulDiv)."
-  (declare (type (signed-byte 32) a b c) (optimize (speed 3)))
+  (declare (type (signed-byte 32) a b c) (optimize (speed 3))
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((negative (oddp (+ (if (minusp a) 1 0) (if (minusp b) 1 0) (if (minusp c) 1 0))))
          ;; At most 2^62 + 2^30: 63 bits.
          (result (if (zerop c)
@@ -34,7 +39,8 @@
   "Scalar of the VariationRegion at REGION-POS for COORDS, a vector of raw
 2.14 values; missing trailing coordinates are 0."
   (declare (type runes/otf:font-data font-data) (fixnum region-pos)
-           (type (unsigned-byte 16) axis-count) (simple-vector coords))
+           (type (unsigned-byte 16) axis-count) (simple-vector coords)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((scalar #x10000))
     (declare (type (signed-byte 32) scalar))
     (dotimes (i axis-count scalar)
@@ -42,7 +48,8 @@
              (start2 (runes/otf:font-data-read-i16 font-data pos))
              (peak2 (runes/otf:font-data-read-i16 font-data (+ pos 2)))
              (end2 (runes/otf:font-data-read-i16 font-data (+ pos 4)))
-             (coord2 (if (< i (length coords)) (aref coords i) 0)))
+             (coord2 (the fixnum (if (< i (length coords)) (svref coords i) 0))))
+        (declare (type fixnum start2 peak2 end2 coord2 pos))
         ;; An axis with no peak does not restrict the region, and a
         ;; coordinate at the peak contributes a factor of one.
         (unless (or (zerop peak2) (= coord2 peak2))
@@ -75,6 +82,7 @@ the font's variation space."))
 sequence of normalized axis coordinates (reals in [-1, 1], one per axis in
 'fvar' order). STORE-INDEX is the initial vsindex: for a charstring, the
 vsindex of its subfont's Private DICT, or 0 if that has none."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((state (make-instance 'item-variation-blend-state
                               :store store
                               :coords (map 'vector #'f2dot14-from-real coords))))
@@ -82,9 +90,10 @@ vsindex of its subfont's Private DICT, or 0 if that has none."
     state))
 
 (defmethod blend-region-count ((b item-variation-blend-state))
-  (length (blend-scalars b)))
+  (length (the vector (blend-scalars b))))
 
 (defmethod blend-set-store-index ((b item-variation-blend-state) index)
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (unless (eql index (blend-store-index b))
     (let* ((store (blend-store b))
            (data (when (< -1 index (runes/otf:item-variation-store-item-variation-data-count store))
@@ -96,7 +105,7 @@ vsindex of its subfont's Private DICT, or 0 if that has none."
              (axis-count (runes/otf:variation-region-list-axis-count regions))
              (region-count (runes/otf:variation-region-list-region-count regions))
              (first-region (runes/otf:variation-region-list-variation-regions-start regions))
-             (coords (blend-coords b)))
+             (coords (the simple-vector (blend-coords b))))
         (%set-scalars
          (map 'vector
               (lambda (i)
@@ -116,6 +125,7 @@ vsindex of its subfont's Private DICT, or 0 if that has none."
 COORDS (normalized reals, one per axis), in 16.16 units without rounding,
 like Fontations' ItemVariationStore::compute_delta. 0 for an item the store
 does not have."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((coords (map 'vector #'f2dot14-from-real coords)))
     (if (or (zerop (length coords))
             (and (= outer #xFFFF) (= inner #xFFFF))
