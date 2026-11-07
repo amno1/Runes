@@ -6,6 +6,12 @@
 
 (declaim (optimize (speed 3) (safety 1) (debug 0)))
 
+;; The readers OFFSET and SIZE are promised below to give 32-bit numbers.  The
+;; promise made when compiling stays in an image that then loads the file, so
+;; lift it first: defining the generic functions would say it is clobbered.
+(eval-when (:load-toplevel :execute)
+  (proclaim '(ftype (function (t) *) offset size)))
+
 (defclass table-info ()
   ((name :initarg :name :reader name)
    (offset :initarg :offset :reader offset)
