@@ -247,8 +247,11 @@ READ-SPARSE does but without the closure."
      (do-delta-runs (,delta width) ,c (< cur ,count)
        (cond ((< cur (length ,points))
               (let ((,point (aref ,points cur))) ,@body))
-             ;; A zero run needs a point for every value.
-             ((zerop width) (gvar-fail)))
+             ;; A zero run needs a point for every value.  In the copies of this
+             ;; for runs of 1, 2 and 4 bytes the width is known not to be 0, and
+             ;; the compiler would say it deletes the failure there.
+             (t (locally (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+                  (when (zerop width) (gvar-fail)))))
        (incf cur))))
 
 (defun read-dense (c count fn)
@@ -264,8 +267,9 @@ READ-SPARSE does but without the closure."
   (let ((cur 0))
     (do-delta-runs (delta width) c (< cur count)
       (cond ((< cur (length points)) (funcall fn (aref points cur) delta))
-            ;; A zero run needs a point for every value.
-            ((zerop width) (gvar-fail)))
+            ;; A zero run needs a point for every value (see DO-SPARSE-DELTAS).
+            (t (locally (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+                 (when (zerop width) (gvar-fail)))))
       (incf cur))))
 
 ;;; Tuples
