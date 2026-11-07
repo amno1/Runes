@@ -5,6 +5,13 @@
 
 (in-package #:runes/otf/tt-hint)
 
+;;; Compiled for speed: the types are declared, and the checks left are the
+;;; ones the font can trigger (stack, point and table indices, program bounds).
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
+(declaim (ftype (function (value-stack) t) vs-dup vs-swap vs-roll)
+         (ftype (function (value-stack fixnum) t) vs-copy-index vs-move-index))
+
 ;;; ============================================================================
 ;;; Value Stack (value_stack.rs)
 ;;; ============================================================================

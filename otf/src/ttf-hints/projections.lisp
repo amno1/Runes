@@ -4,6 +4,20 @@
 
 (in-package #:runes/otf/tt-hint)
 
+;;; Compiled for speed: the types are declared, and the checks left are the
+;;; ones the font can trigger (stack, point and table indices, program bounds).
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
+(declaim (ftype (function (graphics-state tt-zone fixnum) s32)
+                zone-project-cur zone-dual-project-orig)
+         (ftype (function (graphics-state tt-zone fixnum tt-zone fixnum) s32)
+                zone-project-cur-diff zone-dual-project-orig-diff
+                zone-dual-project-unscaled)
+         (ftype (function (graphics-state tt-zone (integer 0 1) fixnum s32
+                           &key (:touch t))
+                          t)
+                move-zone-point))
+
 ;;; ============================================================================
 ;;; Vector Projections & Point Movement (zone.rs / graphics.rs)
 ;;; ============================================================================

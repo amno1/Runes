@@ -353,3 +353,8 @@ reusing existing buffers in place when large enough."
           (gs-backward-compatibility gs) (gs-backward-compatibility source)
           (gs-round-state gs)            (copy-structure (gs-round-state source)))
     gs))
+
+;;; Function types, for callers in the files after this one.
+(declaim (ftype (function (round-state s32 s32) s32) round-according-to-state)
+         (ftype (function (graphics-state graphics-state) graphics-state)
+                reset-graphics-state-per-glyph))

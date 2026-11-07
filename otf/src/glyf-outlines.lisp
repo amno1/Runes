@@ -11,12 +11,16 @@
 
 (in-package #:zpb-ttf)
 
+(deftype growable-vector ()
+  "An adjustable vector with a fill pointer, as MAKE-ARRAY makes."
+  '(and (vector t) (not simple-array)))
+
 (defstruct (outline-points (:conc-name op-))
-  (xs (make-array 32 :adjustable t :fill-pointer 0))
-  (ys (make-array 32 :adjustable t :fill-pointer 0))
-  (on (make-array 32 :adjustable t :fill-pointer 0))
+  (xs (make-array 32 :adjustable t :fill-pointer 0) :type growable-vector)
+  (ys (make-array 32 :adjustable t :fill-pointer 0) :type growable-vector)
+  (on (make-array 32 :adjustable t :fill-pointer 0) :type growable-vector)
   ;; End point of each contour, as indices into the arrays above.
-  (ends (make-array 8 :adjustable t :fill-pointer 0)))
+  (ends (make-array 8 :adjustable t :fill-pointer 0) :type growable-vector))
 
 (defun loader-gvar-coords (loader)
   "The instance as raw 2.14 coordinates when 'gvar' applies to it, else NIL."

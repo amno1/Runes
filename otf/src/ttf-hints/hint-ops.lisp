@@ -4,6 +4,16 @@
 
 (in-package #:runes/otf/tt-hint)
 
+;;; Compiled for speed: the types are declared, and the checks left are the
+;;; ones the font can trigger (stack, point and table indices, program bounds).
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
+(declaim (ftype (function (tt-engine fixnum) s32) read-cvt-val)
+         (ftype (function (graphics-state s32 s32) s32) apply-min-distance)
+         (ftype (function (graphics-state fixnum fixnum fixnum) (or null s32))
+                decode-delta-arg)
+         (ftype (function (tt-engine (signed-byte 32)) t) do-jump))
+
 ;;; ============================================================================
 ;;; 1. Push Instructions
 ;;; ============================================================================
@@ -97,7 +107,7 @@
       (invoke-function eng def count))))
 
 (defun do-jump (eng offset)
-  (declare (tt-engine eng) (fixnum offset))
+  (declare (tt-engine eng) (type (signed-byte 32) offset))
   (let ((target (+ (eng-pc eng) -1 offset)))
     ;; The glyph program is a slice of the font's bytes: a jump may not leave it.
     (when (or (< target (if (= (eng-cur-program eng) 2) (eng-glyph-base eng) 0))
