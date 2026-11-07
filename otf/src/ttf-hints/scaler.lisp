@@ -200,6 +200,14 @@ ACQUIRE-TT-ENGINE.  A cache only: a stale or racing read is harmless.")
 
 (defvar *tt-pool-tick* 0)
 
+(declaim (inline coords-equal))
+(defun coords-equal (a b)
+  "True if the coordinate vectors A and B hold the same values."
+  (declare (type simple-vector a b))
+  (and (= (length a) (length b))
+       (dotimes (i (length a) t)
+         (unless (eql (svref a i) (svref b i)) (return nil)))))
+
 (defun find-tt-pool-entry (loader ppem-key coords)
   "The pool entry for LOADER at PPEM-KEY and COORDS; made if there is none,
 dropping the least recently used ones if the font has too many."
@@ -208,7 +216,7 @@ dropping the least recently used ones if the font has too many."
     (let* ((entries (gethash loader *tt-engine-pools*))
            (entry (find-if (lambda (e)
                              (and (= (pe-ppem-key e) ppem-key)
-                                  (equalp (pe-coords e) coords)))
+                                  (coords-equal (pe-coords e) coords)))
                            entries)))
       (unless entry
         (setf entry (make-pool-entry :ppem-key ppem-key :coords (copy-seq coords)))
@@ -242,7 +250,7 @@ dropping the least recently used ones if the font has too many."
            (if (and last
                     (eq (sb-ext:weak-pointer-value (car last)) loader)
                     (= (the fixnum (cadr last)) ppem-key)
-                    (or (eq (caddr last) coords) (equalp (caddr last) coords)))
+                    (coords-equal (caddr last) coords))
                (cdddr last)
                (let ((entry (find-tt-pool-entry loader ppem-key coords)))
                  (setf **tt-last-pool-entry**
