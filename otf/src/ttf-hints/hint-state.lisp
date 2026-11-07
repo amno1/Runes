@@ -166,12 +166,25 @@ arithmetic), so that the result agrees with its to the last bit."
   (phase 0 :type s32)
   (period 64 :type s32))
 
+(declaim (ftype (function (round-state s32 s32) s32) round-according-to-state-general))
+
+(declaim (inline round-according-to-state))
 (defun round-according-to-state (rs distance compensation)
-  "Round F26Dot6 DISTANCE with COMPENSATION according to ROUND-STATE RS."
+  "Round F26Dot6 DISTANCE with COMPENSATION according to ROUND-STATE RS.  The
+usual mode, to the grid, is done where this is used; the others by
+ROUND-ACCORDING-TO-STATE-GENERAL."
+  (declare (round-state rs) (s32 distance compensation) (optimize (speed 3) (safety 0)))
+  (if (eq (rs-mode rs) :to-grid)
+      (if (>= distance 0)
+          (max 0 (logand (f26+ (f26+ distance compensation) 32) -64))
+          (f26-neg (max 0 (logand (f26+ (f26+ (f26-neg distance) compensation) 32) -64))))
+      (round-according-to-state-general rs distance compensation)))
+
+(defun round-according-to-state-general (rs distance compensation)
+  "ROUND-ACCORDING-TO-STATE for every mode."
   (declare (round-state rs) (s32 distance compensation) (optimize (speed 3) (safety 0)))
   (let ((mode (rs-mode rs)))
     (case mode
-      ;; The usual one first: as the general case below, without its dispatch.
       (:to-grid
        (if (>= distance 0)
            (max 0 (logand (f26+ (f26+ distance compensation) 32) -64))
