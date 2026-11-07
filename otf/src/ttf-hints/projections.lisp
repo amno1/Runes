@@ -95,6 +95,8 @@ the dual projection vector."
                       (f26- (aref (zone-unscaled-x zone1) pt1) (aref (zone-unscaled-x zone2) pt2))
                       (f26- (aref (zone-unscaled-y zone1) pt1) (aref (zone-unscaled-y zone2) pt2))))
 
+(declaim (ftype (function (graphics-state tt-zone fixnum s32 t) t) move-zone-point-general))
+(declaim (inline %move-zone-point))
 (defun %move-zone-point (gs zone zone-id pt distance touch)
   "As MOVE-ZONE-POINT, for a PT the caller has checked.  Move point PT in ZONE by DISTANCE along the Freedom Vector so its projection
 changes by DISTANCE.  As FreeType's Direct_Move and skrifa's move_point, in
