@@ -13,6 +13,9 @@
 
 (in-package #:runes/otf/charstring)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+(declaim (sb-ext:muffle-conditions sb-ext:compiler-note))
+
 ;;; Hinting parameters (HintParams), from a subfont's Private DICT
 
 ;; At most 7 blue zones in BlueValues and FamilyBlues, 5 in OtherBlues and
