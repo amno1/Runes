@@ -64,9 +64,24 @@ a pause that the row compared with does not have."
   (format t "~a ~d ~,3f ms~%" name operations ms))
 
 (defun bench-hint-outlines (name path ppem glyph-count)
+  "The hinted outline of each glyph into one buffer, as FreeType loads into its
+glyph slot."
+  (zpb-ttf:with-font-loader (loader path)
+    (let ((n (min glyph-count (zpb-ttf:glyph-count loader)))
+          (outline (zpb-ttf:make-outline-26dot6)))
+      ;; Warm up: the engine for the size, the buffer's size, and the code paths.
+      (dotimes (g n) (zpb-ttf:hint-outline-26dot6-into loader g ppem outline))
+      (row name (* n *repetitions*)
+           (time-ms (lambda ()
+                      (dotimes (r *repetitions*)
+                        (dotimes (g n)
+                          (zpb-ttf:hint-outline-26dot6-into loader g ppem outline)))))))))
+
+(defun bench-hint-outlines-fresh (name path ppem glyph-count)
+  "As BENCH-HINT-OUTLINES with the arrays of each outline new, as
+HINT-OUTLINE-26DOT6 returns them."
   (zpb-ttf:with-font-loader (loader path)
     (let ((n (min glyph-count (zpb-ttf:glyph-count loader))))
-      ;; Warm up: the engine for the size, and the code paths.
       (dotimes (g n) (zpb-ttf:hint-outline-26dot6 loader g ppem))
       (row name (* n *repetitions*)
            (time-ms (lambda ()
@@ -103,5 +118,6 @@ a pause that the row compared with does not have."
   (bench-hint-outlines "liberation-12" liberation 12 2500)
   ;; Rows with no FreeType counterpart: what a renderer asks for.
   (when *dejavu*
+    (bench-hint-outlines-fresh "dejavu-16-fresh" *dejavu* 16 4000)
     (bench-hinted-contours "dejavu-16-contours" *dejavu* 16 4000)
     (bench-hinted-advances "dejavu-16-advances" *dejavu* 16 4000)))

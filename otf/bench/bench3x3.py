@@ -25,7 +25,7 @@ RUN_COMPARISON = os.path.join(SCRIPT_DIR, "run_comparison.sh")
 # In the ratio: the benchmarks both sides have.
 COMPARED = ["dejavu-9", "dejavu-16", "dejavu-32", "liberation-12"]
 # Only runes/otf has these.
-ONLY_RUNES = ["dejavu-16-contours", "dejavu-16-advances"]
+ONLY_RUNES = ["dejavu-16-fresh", "dejavu-16-contours", "dejavu-16-advances"]
 
 ROW = re.compile(r"^([a-zA-Z0-9\-_]+)\s+(\d+)\s+([\d.]+)\s+ms")
 RUNS_PER_BATCH = 3

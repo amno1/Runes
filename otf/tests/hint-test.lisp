@@ -201,6 +201,25 @@ limit, after about as many instructions as it, and with its condition."
     (handler-case (progn (runes/otf/tt-hint:run-program engine 2) nil)
       (runes/otf/tt-hint::tt-hint-limit-exceeded () t))))
 
+(defun check-outline-into (loader)
+  "HINT-OUTLINE-26DOT6-INTO fills one buffer, through glyphs of different
+sizes, with what HINT-OUTLINE-26DOT6 returns."
+  (let ((outline (zpb-ttf:make-outline-26dot6)) (same t))
+    (dolist (ppem '(12 16))
+      (dotimes (gid (min 400 (zpb-ttf:glyph-count loader)))
+        (multiple-value-bind (xs ys on ends phantom) (zpb-ttf:hint-outline-26dot6 loader gid ppem)
+          (zpb-ttf:hint-outline-26dot6-into loader gid ppem outline)
+          (let ((n (length xs)) (n-ends (length ends)))
+            (unless (and (= n (zpb-ttf:o26-n outline))
+                         (= n-ends (zpb-ttf:o26-n-ends outline))
+                         (equalp xs (subseq (zpb-ttf:o26-xs outline) 0 n))
+                         (equalp ys (subseq (zpb-ttf:o26-ys outline) 0 n))
+                         (equalp on (subseq (zpb-ttf:o26-on-curve outline) 0 n))
+                         (equalp ends (subseq (zpb-ttf:o26-ends outline) 0 n-ends))
+                         (equalp phantom (zpb-ttf:o26-phantom outline)))
+              (setf same nil))))))
+    same))
+
 (defun check-bad-glyph-index (loader)
   "A glyph index past the font's glyphs is an error, not a read past the table."
   (let ((count (zpb-ttf:glyph-count loader)))
@@ -223,6 +242,8 @@ limit, after about as many instructions as it, and with its condition."
                              (zerop bad))
                       (check (format nil "~A: the excluded outlines still differ" label)
                              (zerop fixed)))
+                    (check (format nil "~A: HINT-OUTLINE-26DOT6-INTO gives the same outlines" label)
+                           (check-outline-into loader))
                     (check (format nil "~A: a glyph index out of range is an error" label)
                            (check-bad-glyph-index loader))
                     (multiple-value-bind (count different) (check-decoder-fallback loader)

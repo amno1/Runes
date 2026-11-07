@@ -11,7 +11,10 @@
 (export '(hinted-contours
           hinted-cubic-contours
           hinted-advance-width
-          hint-outline-26dot6))
+          hint-outline-26dot6
+          hint-outline-26dot6-into
+          outline-26dot6 make-outline-26dot6
+          o26-xs o26-ys o26-on-curve o26-ends o26-phantom o26-n o26-n-ends))
 
 ;;; ============================================================================
 ;;; 1. 'cvar' (Control Value Table Variations)
@@ -1046,6 +1049,58 @@ X0 Y0 X1 Y1 X2 Y2 X3 Y3 in an array of eight."
                 on-curve
                 (subseq (hb-ends out) 0 (hb-n-ends out))
                 phantom)))))
+
+(defstruct (outline-26dot6 (:conc-name o26-))
+  "A hinted outline in F26Dot6 pixels that HINT-OUTLINE-26DOT6-INTO fills: the
+first N elements of XS, YS and ON-CURVE are the points (ON-CURVE is 1 for
+on-curve ones), the first N-ENDS of ENDS the contours' last points, and PHANTOM
+the phantom points.  The arrays grow as the outlines need, and are kept."
+  (xs (make-array 128 :element-type '(signed-byte 32)) :type (simple-array (signed-byte 32) (*)))
+  (ys (make-array 128 :element-type '(signed-byte 32)) :type (simple-array (signed-byte 32) (*)))
+  (on-curve (make-array 128 :element-type '(unsigned-byte 8)) :type (simple-array (unsigned-byte 8) (*)))
+  (ends (make-array 32 :element-type '(signed-byte 32)) :type (simple-array (signed-byte 32) (*)))
+  (phantom (make-array 8 :element-type '(signed-byte 32)) :type (simple-array (signed-byte 32) (8)))
+  (n 0 :type fixnum)
+  (n-ends 0 :type fixnum))
+
+(defun hint-outline-26dot6-into (loader gid ppem outline &key coords)
+  "As HINT-OUTLINE-26DOT6, but into the OUTLINE-26DOT6 OUTLINE, which is the
+value: nothing is allocated for an outline that fits in what it holds."
+  (declare (type outline-26dot6 outline))
+  (let ((coords-vec (if coords
+                        (map 'vector #'runes/otf/charstring::f2dot14-from-real
+                             (normalize-coordinates loader coords))
+                        (or (loader-gvar-coords loader) #()))))
+    (with-pooled-tt-engine (eng loader ppem coords-vec)
+      (let* ((out (engine-outline eng))
+             (phantom (load-hinted-glyph-points loader eng gid out coords-vec))
+             (n (hb-n out))
+             (n-ends (hb-n-ends out)))
+        (declare (type phantom-array phantom) (fixnum n n-ends))
+        (shift-outline-by-pp1 out phantom)
+        (when (> n (length (o26-xs outline)))
+          (let ((size (max n (* 2 (length (o26-xs outline))))))
+            (setf (o26-xs outline) (make-array size :element-type '(signed-byte 32))
+                  (o26-ys outline) (make-array size :element-type '(signed-byte 32))
+                  (o26-on-curve outline) (make-array size :element-type '(unsigned-byte 8)))))
+        (when (> n-ends (length (o26-ends outline)))
+          (setf (o26-ends outline)
+                (make-array (max n-ends (* 2 (length (o26-ends outline))))
+                            :element-type '(signed-byte 32))))
+        (let ((xs (o26-xs outline)) (ys (o26-ys outline)) (on (o26-on-curve outline))
+              (ends (o26-ends outline))
+              (hxs (hb-xs out)) (hys (hb-ys out)) (hflags (hb-flags out)) (hends (hb-ends out)))
+          (locally (declare (optimize (safety 0)))
+            (dotimes (i n)
+              (setf (aref xs i) (aref hxs i)
+                    (aref ys i) (aref hys i)
+                    (aref on i) (logand (aref hflags i) 1)))
+            (dotimes (i n-ends)
+              (setf (aref ends i) (aref hends i)))))
+        (replace (o26-phantom outline) phantom)
+        (setf (o26-n outline) n
+              (o26-n-ends outline) n-ends)
+        outline))))
 
 (defun cff-hinted-outline (loader gid ppem)
   (let* ((font (loader-cff-font loader))
