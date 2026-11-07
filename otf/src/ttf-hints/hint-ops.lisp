@@ -506,26 +506,29 @@ between two touched points comes from the unscaled coordinates."
                       (cur2 (aref cur ref2))
                       (delta1 (f26- cur1 org1))
                       (delta2 (f26- cur2 org2))
-                      (scale (if (or (= cur1 cur2) (= orus1 orus2))
-                                 0
-                                 (div-fix (f26- cur2 cur1) (f26- orus2 orus1)))))
+                      (flat (or (= cur1 cur2) (= orus1 orus2)))
+                      ;; The scale is made when the first point between needs it
+                      ;; (FreeType's scale_valid): a division, often not needed.
+                      (scale 0))
                  (declare (s32 orus1 orus2 org1 org2 cur1 cur2 delta1 delta2 scale))
-                 ;; Whether the span is flat does not depend on the point:
-                 ;; the test is out of the loops.
-                 (if (or (= cur1 cur2) (= orus1 orus2))
+                 (if flat
                      (loop for i of-type fixnum from from below to
                            for a of-type s32 = (aref orig i)
                            do (setf (aref cur i)
                                     (cond ((<= a org1) (f26+ a delta1))
                                           ((>= a org2) (f26+ a delta2))
                                           (t cur1))))
-                     (loop for i of-type fixnum from from below to
-                           for a of-type s32 = (aref orig i)
-                           do (setf (aref cur i)
-                                    (cond ((<= a org1) (f26+ a delta1))
-                                          ((>= a org2) (f26+ a delta2))
-                                          (t (f26+ cur1 (mul-fix (f26- (aref unscaled i) orus1)
-                                                                 scale)))))))))))
+                     (let ((scale-valid nil))
+                       (loop for i of-type fixnum from from below to
+                             for a of-type s32 = (aref orig i)
+                             do (setf (aref cur i)
+                                      (cond ((<= a org1) (f26+ a delta1))
+                                            ((>= a org2) (f26+ a delta2))
+                                            (t (unless scale-valid
+                                                 (setf scale (div-fix (f26- cur2 cur1) (f26- orus2 orus1))
+                                                       scale-valid t))
+                                               (f26+ cur1 (mul-fix (f26- (aref unscaled i) orus1)
+                                                                   scale))))))))))))
     (let ((first -1) (prev -1))
       (declare (fixnum first prev))
       (loop for i of-type fixnum from start to end
