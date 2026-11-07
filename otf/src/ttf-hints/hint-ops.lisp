@@ -660,8 +660,10 @@ between two touched points comes from the unscaled coordinates."
 
 (defun dispatch-instruction (eng op)
   (declare (tt-engine eng) (type (unsigned-byte 8) op) (optimize (speed 3) (safety 0)))
-  (let ((s (eng-stack eng))
-        (gs (eng-gs eng)))
+  ;; The stack and the state are read where an arm uses them: many arms use
+  ;; neither, or only one.
+  (symbol-macrolet ((s (eng-stack eng))
+                    (gs (eng-gs eng)))
     (case op
       (#.(opcode-range #xB0 #xB7) (push-bytes eng (1+ (- op #xB0))))
       (#.(opcode-range #xB8 #xBF) (push-words eng (1+ (- op #xB8))))
