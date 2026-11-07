@@ -50,6 +50,8 @@
 
 (in-package #:runes/otf/charstring)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 ;;; Limits
 
 (defconstant +nesting-depth-limit+ 10
@@ -87,12 +89,18 @@
 (declaim (inline s32 fixed-from-int fixed+ fixed- fixed-neg fixed*))
 (defun s32 (x)
   "X reduced to a signed 32-bit integer, wrapping."
-  (declare (integer x))
-  (sb-c::mask-signed-field 32 (ldb (byte 32 0) x)))
+  (declare (type integer x)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (the (signed-byte 32)
+       (let ((u (the (unsigned-byte 32) (ldb (byte 32 0) x))))
+         (if (logbitp 31 u)
+             (- u #x100000000)
+             u))))
 
 (defun fixed-from-int (i)
   "The fixed point value of the integer I (shifted, wrapping like Rust's i << 16)."
-  (declare (integer i))
+  (declare (type integer i)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (s32 (ash (ldb (byte 16 0) i) 16)))
 
 (defun fixed+ (a b) (declare (s32 a b)) (s32 (+ a b)))
@@ -119,18 +127,26 @@ divisor gives the largest magnitude."
     (if sign (s32 (- (s32 q))) (s32 q))))
 
 (defun fixed->float (f)
-  (/ f 65536.0d0))
+  (declare (type s32 f)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (/ (float f 1.0d0) 65536.0d0))
 
 (defun round-half-away (x)
   "X rounded to an integer, halves away from zero, as font-types' from_f64 does."
+  (declare (type real x)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (if (minusp x) (- (floor (+ (- x) 1/2))) (floor (+ x 1/2))))
 
 (defun float->fixed (x)
+  (declare (type real x)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (s32 (round-half-away (* (rational x) 65536))))
 
 (defun fixed-sqrt (value)
   "Square root by the Babylonian method FreeType uses; zero for anything
 not positive."
+  (declare (type s32 value)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (if (<= value 0)
       0
       (let ((root (if (< value 10) value (ash value -1))))
@@ -172,10 +188,11 @@ not positive."
 (defun stack-push-fixed (s value) (declare (integer value)) (stack-push-raw s (s32 value) t))
 
 (defun stack-set-fixed (s index value)
+  (declare (type stack s) (type fixnum index) (type integer value))
   (when (>= index (stack-top s))
     (fail 'charstring-limit-exceeded "set past the top of the stack"))
-  (setf (aref (stack-values s) index) (s32 value)
-        (aref (stack-fixedp s) index) 1))
+  (setf (aref (the (simple-array (signed-byte 32) (*)) (stack-values s)) index) (s32 value)
+        (aref (the simple-bit-vector (stack-fixedp s)) index) 1))
 
 (defun stack-pop-index (s)
   "Index of the popped value; 0 when the stack is already empty."
@@ -211,7 +228,8 @@ padding, for one value)."
 
 (defun stack-fixed-array (s first n)
   "List of N fixed values starting at FIRST, padded with zeros past the top."
-  (loop for i from first below (+ first n)
+  (declare (type stack s) (type fixnum first n))
+  (loop for i of-type fixnum from first below (the fixnum (+ first n))
         collect (if (< i (stack-top s)) (stack-get-fixed s i) 0)))
 
 (defun stack-drop (s n)
@@ -228,7 +246,8 @@ padding, for one value)."
 
 (defun stack-roll (s count shift)
   "Rotate the top COUNT values by SHIFT places toward the top."
-  (declare (stack s) (type (signed-byte 32) count shift))
+  (declare (stack s) (type (signed-byte 32) count shift)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (when (< count 2)
     (return-from stack-roll))
   (when (> count (stack-top s))
@@ -291,7 +310,7 @@ reinterpreted, with B, as fixed point bits, as FreeType does."
   ((scalars :initarg :scalars :initform #() :accessor constant-blend-scalars))
   (:documentation "Blend state with fixed scalars, e.g. precomputed by the caller."))
 
-(defmethod blend-region-count ((b constant-blend-state)) (length (constant-blend-scalars b)))
+(defmethod blend-region-count ((b constant-blend-state)) (length (the vector (constant-blend-scalars b))))
 (defmethod blend-scalars ((b constant-blend-state)) (constant-blend-scalars b))
 (defmethod blend-set-store-index ((b constant-blend-state) index)
   (declare (ignore index))
@@ -300,7 +319,8 @@ reinterpreted, with B, as fixed point bits, as FreeType does."
 (defun stack-apply-blend (s blend-state)
   "The `blend' operator: replace target values and their per-region deltas
 by the blended target values."
-  (declare (stack s))
+  (declare (stack s)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((target-count (stack-pop-int s)))
     (when (or (minusp target-count) (> target-count (stack-top s)))
       (fail 'charstring-invalid-operation "blend count exceeds the stack"))
@@ -388,6 +408,7 @@ BASE-CODE and ACCENT-CODE are Standard Encoding codes.")
 the CFF subroutine bias. A NIL sequence means the font has none."))
 
 (defun biased-subr (subrs index what)
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (unless subrs
     (fail 'charstring-missing-resource what))
   (let ((i (+ index (subr-bias (length subrs)))))
@@ -606,7 +627,9 @@ such as an adjustable one, is copied first."
 
 (declaim (inline cursor-remaining cursor-u8 cursor-int parse-int))
 
-(defun cursor-remaining (c) (- (cursor-end c) (cursor-pos c)))
+(defun cursor-remaining (c)
+  (declare (cursor c))
+  (the fixnum (- (cursor-end c) (cursor-pos c))))
 
 (defun cursor-u8 (c)
   (declare (cursor c))
@@ -625,6 +648,8 @@ such as an adjustable one, is copied first."
     (if (logbitp (1- (* 8 bytes)) u) (- u (ash 1 (* 8 bytes))) u)))
 
 (defun cursor-octets (c count)
+  (declare (cursor c) (type fixnum count)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (when (> count (cursor-remaining c))
     (fail 'charstring-read-error "hint mask runs past the charstring"))
   (prog1 (subseq (cursor-bytes c) (cursor-pos c) (+ (cursor-pos c) count))
@@ -716,6 +741,46 @@ such as an adjustable one, is copied first."
   (or (ev-%storage ev)
       (setf (ev-%storage ev) (make-array +storage-size+ :initial-element 0))))
 
+(declaim (inline reset-stack ensure-open emit-line coords-remaining stack-arg))
+
+(defun reset-stack (ev)
+  (declare (evaluator ev))
+  (stack-clear (ev-stack ev))
+  (setf (ev-stack-ix ev) 0))
+
+(defun read-width (ev)
+  (declare (evaluator ev))
+  (setf (ev-wx ev) (stack-get-fixed (ev-stack ev) 0)
+        (ev-seen-width-command ev) t
+        (ev-have-read-width ev) t))
+
+(defun ensure-open (ev)
+  (declare (evaluator ev))
+  (unless (ev-open-p ev)
+    (%sink-move-to (ev-sink ev) 0 0)
+    (setf (ev-open-p ev) t)))
+
+(defun emit-line (ev)
+  (declare (evaluator ev))
+  (ensure-open ev)
+  (%sink-line-to (ev-sink ev) (ev-x ev) (ev-y ev)))
+
+(defun move-to (ev)
+  "Start a subpath at the current point, closing the previous one."
+  (declare (evaluator ev))
+  (if (ev-open-p ev)
+      (%sink-close (ev-sink ev))
+      (setf (ev-open-p ev) t))
+  (%sink-move-to (ev-sink ev) (ev-x ev) (ev-y ev)))
+
+(defun coords-remaining (ev)
+  (declare (evaluator ev))
+  (the fixnum (max 0 (- (stack-len (ev-stack ev)) (ev-stack-ix ev)))))
+
+(defun stack-arg (ev offset)
+  (declare (evaluator ev) (fixnum offset))
+  (stack-get-fixed (ev-stack ev) (+ (ev-stack-ix ev) offset)))
+
 (defun make-evaluator-for (context blend-state sink)
   (make-evaluator :context context
                   :type1-p (eq (context-kind context) :type1)
@@ -754,7 +819,8 @@ Evaluation stops at the first stack-clearing operator."
 
 (defun evaluate-impl (ev c depth)
   "Evaluate from cursor C. Return true if an endchar was seen."
-  (declare (evaluator ev) (cursor c) (fixnum depth))
+  (declare (evaluator ev) (cursor c) (fixnum depth)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (when (> depth +nesting-depth-limit+)
     (fail 'charstring-limit-exceeded "subroutines nested too deeply"))
   ;; The position is kept in POS while numbers are read, and written back
@@ -801,54 +867,14 @@ Evaluation stops at the first stack-clearing operator."
                       (cond
                         ((null op) (reset-stack ev))
                         (t
-                         (when (eq op :endchar) (setf seen-endchar t))
-                         (unless (evaluate-operator ev op c depth)
-                           (return))
-                         ;; The first stack-clearing operator settles the width.
-                         (when (and (ev-width-only ev) (ev-seen-width-command ev))
-                           (return)))))
+                          (when (eq op :endchar) (setf seen-endchar t))
+                          (unless (evaluate-operator ev op c depth)
+                            (return))
+                          ;; The first stack-clearing operator settles the width.
+                          (when (and (ev-width-only ev) (ev-seen-width-command ev))
+                            (return)))))
                     (setf pos (cursor-pos c)))))))
     seen-endchar))
-
-(declaim (inline reset-stack ensure-open emit-line coords-remaining stack-arg))
-
-(defun reset-stack (ev)
-  (declare (evaluator ev))
-  (stack-clear (ev-stack ev))
-  (setf (ev-stack-ix ev) 0))
-
-(defun read-width (ev)
-  (declare (evaluator ev))
-  (setf (ev-wx ev) (stack-get-fixed (ev-stack ev) 0)
-        (ev-seen-width-command ev) t
-        (ev-have-read-width ev) t))
-
-(defun ensure-open (ev)
-  (declare (evaluator ev))
-  (unless (ev-open-p ev)
-    (%sink-move-to (ev-sink ev) 0 0)
-    (setf (ev-open-p ev) t)))
-
-(defun emit-line (ev)
-  (declare (evaluator ev))
-  (ensure-open ev)
-  (%sink-line-to (ev-sink ev) (ev-x ev) (ev-y ev)))
-
-(defun move-to (ev)
-  "Start a subpath at the current point, closing the previous one."
-  (declare (evaluator ev))
-  (if (ev-open-p ev)
-      (%sink-close (ev-sink ev))
-      (setf (ev-open-p ev) t))
-  (%sink-move-to (ev-sink ev) (ev-x ev) (ev-y ev)))
-
-(defun coords-remaining (ev)
-  (declare (evaluator ev))
-  (max 0 (- (stack-len (ev-stack ev)) (ev-stack-ix ev))))
-
-(defun stack-arg (ev offset)
-  (declare (evaluator ev) (fixnum offset))
-  (stack-get-fixed (ev-stack ev) (+ (ev-stack-ix ev) offset)))
 
 ;;; EMIT-CURVES is a macro: every call names its modes, so the curve's
 ;;; points are computed by straight-line code, without a list of modes to
@@ -901,10 +927,11 @@ operands it used."
             (,initial-x (ev-x ,e))
             (,initial-y (ev-y ,e))
             (,cx0 0) (,cy0 0) (,cx1 0) (,cy1 0))
-       (declare (ignorable ,initial-x ,initial-y) (s32 ,cx0 ,cy0 ,cx1 ,cy1))
+       (declare (ignorable ,initial-x ,initial-y) (s32 ,cx0 ,cy0 ,cx1 ,cy1)
+                (sb-ext:muffle-conditions sb-ext:compiler-note))
        (ensure-open ,e)
        ,@(loop for mode in modes
-               for k from 0
+               for k of-type fixnum from 0
                collect `(incf (ev-stack-ix ,e) ,(curve-mode-code e mode initial-x initial-y))
                collect (case (mod k 3)
                          (0 `(setf ,cx0 (ev-x ,e) ,cy0 (ev-y ,e)))
@@ -916,6 +943,9 @@ operands it used."
   "Read the stem hints on the stack, after an odd leading width; call
 SINK-FN, unless NIL, with each hint's two edges and return the number of
 operands used."
+  (declare (type evaluator ev)
+           (type (or null function) sink-fn)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((stack (ev-stack ev))
          (i 0)
          (len (if (and (oddp (stack-len stack)) (not (ev-seen-width-command ev)))
@@ -935,7 +965,8 @@ operands used."
 
 (defun evaluate-operator (ev op c depth)
   "Evaluate operator OP. Return true if evaluation should continue."
-  (declare (evaluator ev) (symbol op) (cursor c) (fixnum depth))
+  (declare (evaluator ev) (symbol op) (cursor c) (fixnum depth)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((stack (ev-stack ev))
         (sink (ev-sink ev)))
     (case op
@@ -1287,6 +1318,8 @@ extra operands."
 ;;; Type 1 othersubrs
 
 (defun handle-othersubr (ev)
+  (declare (type evaluator ev)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((stack (ev-stack ev))
          (subr-idx (stack-pop-int stack))
          ;; A negative count is huge, as Rust's cast to usize makes it.
@@ -1317,6 +1350,8 @@ extra operands."
 
 (defun handle-flex (ev)
   "Emit the two curves of a Type 1 flex from the accumulated vectors."
+  (declare (type evaluator ev)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((stack (ev-stack ev))
          (popped (loop repeat 17 collect (stack-pop-fixed stack))))
     ;; Popped top first: final-y final-x height p3y p3x bcp4y bcp4x bcp3y
@@ -1341,7 +1376,8 @@ extra operands."
 (defun handle-mm-blend (ev subr-idx num-args)
   "Blend point values of a multiple master font (othersubrs 14 to 18)."
   ;; NUM-ARGS is MOST-POSITIVE-FIXNUM for a negative count (HANDLE-OTHERSUBR).
-  (declare (evaluator ev) (fixnum subr-idx num-args))
+  (declare (evaluator ev) (fixnum subr-idx num-args)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((weights (context-weight-vector (ev-context ev)))
          (stack (ev-stack ev))
          (num-points (+ (- subr-idx 13) (if (= subr-idx 18) 1 0))))
@@ -1364,6 +1400,8 @@ extra operands."
 
 (defun build-char-array (ev len)
   "The BuildCharArray, sized to LEN zeroed elements on first use."
+  (declare (type evaluator ev) (type fixnum len)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((array (or (ev-build-char ev)
                    (setf (ev-build-char ev) (make-array 0 :adjustable t :initial-element 0)))))
     (unless (= (length array) len)
@@ -1374,6 +1412,8 @@ extra operands."
 (defun handle-build-char (ev subr-idx num-args)
   "Othersubrs 19 to 25 and 27, which compute with the BuildCharArray and
 the blend. Results are left on the stack for the `pop' that follows."
+  (declare (type evaluator ev) (type fixnum subr-idx num-args)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((stack (ev-stack ev))
          (weights (context-weight-vector (ev-context ev)))
          (has-blend (plusp (length weights)))
