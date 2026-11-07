@@ -4,6 +4,8 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defun close-font-loader (font-loader)
   (when (input-stream font-loader)
     (close (input-stream font-loader))
@@ -17,6 +19,7 @@
        (close-font-loader ,loader))))
 
 ;;; Mac OS Roman code points for bytes #x80-#xFF.
+(declaim (type (simple-array (unsigned-byte 16) (128)) *mac-roman-high-codes*))
 (defparameter *mac-roman-high-codes*
   (coerce '(#x00C4 #x00C5 #x00C7 #x00C9 #x00D1 #x00D6 #x00DC #x00E1
             #x00E0 #x00E2 #x00E4 #x00E3 #x00E5 #x00E7 #x00E9 #x00E8
@@ -43,7 +46,10 @@ unpaired surrogates become U+FFFD."
   (let ((units (floor length 2))
         (out (make-string-output-stream))
         (i 0))
-    (flet ((unit (k) (runes/otf:font-data-read-u16 fd (+ offset (* k 2)))))
+    (declare (type (unsigned-byte 32) units i))
+    (flet ((unit (k)
+             (declare (type (unsigned-byte 32) k))
+             (runes/otf:font-data-read-u16 fd (+ offset (* k 2)))))
       (loop while (< i units)
             do (let ((u (unit i)))
                  (incf i)
@@ -58,6 +64,9 @@ unpaired surrogates become U+FFFD."
     (get-output-stream-string out)))
 
 (defun decode-name-string-from-fd (fd offset length platform-id encoding-id)
+  (declare (type runes/otf:font-data fd)
+           (type (unsigned-byte 32) offset length)
+           (type (unsigned-byte 16) platform-id encoding-id))
   (cond
     ;; UTF-16BE: platform 0 (Unicode) or platform 3 (Windows) with encoding 1 or 10
     ((or (zerop platform-id)
@@ -85,11 +94,15 @@ unpaired surrogates become U+FFFD."
   (let ((declared (if (>= fmt 8)
                       (runes/otf:font-data-read-u32 fd (+ sub-off 4))
                       (runes/otf:font-data-read-u16 fd (+ sub-off 2)))))
-    (min declared (max 0 (- table-end sub-off)))))
+    (declare (type (unsigned-byte 32) declared))
+    (min declared (the (unsigned-byte 32) (max 0 (- table-end sub-off))))))
 
 (defun best-cmap-subtable (fd cmap cmap-offset)
   "The format and position of the 'cmap' subtable to use: the first Unicode
 format 12 subtable or, without one, the first Unicode format 4 subtable."
+  (declare (type runes/otf:font-data fd)
+           (type runes/otf:cmap cmap)
+           (type (unsigned-byte 32) cmap-offset))
   (let ((format-4 nil))
     (dotimes (i (runes/otf:cmap-num-tables cmap) (when format-4 (values 4 format-4)))
       (let* ((erec (runes/otf:cmap-encoding-records-ref cmap i))
@@ -97,6 +110,8 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
              (enc (runes/otf:encoding-record-encoding-id erec))
              (sub-off (+ cmap-offset (runes/otf:encoding-record-subtable-offset erec)))
              (fmt (runes/otf:font-data-read-u16 fd sub-off)))
+        (declare (type (unsigned-byte 16) plat enc fmt)
+                 (type (unsigned-byte 32) sub-off))
         (cond ((and (= fmt 12) (or (= plat 0) (= plat 3)))
                (return (values 12 sub-off)))
               ((and (= fmt 4) (null format-4)
@@ -108,7 +123,8 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
   (let* ((sub-len (cmap-subtable-length fd sub-off 12 table-end))
          (cmap12 (runes/otf:read-cmap12 fd sub-off sub-len))
          (num-groups (min (runes/otf:cmap12-num-groups cmap12)
-                          (max 0 (floor (- sub-len 16) 12)))))
+                          (the (unsigned-byte 32) (max 0 (floor (- sub-len 16) 12))))))
+    (declare (type (unsigned-byte 32) sub-len num-groups))
     (flet ((group (i)
              ;; SequentialMapGroup I: startCharCode, endCharCode and
              ;; startGlyphID, read in place.  NUM-GROUPS keeps I inside the
@@ -120,8 +136,10 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
                        (runes/otf:font-data-read-u32 fd (+ pos 8))))))
       (setf (cmap-lookup-fn loader)
             (lambda (cp)
+              (declare (type (unsigned-byte 32) cp))
               ;; Binary search of the groups, which are sorted.
               (let ((low 0) (high (1- num-groups)))
+                (declare (type fixnum low high))
                 (loop while (<= low high)
                       do (let ((mid (floor (+ low high) 2)))
                            (multiple-value-bind (start end gid) (group mid)
@@ -131,10 +149,12 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
                       finally (return 0))))
             (cmap-mappings-fn loader)
             (lambda (fn)
-              (dotimes (g num-groups)
-                (multiple-value-bind (start end gid) (group g)
-                  (loop for cp from start to (min end #x10FFFF)
-                        do (funcall fn cp (+ gid (- cp start)))))))))))
+              (let ((fn (alexandria:ensure-function fn)))
+                (declare (type function fn))
+                (dotimes (g num-groups)
+                  (multiple-value-bind (start end gid) (group g)
+                    (loop for cp from start to (min end #x10FFFF)
+                          do (funcall fn cp (+ gid (- cp start))))))))))))
 
 (defun setup-cmap4-lookup (loader fd sub-off table-end)
   (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) sub-off table-end))
@@ -143,13 +163,16 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
          (cmap4 (runes/otf:read-cmap4 fd sub-off sub-len))
          ;; Four u16 arrays of segCount entries follow the 16-byte header.
          (seg-len (min (floor (runes/otf:cmap4-seg-count-x2 cmap4) 2)
-                       (max 0 (floor (- sub-len 16) 8))))
+                       (the (unsigned-byte 32) (max 0 (floor (- sub-len 16) 8)))))
          (ro-base (+ sub-off 16 (* 6 seg-len))))
+    (declare (type (unsigned-byte 32) sub-len sub-end seg-len ro-base))
     (labels ((segment-glyph (s cp)
                (declare (type (unsigned-byte 16) s) (type (unsigned-byte 32) cp))
                (let ((start (runes/otf:cmap4-start-code-ref cmap4 s))
                      (delta (runes/otf:cmap4-id-delta-ref cmap4 s))
                      (ro-off (runes/otf:cmap4-id-range-offsets-ref cmap4 s)))
+                 (declare (type (unsigned-byte 16) start ro-off)
+                          (type (signed-byte 16) delta))
                  (cond
                    ((< cp start) 0)
                    ((zerop ro-off) (logand #xFFFF (+ cp delta)))
@@ -161,8 +184,10 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
                           (let ((gid (runes/otf:font-data-read-u16 fd g-addr)))
                             (if (zerop gid) 0 (logand #xFFFF (+ gid delta))))))))))
              (find-segment (cp)
+               (declare (type (unsigned-byte 32) cp))
                ;; First segment whose endCode >= CP.
                (let ((low 0) (high seg-len))
+                 (declare (type (unsigned-byte 32) low high))
                  (loop while (< low high)
                        do (let ((mid (floor (+ low high) 2)))
                             (if (< (runes/otf:cmap4-end-code-ref cmap4 mid) cp)
@@ -171,19 +196,24 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
                  (when (< low seg-len) low))))
       (setf (cmap-lookup-fn loader)
             (lambda (cp)
+              (declare (type (unsigned-byte 32) cp))
               (let ((s (and (<= cp #xFFFF) (find-segment cp))))
                 (if s (segment-glyph s cp) 0)))
             (cmap-mappings-fn loader)
             (lambda (fn)
-              (dotimes (s seg-len)
-                (loop for cp from (runes/otf:cmap4-start-code-ref cmap4 s)
-                        to (min (runes/otf:cmap4-end-code-ref cmap4 s) #xFFFE)
-                      for gid = (segment-glyph s cp)
-                      unless (zerop gid) do (funcall fn cp gid))))))))
+              (let ((fn (alexandria:ensure-function fn)))
+                (declare (type function fn))
+                (dotimes (s seg-len)
+                  (loop for cp from (runes/otf:cmap4-start-code-ref cmap4 s)
+                          to (min (runes/otf:cmap4-end-code-ref cmap4 s) #xFFFE)
+                        for gid = (segment-glyph s cp)
+                        unless (zerop gid) do (funcall fn cp gid)))))))))
 
 (defun setup-cmap-lookup (loader cmap cmap-offset cmap-length)
+  (declare (type (unsigned-byte 32) cmap-offset cmap-length))
   (let ((fd (font-data loader))
         (table-end (+ cmap-offset cmap-length)))
+    (declare (type (unsigned-byte 32) table-end))
     (multiple-value-bind (format sub-off) (best-cmap-subtable fd cmap cmap-offset)
       (case format
         (12 (setup-cmap12-lookup loader fd sub-off table-end))
@@ -212,8 +242,9 @@ read: the table is looked in where it is."
   (declare (type (unsigned-byte 32) body kend))
   (let* ((data (font-data loader))
          (n-pairs (min (runes/otf:font-data-read-u16 data body)
-                       (floor (max 0 (- kend body 8)) 6)))
+                       (the (unsigned-byte 32) (floor (the (unsigned-byte 32) (max 0 (- kend body 8))) 6))))
          (pos (+ body 8)))
+    (declare (type (unsigned-byte 32) n-pairs pos))
     (dotimes (p n-pairs)
       (let ((left (runes/otf:font-data-read-u16 data pos))
             (right (runes/otf:font-data-read-u16 data (+ pos 2)))
@@ -227,11 +258,13 @@ read: the table is looked in where it is."
   "Return the first glyph and the vector of offsets of the class table at POS."
   (declare (type runes/otf:font-data data) (type (unsigned-byte 32) pos kend))
   (if (> (+ pos 4) kend)
-      (values 0 (vector))
+      (values 0 (make-array 0 :element-type '(unsigned-byte 16)))
       (let* ((first (runes/otf:font-data-read-u16 data pos))
              (count (min (runes/otf:font-data-read-u16 data (+ pos 2))
-                         (floor (- kend pos 4) 2)))
-             (offsets (make-array count)))
+                         (the (unsigned-byte 16) (floor (- kend pos 4) 2))))
+             (offsets (make-array count :element-type '(unsigned-byte 16))))
+        (declare (type (unsigned-byte 16) first count)
+                 (type (simple-array (unsigned-byte 16) (*)) offsets))
         (dotimes (i count)
           (setf (aref offsets i) (runes/otf:font-data-read-u16 data (+ pos 4 (* 2 i)))))
         (values first offsets))))
@@ -245,13 +278,17 @@ start of the subtable; a pair's value is at SUB-OFF + left + right."
     (when (<= (+ body 8) kend)
       (multiple-value-bind (left-first left-offsets)
           (read-kerning-class-table data (+ sub-off (runes/otf:font-data-read-u16 data (+ body 2))) kend)
+        (declare (type (unsigned-byte 16) left-first)
+                 (type (simple-array (unsigned-byte 16) (*)) left-offsets))
         (multiple-value-bind (right-first right-offsets)
             (read-kerning-class-table data (+ sub-off (runes/otf:font-data-read-u16 data (+ body 4))) kend)
-          (loop for lv across left-offsets
-                for left from left-first
-                do (loop for rv across right-offsets
-                         for right from right-first
-                         for pos = (+ sub-off lv rv)
+          (declare (type (unsigned-byte 16) right-first)
+                   (type (simple-array (unsigned-byte 16) (*)) right-offsets))
+          (loop for lv of-type (unsigned-byte 16) across left-offsets
+                for left of-type (unsigned-byte 32) from left-first
+                do (loop for rv of-type (unsigned-byte 16) across right-offsets
+                         for right of-type (unsigned-byte 32) from right-first
+                         for pos of-type (unsigned-byte 32) = (+ sub-off lv rv)
                          when (<= (+ pos 2) kend)
                            do (let ((val (runes/otf:font-data-read-i16 data pos)))
                                 (unless (zerop val)
@@ -259,6 +296,8 @@ start of the subtable; a pair's value is at SUB-OFF + left + right."
                                         val))))))))))
 
 (defun read-kerning-subtable (loader format sub-off body kend)
+  (declare (type (unsigned-byte 32) sub-off body kend)
+           (type fixnum format))
   (case format
     (0 (read-kerning-format-0 loader body kend))
     (2 (read-kerning-format-2 loader sub-off body kend))
@@ -273,11 +312,15 @@ low byte."
   (let ((data (font-data loader))
         (n-tables (runes/otf:font-data-read-u16 (font-data loader) (+ koff 2)))
         (sub-off (+ koff 4)))
+    (declare (type (unsigned-byte 16) n-tables)
+             (type (unsigned-byte 32) sub-off))
     (dotimes (t-idx n-tables)
       (when (> (+ sub-off 6) kend) (return))
       (let* ((sub-len (runes/otf:font-data-read-u16 data (+ sub-off 2)))
              (sub-cov (runes/otf:font-data-read-u16 data (+ sub-off 4)))
-             (sub-end (min kend (+ sub-off (max sub-len 6)))))
+             (sub-end (min kend (the (unsigned-byte 32) (+ sub-off (max sub-len 6))))))
+        (declare (type (unsigned-byte 16) sub-len sub-cov)
+                 (type (unsigned-byte 32) sub-end))
         ;; Horizontal, not minimum values, not cross-stream.
         (when (= (logand sub-cov #b111) 1)
           (read-kerning-subtable loader (ldb (byte 8 8) sub-cov) sub-off (+ sub-off 6)
@@ -293,16 +336,19 @@ tupleIndex u16."
   (declare (type (unsigned-byte 32) koff kend))
   (let* ((data (font-data loader))
          (n-tables (min (runes/otf:font-data-read-u32 data (+ koff 4))
-                        (floor (max 0 (- kend koff 8)) 8)))
+                        (the (unsigned-byte 32) (floor (the (unsigned-byte 32) (max 0 (- kend koff 8))) 8))))
          (sub-off (+ koff 8)))
+    (declare (type (unsigned-byte 32) n-tables sub-off))
     (dotimes (t-idx n-tables)
       (when (> (+ sub-off 8) kend) (return))
       (let ((sub-len (runes/otf:font-data-read-u32 data sub-off))
             (sub-cov (runes/otf:font-data-read-u16 data (+ sub-off 4))))
+        (declare (type (unsigned-byte 32) sub-len)
+                 (type (unsigned-byte 16) sub-cov))
         ;; Not vertical, not cross-stream, not variation.
         (when (zerop (logand sub-cov #xE000))
           (read-kerning-subtable loader (ldb (byte 8 0) sub-cov) sub-off (+ sub-off 8)
-                                 (min kend (+ sub-off (max sub-len 8)))))
+                                 (min kend (the (unsigned-byte 32) (+ sub-off (max sub-len 8))))))
         (when (< sub-len 8) (return))
         (incf sub-off sub-len)))))
 
@@ -310,9 +356,11 @@ tupleIndex u16."
   "Read the horizontal format 0 and format 2 subtables of the Microsoft
 (version 0) or Apple (version 1.0) 'kern' table into the loader's
 kerning table, which is there for the pairs read when this returns or fails."
+  (declare (type (unsigned-byte 32) koff ksize))
   (let ((data (font-data loader))
         (kend (+ koff ksize))
         (table (make-hash-table)))
+    (declare (type (unsigned-byte 32) kend))
     (unwind-protect
          (let ((*kerning-fill* table))
            (case (runes/otf:font-data-read-u16 data koff)
@@ -388,12 +436,14 @@ horizontal ones."
                 (make-long-metrics-at data (offset vmtx-info) (size vmtx-info)
                                       (runes/otf:vhea-number-of-long-ver-metrics vhea)
                                       (glyph-count loader))))
-        (let ((dx (/ (max-width loader) 2)))
+        (let ((dx (floor (the fixnum (max-width loader)) 2)))
+          (declare (type fixnum dx))
           (setf (vhea-missing-p loader) t
                 (vmtx-missing-p loader) t
                 (vascender loader) dx
-                (vdescender loader) (- dx)
-                (missing-advance-height loader) (- (ascender loader) (descender loader)))))))
+                (vdescender loader) (the fixnum (- dx))
+                (missing-advance-height loader) (the fixnum (- (the fixnum (ascender loader))
+                                                               (the fixnum (descender loader)))))))))
 
 (defun load-post (loader)
   (with-table (post info) ("post" loader runes/otf:read-post)
@@ -405,11 +455,16 @@ horizontal ones."
 (defun load-names (loader)
   "Every entry of the 'name' table, its string not decoded until it is asked for."
   (with-table (name info) ("name" loader runes/otf:read-name)
-    (let ((storage (+ (offset info) (runes/otf:name-storage-offset name)))
-          (entries (make-array (runes/otf:name-count name))))
-      (dotimes (i (length entries))
+    (let* ((storage (+ (the (unsigned-byte 32) (offset info))
+                       (runes/otf:name-storage-offset name)))
+           (count (runes/otf:name-count name))
+           (entries (make-array count)))
+      (declare (type (unsigned-byte 32) storage)
+               (type (unsigned-byte 16) count)
+               (type simple-vector entries))
+      (dotimes (i count)
         (let ((rec (runes/otf:name-name-record-ref name i)))
-          (setf (aref entries i)
+          (setf (svref entries i)
                 (make-instance 'name-entry
                                :font-loader loader
                                :platform-id (runes/otf:name-record-platform-id rec)
@@ -441,9 +496,12 @@ that is never asked for a name does not read them."
 (defun collection-font-offset (data collection-index)
   "The position of font COLLECTION-INDEX's table directory, and the number
 of fonts in the collection (NIL for a single font)."
+  (declare (type runes/otf:font-data data)
+           (type (unsigned-byte 32) collection-index))
   (if (/= (runes/otf:font-data-read-u32 data 0) #x74746366) ; 'ttcf'
       (values 0 nil)
       (let ((num-fonts (runes/otf:font-data-read-u32 data 8)))
+        (declare (type (unsigned-byte 32) num-fonts))
         (when (>= collection-index num-fonts)
           (error 'unsupported-value
                  :description "Font index out of range in collection"
@@ -453,6 +511,8 @@ of fonts in the collection (NIL for a single font)."
                 num-fonts))))
 
 (defun open-font-loader-from-data (data &key (collection-index 0) input-stream)
+  (declare (type runes/otf:font-data data)
+           (type (unsigned-byte 32) collection-index))
   ;; WOFF and WOFF2 ('wOFF', 'wOF2'): decode to an sfnt (or TTC) in memory first
   (let ((decoder (when (>= (runes/otf:font-data-length data) 4)
                    (case (runes/otf:font-data-read-u32 data 0)
@@ -497,11 +557,12 @@ of fonts in the collection (NIL for a single font)."
       loader)))
 
 (defun open-font-loader (thing &key (collection-index 0))
+  (declare (type (unsigned-byte 32) collection-index))
   (cond
     ((streamp thing)
      (let ((ok nil))
        (unwind-protect
-            (let* ((len (file-length thing))
+            (let* ((len (the (integer 0 #.most-positive-fixnum) (file-length thing)))
                    (buf (make-array len :element-type '(unsigned-byte 8))))
               (file-position thing 0)
               (read-sequence buf thing)
