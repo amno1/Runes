@@ -4,6 +4,19 @@
 
 (in-package #:zpb-ttf)
 
+(defclass table-info ()
+  ((name :initarg :name :reader name)
+   (offset :initarg :offset :reader offset)
+   (size :initarg :size :reader size)))
+
+;; A table directory record has 32-bit offset and length fields, and the readers
+;; of them say so to their callers (SIZE is also the reader of the width of a
+;; value in some conditions: a small number).  The compiler, which derives no
+;; type for a reader, says the new type does not match; that is the point.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (handler-bind ((style-warning #'muffle-warning))
+    (proclaim '(ftype (function (t) (values (unsigned-byte 32) &optional)) offset size))))
+
 (defstruct (long-metrics (:conc-name lm-))
   "An 'hmtx' or 'vmtx' table, read where it lies: LONG-COUNT (advance, bearing)
 pairs at OFFSET of FD, then bare bearings; SIZE bytes in all.  COUNT is the
@@ -143,14 +156,6 @@ them, 0 where the table is too short for it."
 
 (defun vertical-bearing (loader gid)
   (long-metrics-bearing (vmetrics loader) gid))
-
-(defclass table-info ()
-  ((name :initarg :name :reader name)
-   (offset :initarg :offset :reader offset)
-   (size :initarg :size :reader size)))
-
-;; A table directory record has 32-bit offset and length fields.
-(declaim (ftype (function (t) (values (unsigned-byte 32) &optional)) offset size))
 
 (defmethod print-object ((object table-info) stream)
   (print-unreadable-object (object stream :type t)
