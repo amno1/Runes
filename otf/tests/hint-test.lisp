@@ -99,6 +99,24 @@ few of each."
                      (format t "  advance differs: glyph ~D at ~D ppem~%" gid ppem))))))
     (values count bad)))
 
+(defun check-engine-eviction (loader)
+  "Engines are kept for at most *MAX-HINTING-SIZES* sizes of a font, the
+least recently used going first, and an evicted size hints as before."
+  (let ((limit zpb-ttf::*max-hinting-sizes*)
+        (before (multiple-value-list (zpb-ttf:hint-outline-26dot6 loader 40 12))))
+    (setf zpb-ttf::*max-hinting-sizes* 4)
+    (unwind-protect
+         (let ((kept 0))
+           (loop for ppem from 8 to 40
+                 do (zpb-ttf:hint-outline-26dot6 loader 40 ppem)
+                    (setf kept (max kept (zpb-ttf::hinting-engine-sizes loader))))
+           (values (<= kept 4)
+                   (equalp (subseq before 0 4)
+                           (subseq (multiple-value-list
+                                    (zpb-ttf:hint-outline-26dot6 loader 40 12))
+                                   0 4))))
+      (setf zpb-ttf::*max-hinting-sizes* limit))))
+
 (defun run-hint-tests ()
   (let ((runes/otf/charstring-test::*failures* 0)
         (runes/otf/charstring-test::*count* 0))
@@ -113,6 +131,10 @@ few of each."
                              (zerop bad))
                       (check (format nil "~A: the excluded outlines still differ" label)
                              (zerop fixed)))
+                    (multiple-value-bind (bounded same) (check-engine-eviction loader)
+                      (check (format nil "~A: engines are kept for a bounded number of sizes" label)
+                             bounded)
+                      (check (format nil "~A: an evicted size hints as before" label) same))
                     (multiple-value-bind (count bad) (compare-advances loader name)
                       (check (format nil "~A: ~D hinted advances match FreeType" label count)
                              (zerop bad)))

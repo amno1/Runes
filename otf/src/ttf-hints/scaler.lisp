@@ -158,25 +158,68 @@
         eng))))
 
 ;; Thread-safe Engine Pool keyed by (loader ppem coords)
+;;
+;; A caller takes an idle engine off the list of its (font, size, instance)
+;; and puts it back when done, so that engines, which cost a font's fpgm and
+;; prep to build, are reused; a caller finding the list empty builds one.
+;; The sizes a font keeps engines for are bounded: past *MAX-HINTING-SIZES*
+;; the ones looked up least recently are dropped.
+
+(defvar *max-hinting-sizes* 32
+  "The most sizes (with their variation instances) a font keeps hinting
+engines for.  Past it, the least recently used are dropped when a new one is
+made; engines in use are not affected, and are dropped with their size when
+put back.")
+
 (defvar *tt-engine-pool-lock* (sb-thread:make-mutex :name "tt-engine-pool-lock"))
-(defvar *tt-engine-pools* (make-hash-table :test 'eq :weakness :key))
+(defvar *tt-engine-pools* (make-hash-table :test 'eq :weakness :key)
+  "Loader -> list of POOL-ENTRYs.")
+
+(defstruct (pool-entry (:conc-name pe-))
+  (ppem-key 0 :type fixnum)
+  (coords #() :type simple-vector)
+  ;; When the entry was last looked up in *TT-ENGINE-POOLS*, by a counter.
+  ;; Lookups that hit **TT-LAST-POOL-ENTRY** do not count, which is fine: the
+  ;; size in use is the one that cache holds.
+  (stamp 0 :type fixnum)
+  ;; The idle engines.  Taken and returned with ATOMIC-POP and ATOMIC-PUSH.
+  (engines nil :type list))
 
 (sb-ext:defglobal **tt-last-pool-entry** nil
   "(WEAK-POINTER-TO-LOADER PPEM-KEY COORDS . POOL-ENTRY) of the last
 ACQUIRE-TT-ENGINE.  A cache only: a stale or racing read is harmless.")
 
+(defvar *tt-pool-tick* 0)
+
 (defun find-tt-pool-entry (loader ppem-key coords)
-  "The pool entry, ((PPEM-KEY . COORDS) . ENGINES), for LOADER at PPEM-KEY
-and COORDS; made if there is none."
+  "The pool entry for LOADER at PPEM-KEY and COORDS; made if there is none,
+dropping the least recently used ones if the font has too many."
+  (declare (type fixnum ppem-key))
   (sb-thread:with-mutex (*tt-engine-pool-lock*)
-    (let ((alist (gethash loader *tt-engine-pools*)))
-      (or (find-if (lambda (entry)
-                     (and (= (caar entry) ppem-key)
-                          (equalp (cdar entry) coords)))
-                   alist)
-          (let ((new-entry (cons (cons ppem-key (copy-seq coords)) nil)))
-            (setf (gethash loader *tt-engine-pools*) (cons new-entry alist))
-            new-entry)))))
+    (let* ((entries (gethash loader *tt-engine-pools*))
+           (entry (find-if (lambda (e)
+                             (and (= (pe-ppem-key e) ppem-key)
+                                  (equalp (pe-coords e) coords)))
+                           entries)))
+      (unless entry
+        (setf entry (make-pool-entry :ppem-key ppem-key :coords (copy-seq coords)))
+        (push entry entries))
+      (setf (pe-stamp entry) (incf *tt-pool-tick*))
+      (when (> (length entries) *max-hinting-sizes*)
+        (setf entries (sort entries #'> :key #'pe-stamp))
+        (let ((dropped (nthcdr (max 1 *max-hinting-sizes*) entries)))
+          (setf entries (ldiff entries dropped))
+          ;; Do not leave the cache pointing at one that is gone.
+          (let ((last **tt-last-pool-entry**))
+            (when (and last (member (cdddr last) dropped))
+              (setf **tt-last-pool-entry** nil)))))
+      (setf (gethash loader *tt-engine-pools*) entries)
+      entry)))
+
+(defun hinting-engine-sizes (loader)
+  "The number of sizes LOADER has hinting engines for."
+  (sb-thread:with-mutex (*tt-engine-pool-lock*)
+    (length (gethash loader *tt-engine-pools*))))
 
 (defun acquire-tt-engine (loader ppem coords)
   (declare (type font-loader loader) (type real ppem) (type simple-vector coords))
@@ -194,14 +237,15 @@ and COORDS; made if there is none."
                (cdddr last)
                (let ((entry (find-tt-pool-entry loader ppem-key coords)))
                  (setf **tt-last-pool-entry**
-                       (list* (sb-ext:make-weak-pointer loader) ppem-key (cdar entry) entry))
+                       (list* (sb-ext:make-weak-pointer loader) ppem-key
+                              (pe-coords entry) entry))
                  entry)))
-         (eng (sb-ext:atomic-pop (cdr pool-entry))))
+         (eng (sb-ext:atomic-pop (pe-engines pool-entry))))
     (values (or eng (make-tt-hint-engine loader ppem coords))
             pool-entry)))
 
 (defun release-tt-engine (eng pool-entry)
-  (sb-ext:atomic-push eng (cdr pool-entry)))
+  (sb-ext:atomic-push eng (pe-engines pool-entry)))
 
 (defmacro with-pooled-tt-engine ((eng loader ppem coords) &body body)
   (let ((entry (gensym "POOL-ENTRY")))
