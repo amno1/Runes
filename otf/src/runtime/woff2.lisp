@@ -4,6 +4,8 @@
 
 (in-package #:runes/otf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defconstant +woff2-signature+ #x774F4632) ; 'wOF2'
 (defconstant +ttcf-signature+  #x74746366) ; 'ttcf'
 
@@ -92,29 +94,38 @@
 
 (defstruct (bstream (:constructor make-bstream (bytes pos end)))
   (bytes nil :type (simple-array (unsigned-byte 8) (*)))
-  (pos 0 :type fixnum)
-  (end 0 :type fixnum))
+  (pos 0 :type (integer 0 #.array-dimension-limit))
+  (end 0 :type (integer 0 #.array-dimension-limit)))
 
 (declaim (inline bstream-from-font-data bstream-sub bstream-remaining
                  bs-u8 bs-u16 bs-i16 bs-u32 bs-255u16 bs-base128
                  put-u8 put-u16 put-i16 put-u32 round4))
 
 (defun bstream-from-font-data (fd)
+  (declare (type font-data fd))
   (let ((off (font-data-offset fd)))
     (make-bstream (font-data-bytes fd) off (+ off (font-data-length fd)))))
 
 (defun bstream-sub (bs size &optional (table "WOFF2"))
-  (let ((p (bstream-pos bs))
-        (end (bstream-end bs)))
-    (when (> size (- end p))
-      (woff-fail table "substream of ~D bytes exceeds remaining ~D bytes" size (- end p)))
-    (setf (bstream-pos bs) (+ p size))
-    (make-bstream (bstream-bytes bs) p (+ p size))))
+  (declare (type bstream bs)
+           (type (unsigned-byte 32) size))
+  (let* ((p (bstream-pos bs))
+         (end (bstream-end bs))
+         (rem (- end p)))
+    (declare (type (integer 0 #.array-dimension-limit) rem))
+    (when (> size rem)
+      (woff-fail table "substream of ~D bytes exceeds remaining ~D bytes" size rem))
+    (let ((next (+ p size)))
+      (declare (type (integer 0 #.array-dimension-limit) next))
+      (setf (bstream-pos bs) next)
+      (make-bstream (bstream-bytes bs) p next))))
 
 (defun bstream-remaining (bs)
-  (- (bstream-end bs) (bstream-pos bs)))
+  (declare (type bstream bs))
+  (the (integer 0 #.array-dimension-limit) (- (bstream-end bs) (bstream-pos bs))))
 
 (defun bs-u8 (bs &optional (table "WOFF2"))
+  (declare (type bstream bs))
   (let ((p (bstream-pos bs)))
     (when (>= p (bstream-end bs))
       (woff-fail table "unexpected end of stream"))
@@ -122,6 +133,7 @@
     (aref (bstream-bytes bs) p)))
 
 (defun bs-u16 (bs &optional (table "WOFF2"))
+  (declare (type bstream bs))
   (let ((p (bstream-pos bs))
         (bytes (bstream-bytes bs)))
     (when (> (+ p 2) (bstream-end bs))
@@ -131,10 +143,12 @@
             (aref bytes (1+ p)))))
 
 (defun bs-i16 (bs &optional (table "WOFF2"))
+  (declare (type bstream bs))
   (let ((u (bs-u16 bs table)))
     (if (logbitp 15 u) (- u 65536) u)))
 
 (defun bs-u32 (bs &optional (table "WOFF2"))
+  (declare (type bstream bs))
   (let ((p (bstream-pos bs))
         (bytes (bstream-bytes bs)))
     (when (> (+ p 4) (bstream-end bs))
@@ -147,6 +161,7 @@
 
 (defun bs-255u16 (bs &optional (table "WOFF2"))
   "Read a WOFF2 255UInt16 value."
+  (declare (type bstream bs))
   (let ((code (bs-u8 bs table)))
     (cond ((= code 253) (bs-u16 bs table))
           ((= code 254) (+ 506 (bs-u8 bs table)))
@@ -155,6 +170,7 @@
 
 (defun bs-base128 (bs &optional (table "WOFF2"))
   "Read a WOFF2 UIntBase128 value."
+  (declare (type bstream bs))
   (let ((accum 0))
     (declare (type (unsigned-byte 32) accum))
     (dotimes (i 5 (woff-fail table "UIntBase128 exceeds 5 bytes"))
@@ -169,23 +185,26 @@
 
 (defun put-u8 (buf pos v)
   (declare (type (simple-array (unsigned-byte 8) (*)) buf)
-           (type fixnum pos))
+           (type fixnum pos v))
   (setf (aref buf pos) (ldb (byte 8 0) v))
   (1+ pos))
 
 (defun put-u16 (buf pos v)
   (declare (type (simple-array (unsigned-byte 8) (*)) buf)
-           (type fixnum pos))
+           (type fixnum pos v))
   (setf (aref buf pos)       (ldb (byte 8 8) v)
         (aref buf (+ pos 1)) (ldb (byte 8 0) v))
   (+ pos 2))
 
 (defun put-i16 (buf pos v)
+  (declare (type (simple-array (unsigned-byte 8) (*)) buf)
+           (type fixnum pos v))
   (put-u16 buf pos (ldb (byte 16 0) v)))
 
 (defun put-u32 (buf pos v)
   (declare (type (simple-array (unsigned-byte 8) (*)) buf)
-           (type fixnum pos))
+           (type fixnum pos)
+           (type (unsigned-byte 32) v))
   (setf (aref buf pos)       (ldb (byte 8 24) v)
         (aref buf (+ pos 1)) (ldb (byte 8 16) v)
         (aref buf (+ pos 2)) (ldb (byte 8 8) v)
@@ -193,9 +212,11 @@
   (+ pos 4))
 
 (defun round4 (n)
+  (declare (type (unsigned-byte 32) n))
   (logand (+ n 3) -4))
 
 (defun tag-to-string (tag)
+  (declare (type (unsigned-byte 32) tag))
   (let ((s (make-string 4)))
     (setf (schar s 0) (code-char (ldb (byte 8 24) tag))
           (schar s 1) (code-char (ldb (byte 8 16) tag))
@@ -223,22 +244,27 @@
                (setf sum (ldb (byte 32 0) (+ sum w)))))
     (when (plusp rem)
       (let ((tail 0))
+        (declare (type (unsigned-byte 32) tail))
         (dotimes (i rem)
           (setf tail (logior tail (ash (aref bytes (+ end i)) (* 8 (- 3 i))))))
         (setf sum (ldb (byte 32 0) (+ sum tail)))))
     sum))
+
+(declaim (ftype (function ((unsigned-byte 16))
+                          (values (unsigned-byte 16) (unsigned-byte 16) (unsigned-byte 16) &optional))
+                sfnt-search-params))
 
 (defun sfnt-search-params (num-tables)
   (declare (type (unsigned-byte 16) num-tables))
   (let* ((max-pow2 (if (plusp num-tables)
                        (ash 1 (1- (integer-length num-tables)))
                        1))
-         (search-range (* max-pow2 16))
+         (search-range (logand #xFFFF (* max-pow2 16)))
          (entry-selector (if (plusp num-tables)
                              (1- (integer-length max-pow2))
                              0))
-         (range-shift (- (* num-tables 16) search-range)))
-    (values search-range entry-selector (max 0 range-shift))))
+         (range-shift (logand #xFFFF (max 0 (- (* num-tables 16) search-range)))))
+    (values search-range entry-selector range-shift)))
 
 ;;; ============================================================================
 ;;; WOFF2 Directory Structures
@@ -262,10 +288,15 @@
   (flavor 0 :type (unsigned-byte 32))
   (table-indices #() :type (simple-array (unsigned-byte 16) (*))))
 
+(declaim (ftype (function (bstream (unsigned-byte 16))
+                          (values simple-vector (unsigned-byte 62) &optional))
+                read-woff2-table-directory))
+
 (defun read-woff2-table-directory (bs num-tables)
+  (declare (type bstream bs) (type (unsigned-byte 16) num-tables))
   (let ((entries (make-array num-tables))
         (src-offset 0))
-    (declare (type (unsigned-byte 64) src-offset))
+    (declare (type (unsigned-byte 62) src-offset))
     (dotimes (i num-tables)
       (let* ((flags (bs-u8 bs "WOFF2"))
              (tag-idx (logand flags #x3F))
@@ -294,6 +325,8 @@
                             orig-len)))
         (when (and (= tag +tag-loca+) transformed-p (not (zerop xform-len)))
           (woff-fail "loca" "transformed loca must have zero transformLength"))
+        (when (> src-offset #xFFFFFFFF)
+          (woff-fail (tag-to-string tag) "WOFF2 uncompressed stream offset overflow"))
         (setf (aref entries i)
               (make-woff2-table-entry :tag tag
                                       :flags flags
@@ -305,7 +338,12 @@
         (incf src-offset xform-len)))
     (values entries src-offset)))
 
+(declaim (ftype (function (bstream (unsigned-byte 16))
+                          (values (unsigned-byte 32) simple-vector &optional))
+                read-woff2-collection-directory))
+
 (defun read-woff2-collection-directory (bs num-total-tables)
+  (declare (type bstream bs) (type (unsigned-byte 16) num-total-tables))
   (let* ((version (bs-u32 bs "WOFF2"))
          (num-fonts (bs-255u16 bs "WOFF2")))
     (unless (or (= version #x00010000) (= version #x00020000))
@@ -333,14 +371,20 @@
 
 (declaim (inline with-sign bitmap-bit-p))
 (defun with-sign (flag val)
+  (declare (type fixnum flag val))
   (if (logbitp 0 flag) val (- val)))
 
 (defun bitmap-bit-p (bs idx)
+  (declare (type bstream bs) (type (unsigned-byte 16) idx))
   (let ((byte (aref (bstream-bytes bs) (+ (bstream-pos bs) (ash idx -3)))))
     (logbitp (- 7 (logand idx 7)) byte)))
 
+(declaim (ftype (function (bstream bstream) (values fixnum fixnum boolean &optional))
+                decode-triplet))
+
 (defun decode-triplet (flag-bs glyph-bs)
   "Decode one point (dx, dy, on-curve-p) from FLAG-BS and GLYPH-BS."
+  (declare (type bstream flag-bs glyph-bs))
   (let* ((raw (bs-u8 flag-bs "glyf"))
          (on-curve-p (not (logbitp 7 raw)))
          (f (logand raw #x7F))
@@ -379,9 +423,13 @@
                dy (with-sign (ash f -1) (+ (ash b3 8) b4))))))
     (values dx dy on-curve-p)))
 
+(declaim (ftype (function (bstream) (values (unsigned-byte 32) boolean &optional))
+                scan-composite-components))
+
 (defun scan-composite-components (comp-bs)
   "Scan composite glyph records starting at COMP-BS's current position.
 Return (VALUES byte-length have-instructions-p) and advance COMP-BS."
+  (declare (type bstream comp-bs))
   (let ((start (bstream-pos comp-bs))
         (have-instructions nil))
     (loop
@@ -397,14 +445,16 @@ Return (VALUES byte-length have-instructions-p) and advance COMP-BS."
                                  (t 0))))
           (bstream-sub comp-bs (+ arg-bytes xform-bytes) "glyf"))
         (unless (logbitp 5 flags)
-          (return (values (- (bstream-pos comp-bs) start) have-instructions)))))))
+          (return (values (the (unsigned-byte 32) (- (bstream-pos comp-bs) start))
+                          have-instructions)))))))
 
 (defun ensure-glyf-capacity (buf needed)
   (declare (type (simple-array (unsigned-byte 8) (*)) buf)
-           (type fixnum needed))
+           (type (integer 0 #.array-dimension-limit) needed))
   (if (<= needed (length buf))
       buf
-      (let ((new (make-array (max needed (* 2 (length buf)))
+      (let ((new (make-array (min (1- array-dimension-limit)
+                                  (max needed (* 2 (length buf))))
                              :element-type '(unsigned-byte 8)
                              :initial-element 0)))
         (replace new buf)
@@ -430,32 +480,46 @@ Return (VALUES byte-length have-instructions-p) and advance COMP-BS."
 ;;; The reconstructed 'glyf' table, grown as glyphs are added.
 (defstruct (glyf-out (:conc-name out-))
   (bytes nil :type (simple-array (unsigned-byte 8) (*)))
-  (pos 0 :type fixnum))
+  (pos 0 :type (integer 0 #.array-dimension-limit)))
 
 (declaim (inline out-u16 out-i16 out-u8 out-copy out-copy-stream s16))
 
 (defun out-reserve (out count)
+  (declare (type glyf-out out) (type (unsigned-byte 32) count))
   (setf (out-bytes out) (ensure-glyf-capacity (out-bytes out) (+ (out-pos out) count))))
 
-(defun out-u16 (out v) (setf (out-pos out) (put-u16 (out-bytes out) (out-pos out) v)))
-(defun out-i16 (out v) (setf (out-pos out) (put-i16 (out-bytes out) (out-pos out) v)))
+(defun out-u16 (out v)
+  (declare (type glyf-out out) (type fixnum v))
+  (setf (out-pos out) (put-u16 (out-bytes out) (out-pos out) v)))
+(defun out-i16 (out v)
+  (declare (type glyf-out out) (type fixnum v))
+  (setf (out-pos out) (put-i16 (out-bytes out) (out-pos out) v)))
 (defun out-u8 (out v)
   (declare (glyf-out out) (type (unsigned-byte 8) v))
   (setf (aref (out-bytes out) (out-pos out)) v)
   (incf (out-pos out)))
 
 (defun out-copy (out bytes start end)
+  (declare (type glyf-out out)
+           (type (simple-array (unsigned-byte 8) (*)) bytes)
+           (type (integer 0 #.array-dimension-limit) start end))
   (replace (out-bytes out) bytes :start1 (out-pos out) :start2 start :end2 end)
-  (incf (out-pos out) (- end start)))
+  (incf (out-pos out) (the (integer 0 #.array-dimension-limit) (- end start))))
 
 (defun out-copy-stream (out bs)
+  (declare (type glyf-out out) (type bstream bs))
   (out-copy out (bstream-bytes bs) (bstream-pos bs) (bstream-end bs)))
 
 (defun out-pad (out glyph-start)
   "Zero bytes up to a multiple of 4 from GLYPH-START."
-  (declare (glyf-out out) (fixnum glyph-start))
-  (loop repeat (- (round4 (- (out-pos out) glyph-start)) (- (out-pos out) glyph-start))
-        do (out-u8 out 0)))
+  (declare (glyf-out out) (type (integer 0 #.array-dimension-limit) glyph-start))
+  (let ((len (the (unsigned-byte 32) (- (out-pos out) glyph-start))))
+    (loop repeat (- (round4 len) len)
+          do (out-u8 out 0))))
+
+(declaim (ftype (function (glyf-streams glyf-out (unsigned-byte 16) t)
+                          (values (signed-byte 16) &optional))
+                write-composite-glyph))
 
 (defun write-composite-glyph (s out gid has-bbox)
   "Write composite glyph GID; return its xMin."
@@ -480,13 +544,17 @@ Return (VALUES byte-length have-instructions-p) and advance COMP-BS."
         (out-pad out start)
         xmin))))
 
+(declaim (ftype (function (glyf-streams (unsigned-byte 16) (integer 1 32767))
+                          (values (integer 1 #xFFFF) &optional))
+                read-contour-ends))
+
 (defun read-contour-ends (s gid n-contours)
   "Read the point counts of the N-CONTOURS contours of glyph GID into the
 end point buffer; return the total number of points."
-  (declare (glyf-streams s) (type (integer 1 32767) n-contours))
+  (declare (glyf-streams s) (type (unsigned-byte 16) gid) (type (integer 1 32767) n-contours))
   (when (> n-contours (length (gs-end-pts s)))
     (setf (gs-end-pts s) (make-array n-contours :element-type '(unsigned-byte 16))))
-  (loop with total = 0
+  (loop with total of-type (unsigned-byte 32) = 0
         for c below n-contours
         for npts = (bs-255u16 (gs-n-points s) "glyf")
         do (when (zerop npts)
@@ -495,18 +563,24 @@ end point buffer; return the total number of points."
            (when (> total #xFFFF)
              (woff-fail "glyf" "too many points in simple glyph ~D" gid))
            (setf (aref (gs-end-pts s) c) (1- total))
-        finally (return total)))
+        finally (return (the (integer 1 #xFFFF) total))))
 
 (defun s16 (v)
   "V wrapped to a signed 16-bit value."
   (declare (fixnum v))
   (let ((u (ldb (byte 16 0) v))) (if (logbitp 15 u) (- u 65536) u)))
 
+(declaim (ftype (function (glyf-streams (unsigned-byte 16) (integer 1 #xFFFF))
+                          (values (integer 0 #x1FFFE) (integer 0 #x1FFFE)
+                                  (signed-byte 16) (signed-byte 16)
+                                  (signed-byte 16) (signed-byte 16) &optional))
+                decode-simple-points))
+
 (defun decode-simple-points (s gid total-pts)
   "Decode the TOTAL-PTS points of simple glyph GID into TrueType flags and
 packed coordinates in the scratch buffers.  Return the lengths of the x and
 y coordinates, and the bounding box of the points."
-  (declare (glyf-streams s) (fixnum total-pts))
+  (declare (glyf-streams s) (type (unsigned-byte 16) gid) (type (integer 1 #xFFFF) total-pts))
   (when (> total-pts (length (gs-flags s)))
     (setf (gs-flags s) (make-array total-pts :element-type '(unsigned-byte 8))
           (gs-x-coords s) (make-array (* 2 total-pts) :element-type '(unsigned-byte 8))
@@ -520,9 +594,13 @@ y coordinates, and the bounding box of the points."
         (y-coords (gs-y-coords s))
         (flag-bs (gs-flag s))
         (glyph-bs (gs-glyph s)))
-    (declare (type fixnum x y xmin ymin xmax ymax x-len y-len))
+    (declare (type (signed-byte 16) x y xmin ymin xmax ymax)
+             (type (integer 0 #x1FFFE) x-len y-len))
     (flet ((coordinate (d coords len short-flags zero-flag)
-             (declare (fixnum d len) (type (simple-array (unsigned-byte 8) (*)) coords))
+             (declare (fixnum d)
+                      (type (integer 0 #x1FFFE) len)
+                      (type (unsigned-byte 8) short-flags zero-flag)
+                      (type (simple-array (unsigned-byte 8) (*)) coords))
              ;; The flag bits for delta D, after storing it at LEN of COORDS
              ;; as a byte, a word, or not at all; and the new length.
              (cond ((zerop d) (values zero-flag len))
@@ -549,19 +627,25 @@ y coordinates, and the bounding box of the points."
 
 (defun out-flags (out flags count)
   "Write COUNT point FLAGS, a run of equal flags as one with a repeat count."
-  (declare (glyf-out out) (type (simple-array (unsigned-byte 8) (*)) flags) (fixnum count))
+  (declare (glyf-out out) (type (simple-array (unsigned-byte 8) (*)) flags)
+           (type (integer 1 #xFFFF) count))
   (let ((i 0))
-    (declare (fixnum i))
+    (declare (type (integer 0 #x10000) i))
     (loop while (< i count)
           do (let* ((f (aref flags i))
                     (repeats (loop for j from (1+ i) below (min count (+ i 256))
                                    while (= (aref flags j) f)
                                    count t)))
+               (declare (type (integer 0 255) repeats))
                (cond ((plusp repeats)
                       (out-u8 out (logior f #x08))
                       (out-u8 out repeats))
                      (t (out-u8 out f)))
                (incf i (1+ repeats))))))
+
+(declaim (ftype (function (glyf-streams glyf-out (unsigned-byte 16) (integer 1 32767) t)
+                          (values (signed-byte 16) &optional))
+                write-simple-glyph))
 
 (defun write-simple-glyph (s out gid n-contours has-bbox)
   "Write simple glyph GID; return its xMin."
@@ -571,7 +655,9 @@ y coordinates, and the bounding box of the points."
         (start (out-pos out)))
     (multiple-value-bind (x-len y-len cxmin cymin cxmax cymax)
         (decode-simple-points s gid total-pts)
-      (flet ((bbox (computed) (if has-bbox (bs-i16 (gs-bbox s) "glyf") computed)))
+      (flet ((bbox (computed)
+               (declare (type (signed-byte 16) computed))
+               (if has-bbox (bs-i16 (gs-bbox s) "glyf") computed)))
         (let* ((xmin (bbox cxmin)) (ymin (bbox cymin))
                (xmax (bbox cxmax)) (ymax (bbox cymax))
                (instr-len (bs-255u16 (gs-glyph s) "glyf"))
@@ -591,10 +677,12 @@ y coordinates, and the bounding box of the points."
 
 (defun loca-bytes (offsets index-format)
   "The 'loca' table for glyph OFFSETS, short (INDEX-FORMAT 0) or long."
+  (declare (type (simple-array (unsigned-byte 32) (*)) offsets)
+           (type fixnum index-format))
   (let* ((short-p (zerop index-format))
          (bytes (make-array (* (length offsets) (if short-p 2 4)) :element-type '(unsigned-byte 8))))
     (loop for offset across offsets
-          for i from 0
+          for i of-type fixnum from 0
           do (if short-p
                  (let ((half (ash offset -1)))
                    (when (> half #xFFFF)
@@ -603,9 +691,15 @@ y coordinates, and the bounding box of the points."
                  (put-u32 bytes (* i 4) offset)))
     bytes))
 
+(declaim (ftype (function ((simple-array (unsigned-byte 8) (*)) woff2-table-entry woff2-table-entry)
+                          (values (simple-array (signed-byte 16) (*)) &optional))
+                reconstruct-glyf-and-loca))
+
 (defun reconstruct-glyf-and-loca (unpacked glyf-entry loca-entry)
   "Reconstruct transformed 'glyf' and 'loca' tables from UNPACKED.
 Returns an X-MINS vector of (signed-byte 16) for 'hmtx' reconstruction."
+  (declare (type (simple-array (unsigned-byte 8) (*)) unpacked)
+           (type woff2-table-entry glyf-entry loca-entry))
   (let* ((bs (make-bstream unpacked
                            (woff2-table-entry-src-offset glyf-entry)
                            (+ (woff2-table-entry-src-offset glyf-entry)
@@ -673,8 +767,17 @@ Returns an X-MINS vector of (signed-byte 16) for 'hmtx' reconstruction."
 ;;; WOFF2 Transformed 'hmtx' Reconstruction
 ;;; ============================================================================
 
+(declaim (ftype (function ((simple-array (unsigned-byte 8) (*))
+                           (simple-array (unsigned-byte 8) (*))
+                           fixnum (unsigned-byte 16))
+                          (values (simple-array (signed-byte 16) (*)) &optional))
+                extract-untransformed-xmins))
+
 (defun extract-untransformed-xmins (glyf-bytes loca-bytes index-format num-glyphs)
   "Extract xMin for each glyph from an untransformed 'glyf' and 'loca' pair."
+  (declare (type (simple-array (unsigned-byte 8) (*)) glyf-bytes loca-bytes)
+           (type fixnum index-format)
+           (type (unsigned-byte 16) num-glyphs))
   (let ((x-mins (make-array num-glyphs :element-type '(signed-byte 16) :initial-element 0))
         (glyf-fd (make-font-data glyf-bytes))
         (loca-fd (make-font-data loca-bytes)))
@@ -689,7 +792,9 @@ Returns an X-MINS vector of (signed-byte 16) for 'hmtx' reconstruction."
           (setf (aref x-mins gid) (font-data-read-i16 glyf-fd (+ off 2))))))))
 
 (defun reconstruct-hmtx (unpacked hmtx-entry num-glyphs num-h-metrics x-mins)
-  (declare (type (unsigned-byte 16) num-glyphs num-h-metrics)
+  (declare (type (simple-array (unsigned-byte 8) (*)) unpacked)
+           (type woff2-table-entry hmtx-entry)
+           (type (unsigned-byte 16) num-glyphs num-h-metrics)
            (type (or null (simple-array (signed-byte 16) (*))) x-mins))
   (when (or (zerop num-h-metrics) (> num-h-metrics num-glyphs))
     (woff-fail "hmtx" "invalid numberOfHMetrics ~D for ~D glyphs" num-h-metrics num-glyphs))
@@ -728,6 +833,8 @@ Returns an X-MINS vector of (signed-byte 16) for 'hmtx' reconstruction."
 (defun prepare-font-tables (unpacked table-list)
   "Materialize table byte arrays for TABLE-LIST (a list of WOFF2-TABLE-ENTRY
 belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
+  (declare (type (simple-array (unsigned-byte 8) (*)) unpacked)
+           (type list table-list))
   (let ((glyf-entry (find +tag-glyf+ table-list :key #'woff2-table-entry-tag))
         (loca-entry (find +tag-loca+ table-list :key #'woff2-table-entry-tag))
         (hmtx-entry (find +tag-hmtx+ table-list :key #'woff2-table-entry-tag))
@@ -737,6 +844,7 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
         (x-mins nil))
     ;; Copy untransformed tables first (if not already materialized by a shared font)
     (dolist (e table-list)
+      (declare (type woff2-table-entry e))
       (when (and (not (woff2-table-entry-transformed-p e))
                  (null (woff2-table-entry-bytes e)))
         (let* ((start (woff2-table-entry-src-offset e))
@@ -763,36 +871,54 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
                (null (woff2-table-entry-bytes hmtx-entry)))
       (unless (and hhea-entry maxp-entry)
         (woff-fail "hmtx" "transformed hmtx requires hhea and maxp tables"))
-      (let* ((hhea-fd (make-font-data (woff2-table-entry-bytes hhea-entry)))
-             (maxp-fd (make-font-data (woff2-table-entry-bytes maxp-entry)))
+      (let* ((hhea-bytes (or (woff2-table-entry-bytes hhea-entry)
+                             (woff-fail "hmtx" "missing hhea bytes")))
+             (maxp-bytes (or (woff2-table-entry-bytes maxp-entry)
+                             (woff-fail "hmtx" "missing maxp bytes")))
+             (hhea-fd (make-font-data hhea-bytes))
+             (maxp-fd (make-font-data maxp-bytes))
              (num-h-metrics (font-data-read-u16 hhea-fd 34))
              (num-glyphs (font-data-read-u16 maxp-fd 4)))
         (when (and (null x-mins) glyf-entry loca-entry head-entry)
-          (let* ((head-fd (make-font-data (woff2-table-entry-bytes head-entry)))
+          (let* ((head-bytes (or (woff2-table-entry-bytes head-entry)
+                                 (woff-fail "hmtx" "missing head bytes")))
+                 (glyf-bytes (or (woff2-table-entry-bytes glyf-entry)
+                                 (woff-fail "hmtx" "missing glyf bytes")))
+                 (loca-bytes (or (woff2-table-entry-bytes loca-entry)
+                                 (woff-fail "hmtx" "missing loca bytes")))
+                 (head-fd (make-font-data head-bytes))
                  (index-format (font-data-read-i16 head-fd 50)))
             (setf x-mins (extract-untransformed-xmins
-                          (woff2-table-entry-bytes glyf-entry)
-                          (woff2-table-entry-bytes loca-entry)
+                          glyf-bytes
+                          loca-bytes
                           index-format
                           num-glyphs))))
         (reconstruct-hmtx unpacked hmtx-entry num-glyphs num-h-metrics x-mins)))))
 
 (defun assemble-single-sfnt (flavor entries)
   "Assemble a single SFNT byte vector from ENTRIES (vector of WOFF2-TABLE-ENTRY)."
-  (let* ((sorted (sort (copy-seq entries) #'< :key #'woff2-table-entry-tag))
+  (declare (type (unsigned-byte 32) flavor)
+           (type simple-vector entries))
+  (let* ((sorted (the simple-vector (sort (copy-seq entries) #'< :key #'woff2-table-entry-tag)))
          (num-tables (length sorted))
          (dir-size (+ 12 (* 16 num-tables)))
          (data-offset dir-size)
          (head-entry nil))
-    (loop for e across sorted
-          do (setf (woff2-table-entry-dst-offset e) data-offset)
+    (declare (type (unsigned-byte 16) num-tables)
+             (type (unsigned-byte 62) data-offset)
+             (type (or null woff2-table-entry) head-entry))
+    (loop for e of-type woff2-table-entry across sorted
+          do (when (> data-offset #xFFFFFFFF)
+               (woff-fail "WOFF2" "SFNT offset overflow"))
+             (setf (woff2-table-entry-dst-offset e) data-offset)
              (incf data-offset (round4 (woff2-table-entry-dst-length e)))
              (when (= (woff2-table-entry-tag e) +tag-head+)
                (setf head-entry e)))
     (let ((out (make-array data-offset :element-type '(unsigned-byte 8) :initial-element 0))
           (p 0)
           (total-checksum 0))
-      (declare (type (unsigned-byte 32) total-checksum))
+      (declare (type fixnum p)
+               (type (unsigned-byte 32) total-checksum))
       (multiple-value-bind (search-range entry-selector range-shift)
           (sfnt-search-params num-tables)
         (setf p (put-u32 out p flavor)
@@ -800,8 +926,9 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
               p (put-u16 out p search-range)
               p (put-u16 out p entry-selector)
               p (put-u16 out p range-shift)))
-      (loop for e across sorted
-            do (let* ((bytes (woff2-table-entry-bytes e))
+      (loop for e of-type woff2-table-entry across sorted
+            do (let* ((bytes (or (woff2-table-entry-bytes e)
+                                 (woff-fail "WOFF2" "missing table bytes")))
                       (dst-off (woff2-table-entry-dst-offset e))
                       (dst-len (woff2-table-entry-dst-length e))
                       (csum (compute-table-checksum bytes 0 dst-len)))
@@ -821,22 +948,34 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
 
 (defun assemble-ttc-collection (ttc-version fonts entries)
   "Assemble a TrueType Collection (TTC) byte vector from FONTS and ENTRIES."
+  (declare (type (unsigned-byte 32) ttc-version)
+           (type simple-vector fonts entries))
   (let* ((num-fonts (length fonts))
          ;; Force version 1.0 header layout (or 2.0 with null DSIG fields)
          (ttc-header-size (+ 12 (* 4 num-fonts) (if (= ttc-version #x00020000) 12 0)))
          (font-dir-offsets (make-array num-fonts :element-type '(unsigned-byte 32)))
          (offset ttc-header-size))
+    (declare (type (unsigned-byte 16) num-fonts)
+             (type (unsigned-byte 62) offset))
     (dotimes (f num-fonts)
+      (when (> offset #xFFFFFFFF)
+        (woff-fail "WOFF2" "TTC directory offset overflow"))
       (setf (aref font-dir-offsets f) offset)
-      (incf offset (+ 12 (* 16 (length (woff2-collection-font-table-indices (aref fonts f)))))))
-    (loop for e across entries
-          do (let ((len (woff2-table-entry-dst-length e)))
+      (let ((cfont (the woff2-collection-font (aref fonts f))))
+        (incf offset (+ 12 (* 16 (length (woff2-collection-font-table-indices cfont)))))))
+    (loop for e of-type woff2-table-entry across entries
+          do (when (> offset #xFFFFFFFF)
+               (woff-fail "WOFF2" "TTC table offset overflow"))
+             (let ((len (woff2-table-entry-dst-length e))
+                   (bytes (or (woff2-table-entry-bytes e)
+                              (woff-fail "WOFF2" "missing table bytes"))))
                (setf (woff2-table-entry-dst-offset e) offset
                      (woff2-table-entry-checksum e)
-                     (compute-table-checksum (woff2-table-entry-bytes e) 0 len))
+                     (compute-table-checksum bytes 0 len))
                (incf offset (round4 len))))
     (let ((out (make-array offset :element-type '(unsigned-byte 8) :initial-element 0))
           (p 0))
+      (declare (type fixnum p))
       (setf p (put-u32 out p +ttcf-signature+)
             p (put-u32 out p ttc-version)
             p (put-u32 out p num-fonts))
@@ -848,29 +987,35 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
               p (put-u32 out p 0)))
       ;; Write each font's Offset Table and Table Records (sorted by tag)
       (dotimes (f num-fonts)
-        (let* ((cfont (aref fonts f))
+        (let* ((cfont (the woff2-collection-font (aref fonts f)))
                (indices (woff2-collection-font-table-indices cfont))
-               (f-entries (sort (map 'vector (lambda (idx) (aref entries idx)) indices)
-                                #'< :key #'woff2-table-entry-tag))
-               (ntables (length f-entries))
-               (fp (aref font-dir-offsets f)))
-          (multiple-value-bind (search-range entry-selector range-shift)
-              (sfnt-search-params ntables)
-            (setf fp (put-u32 out fp (woff2-collection-font-flavor cfont))
-                  fp (put-u16 out fp ntables)
-                  fp (put-u16 out fp search-range)
-                  fp (put-u16 out fp entry-selector)
-                  fp (put-u16 out fp range-shift)))
-          (loop for e across f-entries
-                do (setf fp (put-u32 out fp (woff2-table-entry-tag e))
-                         fp (put-u32 out fp (woff2-table-entry-checksum e))
-                         fp (put-u32 out fp (woff2-table-entry-dst-offset e))
-                         fp (put-u32 out fp (woff2-table-entry-dst-length e))))))
+               (ntables (length indices))
+               (raw-entries (make-array ntables)))
+          (declare (type (unsigned-byte 16) ntables))
+          (dotimes (k ntables)
+            (setf (aref raw-entries k) (aref entries (aref indices k))))
+          (let ((f-entries (the simple-vector (sort raw-entries #'< :key #'woff2-table-entry-tag)))
+                (fp (aref font-dir-offsets f)))
+            (declare (type fixnum fp))
+            (multiple-value-bind (search-range entry-selector range-shift)
+                (sfnt-search-params ntables)
+              (setf fp (put-u32 out fp (woff2-collection-font-flavor cfont))
+                    fp (put-u16 out fp ntables)
+                    fp (put-u16 out fp search-range)
+                    fp (put-u16 out fp entry-selector)
+                    fp (put-u16 out fp range-shift)))
+            (loop for e of-type woff2-table-entry across f-entries
+                  do (setf fp (put-u32 out fp (woff2-table-entry-tag e))
+                           fp (put-u32 out fp (woff2-table-entry-checksum e))
+                           fp (put-u32 out fp (woff2-table-entry-dst-offset e))
+                           fp (put-u32 out fp (woff2-table-entry-dst-length e)))))))
       ;; Copy shared table bodies
-      (loop for e across entries
-            do (replace out (woff2-table-entry-bytes e)
-                        :start1 (woff2-table-entry-dst-offset e)
-                        :end2 (woff2-table-entry-dst-length e)))
+      (loop for e of-type woff2-table-entry across entries
+            do (let ((bytes (or (woff2-table-entry-bytes e)
+                                (woff-fail "WOFF2" "missing table bytes"))))
+                 (replace out bytes
+                          :start1 (woff2-table-entry-dst-offset e)
+                          :end2 (woff2-table-entry-dst-length e))))
       out)))
 
 ;;; ============================================================================
@@ -909,26 +1054,27 @@ or pathname) and return a FONT-DATA over the reconstructed SFNT/TTC octets."
         (multiple-value-bind (ttc-version collection-fonts)
             (if (= flavor +ttcf-signature+)
                 (read-woff2-collection-directory bs num-tables)
-                (values nil nil))
+                (values 0 nil))
           (let* ((comp-sub (bstream-sub bs total-comp-size "WOFF2"))
-                 (unpacked (handler-case
-                               (decompress:decompress (bstream-bytes comp-sub)
-                                                       :size-hint uncompressed-size
-                                                       :start (bstream-pos comp-sub)
-                                                       :end (bstream-end comp-sub))
-                             (decompress:decompression-error (c)
-                               (woff-fail "WOFF2" "Brotli decompression failed: ~A" c)))))
+                 (unpacked (the (simple-array (unsigned-byte 8) (*))
+                                (handler-case
+                                    (decompress:decompress (bstream-bytes comp-sub)
+                                                           :size-hint uncompressed-size
+                                                           :start (bstream-pos comp-sub)
+                                                           :end (bstream-end comp-sub))
+                                  (decompress:decompression-error (c)
+                                    (woff-fail "WOFF2" "Brotli decompression failed: ~A" c))))))
             (unless (= (length unpacked) uncompressed-size)
               (woff-fail "WOFF2" "decompressed size ~D does not match expected ~D"
                          (length unpacked) uncompressed-size))
             (if collection-fonts
                 (progn
-                  (loop for cfont across collection-fonts
+                  (loop for cfont of-type woff2-collection-font across collection-fonts
                         do (prepare-font-tables
                             unpacked
                             (loop for idx across (woff2-collection-font-table-indices cfont)
                                   collect (aref entries idx))))
                   (make-font-data (assemble-ttc-collection ttc-version collection-fonts entries)))
                 (progn
-                  (prepare-font-tables unpacked (coerce entries 'list))
+                  (prepare-font-tables unpacked (loop for e across entries collect e))
                   (make-font-data (assemble-single-sfnt flavor entries))))))))))
