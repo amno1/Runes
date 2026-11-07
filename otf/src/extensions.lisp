@@ -7,6 +7,9 @@
 
 (in-package #:runes/otf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+(declaim (sb-ext:muffle-conditions sb-ext:compiler-note))
+
 (export '(+tuple-index-embedded-peak-tuple+ +tuple-index-intermediate-region+
           +tuple-index-private-point-numbers+ +tuple-index-tuple-index-mask+
           +tuple-variation-count-shared-point-numbers+ +tuple-variation-count-count-mask+
