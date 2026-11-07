@@ -311,10 +311,17 @@ if it has no instructions."
                (abs-start (+ (runes/otf:font-data-offset fd) p 2)))
           (values abs-start (+ abs-start instr-len))))))
 
-(declaim (inline scale-funit round-26-6))
+(declaim (inline scale-funit scale-unrounded round-26-6))
 (defun scale-funit (u scale)
   (declare (type (signed-byte 32) u scale))
   (runes/otf/tt-hint::mul-fix u scale))
+(defun scale-unrounded (funits delta scale)
+  "FUNITS font units moved by the 16.16 DELTA, scaled by SCALE to 26.6 the way
+FreeType scales the points of a variation instance."
+  (declare (type (signed-byte 32) funits delta scale))
+  (let ((u (+ (* 64 funits) (ash (+ delta #x200) -10))))
+    (declare (type (signed-byte 40) u))
+    (ash (+ (runes/otf/tt-hint::mul-fix (runes/otf/tt-hint::s32 u) scale) 32) -6)))
 (defun round-26-6 (x)
   (declare (type (signed-byte 32) x))
   (logand (+ x 32) -64))
@@ -696,35 +703,48 @@ variation deltas added to XS and YS, as DECODE-SIMPLE-GLYPH-INTO-ZONE does."
     (setf z (runes/otf/tt-hint:ensure-zone-capacity
              (runes/otf/tt-hint::eng-glyph eng) (+ n 4) contour-count :n-glyph-points n))
     (decode-simple-glyph-into-zone fd pos contour-count z n scale)
-    (when data
-      ;; A variable font's glyph: the deltas move the font unit points, which
-      ;; are scaled again.  The phantom points go after the glyph's own.
+    (when (plusp (length coords))
+      ;; A glyph of a variable font's instance: the deltas, if it has any, move
+      ;; the font unit points, which are scaled again.  The phantom points go
+      ;; after the glyph's own.
       (let ((ux (runes/otf/tt-hint:zone-unscaled-x z))
             (uy (runes/otf/tt-hint:zone-unscaled-y z))
             (ox (runes/otf/tt-hint:zone-orig-x z))
             (oy (runes/otf/tt-hint:zone-orig-y z))
             (cx (runes/otf/tt-hint:zone-cur-x z))
-            (cy (runes/otf/tt-hint:zone-cur-y z)))
+            (cy (runes/otf/tt-hint:zone-cur-y z))
+            (sc nil))
         (declare (type fixed-array ux uy ox oy cx cy))
-        (dotimes (k 4)
-          (setf (aref ux (+ n k)) (aref phantom (* 2 k))
-                (aref uy (+ n k)) (aref phantom (1+ (* 2 k)))))
-        (let ((sc (gvar-scratch-for (runes/otf/tt-hint::eng-gvar-scratch eng) (+ n 4))))
+        (when data
+          (dotimes (k 4)
+            (setf (aref ux (+ n k)) (aref phantom (* 2 k))
+                  (aref uy (+ n k)) (aref phantom (1+ (* 2 k)))))
+          (setf sc (gvar-scratch-for (runes/otf/tt-hint::eng-gvar-scratch eng) (+ n 4)))
           (setf (runes/otf/tt-hint::eng-gvar-scratch eng) sc)
-          (when (zone-glyph-deltas data coords ux uy (+ n 4)
-                                   (runes/otf/tt-hint:zone-contours z) contour-count sc)
+          (unless (zone-glyph-deltas data coords ux uy (+ n 4)
+                                     (runes/otf/tt-hint:zone-contours z) contour-count sc)
+            (setf sc nil)))
+        ;; As FreeType's TT_Vary_Apply_Glyph_Deltas: the unscaled points the
+        ;; program sees move by the deltas rounded to whole font units, but
+        ;; the scaled ones come from the font units with the deltas to a 64th
+        ;; (its `unrounded' points), for every glyph of a variation instance.
+        (if sc
             (let ((dx (gs-dx sc)) (dy (gs-dy sc)))
               (declare (type fixed-array dx dy))
               (dotimes (i n)
-                (let ((x (+ (aref ux i) (the fixnum (fixed-round (aref dx i)))))
-                      (y (+ (aref uy i) (the fixnum (fixed-round (aref dy i))))))
-                  (setf (aref ux i) x
-                        (aref uy i) y
-                        (aref ox i) (scale-funit x scale)
-                        (aref oy i) (scale-funit y scale)
+                (let ((x0 (aref ux i)) (y0 (aref uy i)))
+                  (setf (aref ux i) (+ x0 (the fixnum (fixed-round (aref dx i))))
+                        (aref uy i) (+ y0 (the fixnum (fixed-round (aref dy i))))
+                        (aref ox i) (scale-unrounded x0 (aref dx i) scale)
+                        (aref oy i) (scale-unrounded y0 (aref dy i) scale)
                         (aref cx i) (aref ox i)
                         (aref cy i) (aref oy i))))
-              (setf phantom (add-phantom-array-deltas phantom dx dy n)))))))
+              (setf phantom (add-phantom-array-deltas phantom dx dy n)))
+            (dotimes (i n)
+              (setf (aref ox i) (scale-unrounded (aref ux i) 0 scale)
+                    (aref oy i) (scale-unrounded (aref uy i) 0 scale)
+                    (aref cx i) (aref ox i)
+                    (aref cy i) (aref oy i))))))
     (let ((ux (runes/otf/tt-hint:zone-unscaled-x z))
           (uy (runes/otf/tt-hint:zone-unscaled-y z))
           (ox (runes/otf/tt-hint:zone-orig-x z))
