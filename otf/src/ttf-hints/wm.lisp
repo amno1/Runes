@@ -166,6 +166,9 @@
   ;; restores the post-prep copies before the next glyph only if it is.
   (tables-dirty nil :type boolean)
   (scratch nil)
+  ;; :REQUEST while a caller wants the points of a simple glyph left in the glyph
+  ;; zone instead of the hint buffer; :DONE once they are.
+  (direct nil)
   (gvar-scratch nil)                    ; work arrays of the variation deltas
   (tables nil)
   (rotated-p nil :type boolean)
