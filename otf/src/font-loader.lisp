@@ -4,6 +4,8 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defclass table-info ()
   ((name :initarg :name :reader name)
    (offset :initarg :offset :reader offset)
@@ -168,6 +170,7 @@ them, 0 where the table is too short for it."
   (gethash (tag->number-string tag) (tables font-loader)))
 
 (defun tag->number-string (num)
+  (declare (type (unsigned-byte 32) num))
   (let ((s (make-string 4)))
     (setf (char s 0) (code-char (ldb (byte 8 24) num))
           (char s 1) (code-char (ldb (byte 8 16) num))
@@ -237,25 +240,34 @@ them, 0 where the table is too short for it."
     :preferred-subfamily
     :compatible-full
     :sample-text))
+(declaim (type simple-vector *name-identifiers*))
 
+(declaim (ftype (function (symbol) (values fixnum &optional)) name-identifier-id))
 (defun name-identifier-id (symbol)
-  (let ((id (position symbol *name-identifiers*)))
+  (let ((id (position symbol *name-identifiers* :test #'eq)))
     (if id id (error "Unknown NAME identifier: ~S" symbol))))
 
 (defmethod find-name-entry (platform-id encoding-id language-id name-id
                             (font-loader font-loader))
-  (loop for name-entry across (name-entries font-loader)
-        when (and (or (null platform-id) (= (platform-id name-entry) platform-id))
-                  (or (null encoding-id) (= (encoding-id name-entry) encoding-id))
-                  (or (null language-id) (= (language-id name-entry) language-id))
-                  (or (null name-id) (= (name-id name-entry) name-id)))
-        return name-entry))
+  (declare (type (or null fixnum) platform-id encoding-id language-id name-id))
+  (let ((entries (the simple-vector (name-entries font-loader))))
+    (loop for name-entry across entries
+          when (and (or (null platform-id)
+                        (= (the (values fixnum &optional) (platform-id name-entry)) platform-id))
+                    (or (null encoding-id)
+                        (= (the (values fixnum &optional) (encoding-id name-entry)) encoding-id))
+                    (or (null language-id)
+                        (= (the (values fixnum &optional) (language-id name-entry)) language-id))
+                    (or (null name-id)
+                        (= (the (values fixnum &optional) (name-id name-entry)) name-id)))
+          return name-entry)))
 
+(declaim (ftype (function (t) (values (integer 0 5) &optional)) name-entry-rank))
 (defun name-entry-rank (entry)
   "Preference rank of ENTRY, lower is better."
-  (let ((plat (platform-id entry))
-        (enc (encoding-id entry))
-        (lang (language-id entry)))
+  (let ((plat (the (values fixnum &optional) (platform-id entry)))
+        (enc (the (values fixnum &optional) (encoding-id entry)))
+        (lang (the (values fixnum &optional) (language-id entry))))
     (cond ((and (= plat 3) (= enc 1) (= lang #x0409)) 0) ; Windows US-English
           ((and (= plat 3) (= enc 10) (= lang #x0409)) 1)
           ((= plat 3) 2)
@@ -266,13 +278,15 @@ them, 0 where the table is too short for it."
 (defmethod name-entry-value (name-designator (font-loader font-loader))
   (let ((name-id (etypecase name-designator
                    (keyword (name-identifier-id name-designator))
-                   (integer name-designator)))
+                   (fixnum name-designator)))
+        (entries (the simple-vector (name-entries font-loader)))
         (best nil)
-        (best-rank nil))
-    (loop for entry across (name-entries font-loader)
-          when (= (name-id entry) name-id)
+        (best-rank 6))
+    (declare (type fixnum name-id best-rank))
+    (loop for entry across entries
+          when (= (the (values fixnum &optional) (name-id entry)) name-id)
             do (let ((rank (name-entry-rank entry)))
-                 (when (or (null best-rank) (< rank best-rank))
+                 (when (< rank best-rank)
                    (setf best entry best-rank rank))))
     (when best
       (value best))))
@@ -295,58 +309,72 @@ them, 0 where the table is too short for it."
   (:method (code-point (font-loader font-loader))
     (let ((fn (cmap-lookup-fn font-loader)))
       (if fn
-          (funcall fn code-point)
+          (the (values fixnum &optional) (funcall (the function fn) code-point))
           0))))
 
+(declaim (ftype (function (font-loader) (values simple-vector &optional))
+                build-inverse-character-map))
 (defun build-inverse-character-map (font-loader)
-  (let ((inv (make-array (glyph-count font-loader) :initial-element 0))
+  (let ((inv (make-array (the (values fixnum &optional) (glyph-count font-loader))
+                         :initial-element 0))
         (fn (cmap-mappings-fn font-loader)))
+    (declare (type simple-vector inv))
     (when fn
-      (funcall fn (lambda (cp gid)
-                    (when (and (< 0 gid (length inv))
-                               (or (zerop (aref inv gid)) (< cp (aref inv gid))))
-                      (setf (aref inv gid) cp)))))
+      (funcall (the function fn)
+               (lambda (cp gid)
+                 (declare (type fixnum cp gid))
+                 (when (< 0 gid (length inv))
+                   (let ((cur (the fixnum (aref inv gid))))
+                     (when (or (zerop cur) (< cp cur))
+                       (setf (aref inv gid) cp)))))))
     inv))
 
 (defgeneric font-index-code-point (glyph-index font-loader)
   (:method (glyph-index (font-loader font-loader))
+    (declare (type fixnum glyph-index))
     (let ((inv (or (inverse-character-map font-loader)
                    (setf (inverse-character-map font-loader)
                          (build-inverse-character-map font-loader)))))
-      (if (and inv (< glyph-index (length inv)))
-          (let ((cp (aref inv glyph-index)))
+      (declare (type (or null simple-vector) inv))
+      (if (and inv (< -1 glyph-index (length inv)))
+          (let ((cp (the fixnum (aref inv glyph-index))))
             (if (plusp cp) cp 0))
           0))))
 
 (defmethod glyph-exists-p (char-or-code (font-loader font-loader))
   (let ((cp (if (characterp char-or-code) (char-code char-or-code) char-or-code)))
-    (not (zerop (code-point-font-index cp font-loader)))))
+    (not (zerop (the (values fixnum &optional)
+                     (code-point-font-index cp font-loader))))))
 
 (defmethod index-glyph (index (font-loader font-loader))
-  (unless (and (integerp index) (< -1 index (glyph-count font-loader)))
-    (error 'unsupported-value
-           :description "Glyph index out of range"
-           :actual-value index
-           :expected-values (list (format nil "0..~D" (1- (glyph-count font-loader))))))
-  ;; The vector of glyph objects is made when the first is asked for: code that
-  ;; works with glyph indices only (hinting a glyph, say) never needs it.
-  (let ((cache (or (glyph-cache font-loader)
-                   (setf (glyph-cache font-loader)
-                         (make-array (glyph-count font-loader) :initial-element nil)))))
-    (or (aref cache index)
-        (setf (aref cache index)
-              (make-instance 'glyph
-                             :font-loader font-loader
-                             :font-index index)))))
+  (let ((count (the (values fixnum &optional) (glyph-count font-loader))))
+    (unless (and (typep index 'fixnum) (< -1 index count))
+      (error 'unsupported-value
+             :description "Glyph index out of range"
+             :actual-value index
+             :expected-values (list (format nil "0..~D" (1- count)))))
+    ;; The vector of glyph objects is made when the first is asked for: code that
+    ;; works with glyph indices only (hinting a glyph, say) never needs it.
+    (let ((cache (or (glyph-cache font-loader)
+                     (setf (glyph-cache font-loader)
+                           (make-array count :initial-element nil)))))
+      (declare (type simple-vector cache))
+      (or (aref cache index)
+          (setf (aref cache index)
+                (make-instance 'glyph
+                               :font-loader font-loader
+                               :font-index index))))))
 
 (defmethod find-glyph (char-or-code (font-loader font-loader))
   (let* ((cp (if (characterp char-or-code) (char-code char-or-code) char-or-code))
-         (index (code-point-font-index cp font-loader)))
+         (index (the (values fixnum &optional)
+                     (code-point-font-index cp font-loader))))
     (index-glyph index font-loader)))
 
 (defmethod all-kerning-pairs ((font-loader font-loader))
   (let ((pairs '()))
     (maphash (lambda (k v)
+               (declare (type (unsigned-byte 32) k))
                (let ((g1-idx (ldb (byte 16 16) k))
                      (g2-idx (ldb (byte 16 0) k)))
                  (push (list (index-glyph g1-idx font-loader)
