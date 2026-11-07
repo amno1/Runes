@@ -79,7 +79,10 @@ def median_of_batch_minima(batches, index, name):
 def main():
     env = dict(os.environ)
     if "--sbcl" in sys.argv:
-        env["SBCL_BIN"] = sys.argv[sys.argv.index("--sbcl") + 1]
+        at = sys.argv.index("--sbcl") + 1
+        if at >= len(sys.argv):
+            sys.exit("usage: bench3x3.py [--sbcl PATH]: --sbcl needs a path")
+        env["SBCL_BIN"] = sys.argv[at]
     sbcl = env.get("SBCL_BIN", "/home/arthur/repos/sb-simd-512/run-sbcl.sh")
     print(f"SBCL: {sbcl}")
     print("=" * 80)
@@ -108,9 +111,9 @@ def main():
     print("\n" + "=" * 86)
     print("      RESULTS (MEDIAN OF THE 3 LOWEST RUNS OF EACH 3-RUN SET), ms and microseconds per glyph")
     print("=" * 86)
-    rule = "+----------------------+------------+--------------+--------------+----------+"
+    rule = "+----------------------+------------+----------------------+----------------------+----------+"
     print(rule)
-    print("| Benchmark            | Operations |  FreeType    |  runes/otf   | runes/FT |")
+    print("| Benchmark            | Operations |      FreeType        |      runes/otf       | runes/FT |")
     print(rule)
     for name in COMPARED + ONLY_RUNES:
         n = ops.get(name, 0)
@@ -118,7 +121,7 @@ def main():
         rn = median_of_batch_minima(batches, 1, name)
         per = lambda t: f"{t:7.2f} ms {1000 * t / n:5.2f}us" if t is not None and n else "N/A"
         ratio = f"{rn / ft:7.2f}x" if ft and rn else "      -"
-        print(f"| {name:<20} | {n:>10,} | {per(ft):>12} | {per(rn):>12} | {ratio:>8} |")
+        print(f"| {name:<20} | {n:>10,} | {per(ft):>20} | {per(rn):>20} | {ratio:>8} |")
     print(rule)
     print(bench_disclosure.banner([f"SBCL: {sbcl}"] + meta))
 

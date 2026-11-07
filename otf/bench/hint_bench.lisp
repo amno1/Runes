@@ -18,9 +18,13 @@
   (merge-pathnames "../tests/fonts/" (make-pathname :name nil :type nil :defaults *load-truename*)))
 
 (defparameter *dejavu*
-  (find-if #'probe-file '("/usr/share/fonts/TTF/DejaVuSans.ttf"
-                          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-                          "/usr/share/fonts/dejavu/DejaVuSans.ttf")))
+  ;; DEJAVU, set by run_comparison.sh, names the font FreeType is timed on.
+  (find-if (lambda (path) (and path (probe-file path)))
+           (list (sb-ext:posix-getenv "DEJAVU")
+                 "/usr/share/fonts/TTF/DejaVuSans.ttf"
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+                 "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+                 "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf")))
 
 (defparameter *repetitions* 20)
 

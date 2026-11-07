@@ -52,7 +52,10 @@ int main(int argc, char **argv) {
   const char *dejavu = argc > 1 ? argv[1] : "/usr/share/fonts/TTF/DejaVuSans.ttf";
   const char *liberation = argc > 2 ? argv[2] : "LiberationSans-Regular.ttf";
   FT_Library lib;
-  FT_Init_FreeType(&lib);
+  if (FT_Init_FreeType(&lib)) {
+    fprintf(stderr, "FT_Init_FreeType failed\n");
+    return 1;
+  }
   FT_Int major, minor, patch;
   FT_Library_Version(lib, &major, &minor, &patch);
   /* Lines starting with # are read by bench3x3.py for its disclosure. */
