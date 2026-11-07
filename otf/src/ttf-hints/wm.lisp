@@ -24,6 +24,7 @@
   (top 0 :type fixnum))
 
 (defun make-value-stack (max-elements)
+  (declare (type (unsigned-byte 32) max-elements))
   (%make-value-stack :values (make-array max-elements :element-type 's32 :initial-element 0)))
 
 (declaim (inline vs-len vs-clear vs-push vs-pop vs-peek))
@@ -184,6 +185,8 @@
 
 (defun make-tt-engine (&key (max-stack 256) (max-storage 64) (max-fdefs 64)
                             (max-idefs 8) (max-twilight 32) (cvt-len 0))
+  (declare (type (unsigned-byte 32) max-stack max-storage max-fdefs max-idefs max-twilight
+                 cvt-len))
   (let ((call-stack (make-array +max-call-stack+))
         (fdefs (make-array (max max-fdefs 64)))
         (idefs (make-array (max max-idefs 8))))
@@ -302,7 +305,7 @@
   (declare (tt-engine eng) (type program-id prog-id) (fixnum start)
            (optimize (speed 3) (safety 1)))
   (let* ((bytes (svref (eng-programs eng) prog-id))
-         (end (or end (length bytes)))
+         (end (or end (length (the (simple-array (unsigned-byte 8) (*)) bytes))))
          (executed 0))
     (declare (fixnum end executed))
     (when (> end start)
