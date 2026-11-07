@@ -109,23 +109,52 @@
   (round-shift-14 (+ (* ax bx) (* ay by))))
 
 (defun normalize-f2dot14 (dx dy)
-  "Normalize vector (DX, DY) into a 2.14 unit vector (values ux uy)."
+  "Normalize vector (DX, DY) into a 2.14 unit vector (values ux uy), as
+FreeType's FT_Vector_NormLen does (a Newton iteration in 32-bit integer
+arithmetic), so that the result agrees with its to the last bit."
   (declare (s32 dx dy) (optimize (speed 3) (safety 0)))
-  (if (and (zerop dx) (zerop dy))
-      (values #x4000 0)
-      (let* ((ax (abs dx))
-             (ay (abs dy))
-             (len-sq (+ (* ax ax) (* ay ay))))
-        (if (zerop len-sq)
-            (values #x4000 0)
-            (let* ((shift (max 0 (- 14 (floor (integer-length len-sq) 2))))
-                   (sx (ash dx shift))
-                   (sy (ash dy shift))
-                   (norm (isqrt (+ (* sx sx) (* sy sy)))))
-              (if (zerop norm)
-                  (values #x4000 0)
-                  (values (s32 (truncate (* sx #x4000) norm))
-                          (s32 (truncate (* sy #x4000) norm)))))))))
+  (flet ((u32 (v) (ldb (byte 32 0) v)))
+    (declare (inline u32))
+    (let ((sx (if (minusp dx) -1 1))
+          (sy (if (minusp dy) -1 1))
+          (ux (u32 (abs dx)))
+          (uy (u32 (abs dy))))
+      (declare (fixnum sx sy) (type (unsigned-byte 32) ux uy))
+      (cond
+        ((zerop ux)
+         (values 0 (if (plusp uy) (truncate (* sy #x10000) 4) 0)))
+        ((zerop uy)
+         (values (truncate (* sx #x10000) 4) 0))
+        (t
+         (flet ((len-of (ux uy)
+                  (declare (type (unsigned-byte 32) ux uy))
+                  (u32 (if (> ux uy) (+ ux (ash uy -1)) (+ uy (ash ux -1))))))
+           (let* ((len (len-of ux uy))
+                  (lz (- 32 (integer-length len)))
+                  (shift (- lz (+ 15 (if (>= len (ash #xAAAAAAAA (- lz))) 1 0)))))
+             (declare (type (unsigned-byte 32) len) (fixnum lz shift))
+             (if (plusp shift)
+                 (setf ux (u32 (ash ux shift))
+                       uy (u32 (ash uy shift))
+                       len (len-of ux uy))
+                 (setf ux (ash ux shift)
+                       uy (ash uy shift)
+                       len (ash len shift)))
+             (let* ((b (s32 (- #x10000 len)))
+                    (x (s32 ux))
+                    (y (s32 uy))
+                    (u 0) (v 0))
+               (declare (s32 b x y) (type (unsigned-byte 32) u v))
+               (loop
+                 (setf u (u32 (+ x (ash (s32 (* x b)) -16)))
+                       v (u32 (+ y (ash (s32 (* y b)) -16))))
+                 (let* ((z (truncate (s32 (- (s32 (u32 (+ (* u u) (* v v)))))) #x200))
+                        (z (truncate (s32 (* z (ash (s32 (+ #x10000 b)) -8))) #x10000)))
+                   (declare (s32 z))
+                   (setf b (s32 (+ b z)))
+                   (when (<= z 0) (return))))
+               (values (truncate (s32 (* (s32 u) sx)) 4)
+                       (truncate (s32 (* (s32 v) sy)) 4))))))))))
 
 ;;; ============================================================================
 ;;; TrueType Rounding Engine (round.rs)
@@ -202,6 +231,12 @@
 (defconstant +point-touched-x+ #x02)
 (defconstant +point-touched-y+ #x04)
 (defconstant +point-touched+   (logior +point-touched-x+ +point-touched-y+))
+
+;;; Phantom points: the last four points of the glyph zone, pp1 to pp4.  In
+;;; backward compatibility mode the hinted glyph's phantom points are the
+;;; unrounded scaled ones, so pp1.x may be a fraction of a pixel; whoever
+;;; returns the coordinates of a hinted outline must move it by -pp1.x
+;;; (SHIFT-OUTLINE-BY-PP1 in scaler.lisp).
 
 (defstruct (tt-zone (:conc-name zone-))
   (unscaled-x (make-array 0 :element-type 's32) :type (simple-array s32 (*)))

@@ -195,9 +195,9 @@
               (aref (zone-cur-y z0) pt)  y)))
     (let ((org-proj (zone-project-cur gs z0 pt)))
       (when round-p
-        ;; If |distance - org_proj| >= control_value_cutin, fall back to org_proj;
+        ;; If |distance - org_proj| > control_value_cutin, fall back to org_proj;
         ;; then round once according to current round state.
-        (when (>= (abs (f26- distance org-proj)) (gs-control-value-cutin gs))
+        (when (> (abs (f26- distance org-proj)) (gs-control-value-cutin gs))
           (setf distance org-proj))
         (setf distance (round-according-to-state (gs-round-state gs) distance 0)))
       (move-zone-point gs z0 z0-id pt (f26- distance org-proj) :touch t))
@@ -225,8 +225,7 @@
          ;; Out of the twilight zone the original distance is measured on the
          ;; unscaled outline and scaled afterwards, as FreeType does.
          (org-dist (if (or (zerop z1-id) (zerop (gs-zp0 gs)))
-                       (f26- (zone-dual-project-orig gs z1 pt)
-                             (zone-dual-project-orig gs z0 rp0))
+                       (zone-dual-project-orig-diff gs z1 pt z0 rp0)
                        (mul-fix (zone-dual-project-unscaled gs z1 pt z0 rp0)
                                 (eng-unscaled-scale eng)))))
     (when (and (plusp (gs-single-width-cutin gs))
@@ -240,8 +239,7 @@
                     org-dist)))
       (when keep-min-p
         (setf dist (apply-min-distance gs org-dist dist)))
-      (let ((cur-dist (f26- (zone-project-cur gs z1 pt)
-                            (zone-project-cur gs z0 rp0))))
+      (let ((cur-dist (zone-project-cur-diff gs z1 pt z0 rp0)))
         (move-zone-point gs z1 z1-id pt (f26- dist cur-dist) :touch t)))
     (setf (gs-rp1 gs) (gs-rp0 gs)
           (gs-rp2 gs) pt)
@@ -278,18 +276,16 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
               (aref (zone-orig-y z1) pt) (f26+ (aref (zone-orig-y z0) rp0) dy)
               (aref (zone-cur-x z1) pt)  (aref (zone-orig-x z1) pt)
               (aref (zone-cur-y z1) pt)  (aref (zone-orig-y z1) pt))))
-    (let ((org-dist (f26- (zone-dual-project-orig gs z1 pt)
-                          (zone-dual-project-orig gs z0 rp0)))
-          (cur-dist (f26- (zone-project-cur gs z1 pt)
-                          (zone-project-cur gs z0 rp0))))
+    (let ((org-dist (zone-dual-project-orig-diff gs z1 pt z0 rp0))
+          (cur-dist (zone-project-cur-diff gs z1 pt z0 rp0)))
       (when (and (gs-auto-flip gs) (not (eq (minusp org-dist) (minusp cvt-dist))))
         (setf cvt-dist (f26-neg cvt-dist)))
       ;; Bit 2 (round-p) controls CVT cut-in and rounding; when round-p is NIL,
       ;; MIRP uses cvt-dist unrounded (NOT org-dist!).
       (let ((dist (if round-p
                       (let ((d (if (and (= (gs-zp0 gs) (gs-zp1 gs))
-                                        (>= (abs (f26- cvt-dist org-dist))
-                                            (gs-control-value-cutin gs)))
+                                        (> (abs (f26- cvt-dist org-dist))
+                                           (gs-control-value-cutin gs)))
                                    org-dist
                                    cvt-dist)))
                         (round-according-to-state (gs-round-state gs) d 0))
@@ -364,18 +360,30 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
          (fx (gs-free-x gs))
          (fy (gs-free-y gs)))
     (setf (gs-loop gs) 1)
-    (let ((dx (mul-f2dot14 dist fx))
-          (dy (mul-f2dot14 dist fy)))
+    ;; As FreeType and skrifa: in backward compatibility mode only points
+    ;; already touched in y (or any point, in a composite glyph, when the
+    ;; freedom vector has a y component) are shifted, and not after IUP.
+    (let* ((dx (mul-f2dot14 dist fx))
+           (dy (mul-f2dot14 dist fy))
+           (bc (gs-backward-compatibility gs))
+           (did-iup (and (gs-did-iup-x gs) (gs-did-iup-y gs)))
+           (twilight (or (zerop (gs-zp0 gs)) (zerop (gs-zp1 gs)) (zerop z2-id))))
       (dotimes (i count)
         (let ((pt (vs-pop s)))
           (zone-check-point z2 pt)
-          (when (not (zerop fx))
-            (when (or (zerop z2-id) (not (gs-backward-compatibility gs)))
-              (setf (aref (zone-cur-x z2) pt) (f26+ (aref (zone-cur-x z2) pt) dx)))
-            (setf (aref (zone-flags z2) pt) (logior (aref (zone-flags z2) pt) +point-touched-x+)))
-          (when (not (zerop fy))
-            (setf (aref (zone-cur-y z2) pt) (f26+ (aref (zone-cur-y z2) pt) dy)
-                  (aref (zone-flags z2) pt) (logior (aref (zone-flags z2) pt) +point-touched-y+))))))))
+          (when (or (not bc)
+                    twilight
+                    (and (not did-iup)
+                         (or (and (eng-composite-p eng) (not (zerop fy)))
+                             (logtest (aref (zone-flags z2) pt) +point-touched-y+))))
+            (when (not (zerop fx))
+              (unless bc
+                (setf (aref (zone-cur-x z2) pt) (f26+ (aref (zone-cur-x z2) pt) dx)))
+              (setf (aref (zone-flags z2) pt) (logior (aref (zone-flags z2) pt) +point-touched-x+)))
+            (when (not (zerop fy))
+              (unless (and bc did-iup)
+                (setf (aref (zone-cur-y z2) pt) (f26+ (aref (zone-cur-y z2) pt) dy)))
+              (setf (aref (zone-flags z2) pt) (logior (aref (zone-flags z2) pt) +point-touched-y+)))))))))
 
 (defun op-ip (eng)
   "IP: Interpolate Point by the last relative stretch.  Out of the twilight
@@ -391,27 +399,23 @@ does; they only matter as a ratio."
          (rp1 (gs-rp1 gs))
          (rp2 (gs-rp2 gs))
          (twilight (or (zerop (gs-zp0 gs)) (zerop (gs-zp1 gs)) (zerop z2-id)))
-         (cur-rp1 (zone-project-cur gs z0 rp1))
-         (cur-rp2 (zone-project-cur gs z1 rp2))
-         (org-rp1 (if twilight (zone-dual-project-orig gs z0 rp1) 0))
          (old-range (if twilight
-                        (f26- (zone-dual-project-orig gs z1 rp2) org-rp1)
+                        (zone-dual-project-orig-diff gs z1 rp2 z0 rp1)
                         (zone-dual-project-unscaled gs z1 rp2 z0 rp1)))
-         (cur-range (f26- cur-rp2 cur-rp1)))
+         (cur-range (zone-project-cur-diff gs z1 rp2 z0 rp1)))
     (setf (gs-loop gs) 1)
     ;; Like FreeType, do nothing when the loop count exceeds the stack.
     (when (< (vs-len s) count) (setf count 0))
     (dotimes (i count)
       (let* ((pt (vs-pop s))
-             (cur-pt (zone-project-cur gs z2 pt))
+             (cur-dist (zone-project-cur-diff gs z2 pt z0 rp1))
              (org-dist (if twilight
-                           (f26- (zone-dual-project-orig gs z2 pt) org-rp1)
+                           (zone-dual-project-orig-diff gs z2 pt z0 rp1)
                            (zone-dual-project-unscaled gs z2 pt z0 rp1)))
              (new-dist (cond ((zerop org-dist) 0)
                              ((zerop old-range) org-dist)
                              (t (mul-div org-dist cur-range old-range)))))
-        (move-zone-point gs z2 z2-id pt (f26- (f26+ cur-rp1 new-dist) cur-pt)
-                         :touch t)))))
+        (move-zone-point gs z2 z2-id pt (f26- new-dist cur-dist) :touch t)))))
 
 (defun iup-interpolate-contour (orig unscaled cur flags touch-mask start end)
   "IUP over the contour START..END of one axis: move the untouched points
@@ -552,9 +556,13 @@ between two touched points comes from the unscaled coordinates."
              (delta (decode-delta-arg gs ppem arg band-offset)))
         (when delta
           (zone-check-point z0 pt)
+          ;; As FreeType and skrifa: in backward compatibility mode only before
+          ;; both IUPs, and only points touched in y, or any point of a
+          ;; composite glyph when the freedom vector has a y component.
           (when (or (not (gs-backward-compatibility gs))
-                    (and (zerop (gs-free-x gs))
-                         (logtest (aref (zone-flags z0) pt) +point-touched-y+)))
+                    (and (not (and (gs-did-iup-x gs) (gs-did-iup-y gs)))
+                         (or (and (eng-composite-p eng) (not (zerop (gs-free-y gs))))
+                             (logtest (aref (zone-flags z0) pt) +point-touched-y+))))
             (move-zone-point gs z0 z0-id pt delta :touch t)))))))
 
 (defun op-deltac (eng band-offset)
@@ -639,9 +647,7 @@ between two touched points comes from the unscaled coordinates."
           (let* ((p1 (vs-pop s)) (p2 (vs-pop s))
                  (z1-id (gs-zp1 gs)) (z0-id (gs-zp0 gs))
                  (z1 (eng-zone eng z1-id)) (z0 (eng-zone eng z0-id))
-                 (dist (ash (f26- (zone-project-cur gs z0 p2)
-                                  (zone-project-cur gs z1 p1))
-                            -1)))
+                 (dist (ash (zone-project-cur-diff gs z0 p2 z1 p1) -1)))
             (move-zone-point gs z1 z1-id p1 dist :touch t)
             (move-zone-point gs z0 z0-id p2 (f26-neg dist) :touch t)))
          (#x28 nil)
@@ -677,7 +683,7 @@ between two touched points comes from the unscaled coordinates."
                       (aref (zone-orig-y z1) pt) (f26+ (aref (zone-orig-y z0) rp0) dy)
                       (aref (zone-cur-x z1) pt)  (aref (zone-orig-x z1) pt)
                       (aref (zone-cur-y z1) pt)  (aref (zone-orig-y z1) pt))))
-            (let ((cur-dist (f26- (zone-project-cur gs z1 pt) (zone-project-cur gs z0 rp0))))
+            (let ((cur-dist (zone-project-cur-diff gs z1 pt z0 rp0)))
               (move-zone-point gs z1 z1-id pt (f26- dist cur-dist) :touch t))
             (setf (gs-rp1 gs) (gs-rp0 gs) (gs-rp2 gs) pt)
             (when (= op #x3B) (setf (gs-rp0 gs) pt))))
@@ -686,11 +692,10 @@ between two touched points comes from the unscaled coordinates."
                 (rp0 (gs-rp0 gs)))
             (setf (gs-loop gs) 1)
             (when (< (vs-len s) count) (setf count 0))
-            (let ((rp0-proj (zone-project-cur gs z0 rp0)))
-              (dotimes (i count)
-                (let* ((pt (vs-pop s))
-                       (pt-proj (zone-project-cur gs z1 pt)))
-                  (move-zone-point gs z1 z1-id pt (f26- rp0-proj pt-proj) :touch t))))))
+            (dotimes (i count)
+              (let ((pt (vs-pop s)))
+                (move-zone-point gs z1 z1-id pt (zone-project-cur-diff gs z0 rp0 z1 pt)
+                                 :touch t)))))
          (#x3D (setf (rs-mode (gs-round-state gs)) :to-double-grid))
          ((#x3E #x3F) (op-miap eng (= op #x3F)))
          (#x40 (push-bytes eng (fetch-u8 eng)))
@@ -723,8 +728,8 @@ between two touched points comes from the unscaled coordinates."
           (let* ((p1 (vs-pop s)) (p2 (vs-pop s))
                  (z0 (eng-zp0 eng)) (z1 (eng-zp1 eng)))
             (vs-push s (if (= op #x49)
-                           (f26- (zone-project-cur gs z0 p2) (zone-project-cur gs z1 p1))
-                           (f26- (zone-dual-project-orig gs z0 p2) (zone-dual-project-orig gs z1 p1))))))
+                           (zone-project-cur-diff gs z0 p2 z1 p1)
+                           (zone-dual-project-orig-diff gs z0 p2 z1 p1)))))
          (#x4B (vs-push s (eng-ppem eng)))
          (#x4C (vs-push s (eng-point-size eng)))
          (#x4D (setf (gs-auto-flip gs) t))
@@ -808,7 +813,14 @@ between two touched points comes from the unscaled coordinates."
             ;; reported, the others are.
             (when (logbitp 6 sel) (setf res (logior res (ash 1 13))))
             (when (logbitp 10 sel) (setf res (logior res (ash 1 17))))
-            (when (logbitp 11 sel) (setf res (logior res (ash 1 18))))
+            ;; Selector bit 11, symmetrical smoothing, is reported above 20 ppem
+            ;; only.  This is found by experiment against FreeType 2.15, not
+            ;; documented: with it Liberation Sans' outlines match FreeType's
+            ;; at every size from 8
+            ;; to 40 ppem, and without it they differ from 21 ppem up (or, if
+            ;; it is always reported, at every size below).
+            (when (and (logbitp 11 sel) (> (eng-ppem eng) 20))
+              (setf res (logior res (ash 1 18))))
             (when (logbitp 12 sel) (setf res (logior res (ash 1 19))))
             (vs-push s res)))
          (#x89 (op-idef eng))

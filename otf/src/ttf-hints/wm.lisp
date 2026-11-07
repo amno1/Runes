@@ -36,8 +36,12 @@
 (defun vs-pop (s)
   (declare (value-stack s) (optimize (speed 3) (safety 0)))
   (let ((top (vs-top s)))
+    ;; Like FreeType's interpreter when it is not pedantic, an empty stack
+    ;; yields 0 where a hinting program pops too much.  DUP, SWAP, ROLL,
+    ;; CINDEX and MINDEX below are still strict: FreeType does not fail on
+    ;; those either, but no font tried needs it.
     (when (<= top 0)
-      (hint-fail 'tt-hint-stack-underflow "TrueType value stack underflow"))
+      (return-from vs-pop 0))
     (let ((new-top (1- top)))
       (setf (vs-top s) new-top)
       (aref (vs-values s) new-top))))
@@ -146,6 +150,7 @@
   ;; Scale of unscaled coordinates to pixels: SCALE for a simple glyph,
   ;; 1.0 for a composite one, whose unscaled points are already scaled.
   (unscaled-scale 0 :type s32)
+  (composite-p nil :type boolean)
   (rotated-p nil :type boolean)
   (stretched-p nil :type boolean)
   (axis-coords #() :type simple-vector)

@@ -41,6 +41,27 @@
   (zone-check-point zone pt)
   (dual-project-point gs (aref (zone-orig-x zone) pt) (aref (zone-orig-y zone) pt)))
 
+(defun zone-project-cur-diff (gs zone1 pt1 zone2 pt2)
+  "The distance from PT2 of ZONE2 to PT1 of ZONE1, current positions, along
+the projection vector: the difference projected, as FreeType and skrifa do,
+which rounds once, not the difference of two projected positions."
+  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2))
+  (zone-check-point zone1 pt1)
+  (zone-check-point zone2 pt2)
+  (project-point gs
+                 (f26- (aref (zone-cur-x zone1) pt1) (aref (zone-cur-x zone2) pt2))
+                 (f26- (aref (zone-cur-y zone1) pt1) (aref (zone-cur-y zone2) pt2))))
+
+(defun zone-dual-project-orig-diff (gs zone1 pt1 zone2 pt2)
+  "As ZONE-PROJECT-CUR-DIFF, for the original positions and the dual
+projection vector."
+  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2))
+  (zone-check-point zone1 pt1)
+  (zone-check-point zone2 pt2)
+  (dual-project-point gs
+                      (f26- (aref (zone-orig-x zone1) pt1) (aref (zone-orig-x zone2) pt2))
+                      (f26- (aref (zone-orig-y zone1) pt1) (aref (zone-orig-y zone2) pt2))))
+
 (defun zone-dual-project-unscaled (gs zone1 pt1 zone2 pt2)
   "The unscaled (font unit) distance from PT2 of ZONE2 to PT1 of ZONE1 along
 the dual projection vector."

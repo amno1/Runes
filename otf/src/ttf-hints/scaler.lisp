@@ -319,8 +319,19 @@
                   (aref cx idx) (round-26-6 spx)
                   (aref cy idx) (round-26-6 spy)
                   (aref zf idx) 0)))
+        ;; The two modes differ here: out of backward compatibility mode the
+        ;; program starts from rounded phantom points (and keeps what it makes
+        ;; of them), in it from the same ones but leaves the originals as
+        ;; scaled, which is what is returned (see SHIFT-OUTLINE-BY-PP1).
+        (unless (runes/otf/tt-hint::gs-backward-compatibility
+                 (runes/otf/tt-hint::eng-default-gs eng))
+          (dotimes (k 4)
+            (assert (and (zerop (logand 63 (aref cx (+ n k))))
+                         (zerop (logand 63 (aref cy (+ n k)))))
+                    () "phantom point ~D is not rounded" k)))
         (let ((instr (read-simple-glyph-instructions fd pos contour-count)))
-          (setf (runes/otf/tt-hint::eng-unscaled-scale eng) scale)
+          (setf (runes/otf/tt-hint::eng-unscaled-scale eng) scale
+                (runes/otf/tt-hint::eng-composite-p eng) nil)
           (run-glyph-bytecode-in-zone eng instr))
         (let ((base (fill-pointer (op-xs out))))
           (dotimes (i n)
@@ -329,10 +340,15 @@
             (vector-push-extend (logtest (aref zf i) runes/otf/tt-hint:+point-on-curve+) (op-on out)))
           (loop for end across ends
                 do (vector-push-extend (+ base end) (op-ends out))))
-        (vector (cons (aref cx n)       (aref cy n))
-                (cons (aref cx (+ n 1)) (aref cy (+ n 1)))
-                (cons (aref cx (+ n 2)) (aref cy (+ n 2)))
-                (cons (aref cx (+ n 3)) (aref cy (+ n 3))))))))
+        ;; In backward compatibility mode the program does not change the
+        ;; bearings and advance: the phantom points stay as scaled, not
+        ;; rounded (FreeType, skrifa).
+        (let ((bc (runes/otf/tt-hint::gs-backward-compatibility (runes/otf/tt-hint::eng-gs eng))))
+          (flet ((phantom-point (k)
+                   (if bc
+                       (cons (aref ox (+ n k)) (aref oy (+ n k)))
+                       (cons (aref cx (+ n k)) (aref cy (+ n k))))))
+            (vector (phantom-point 0) (phantom-point 1) (phantom-point 2) (phantom-point 3))))))))
 
 (defun load-hinted-composite-points (loader eng gid pos phantom out coords)
   (let* ((fd (font-data loader))
@@ -349,9 +365,11 @@
       (when dx
         (setf phantom (add-phantom-deltas phantom dx dy (- count 4)))))
     (let ((scaled-phantom
+            ;; Not rounded yet: the program's original positions are these,
+            ;; and its current ones the rounded.
             (map 'vector (lambda (p)
-                           (cons (round-26-6 (scale-funit (car p) scale))
-                                 (round-26-6 (scale-funit (cdr p) scale))))
+                           (cons (scale-funit (car p) scale)
+                                 (scale-funit (cdr p) scale)))
                  phantom)))
       (loop for component in components
             for i from 0
@@ -400,6 +418,14 @@
                            do (incf (aref xs j) ox)
                               (incf (aref ys j) oy))))))
       (let ((instr (read-composite-glyph-instructions fd pos)))
+        (when (and (zerop (length instr))
+                   (not (runes/otf/tt-hint::gs-backward-compatibility
+                         (runes/otf/tt-hint::eng-default-gs eng))))
+          ;; No program to move them: the phantom points are rounded, as
+          ;; they are before one runs.
+          (map-into scaled-phantom
+                    (lambda (p) (cons (round-26-6 (car p)) (round-26-6 (cdr p))))
+                    scaled-phantom))
         (when (plusp (length instr))
           (let* ((n (- (fill-pointer (op-xs out)) point-base))
                  (total (+ n 4))
@@ -431,24 +457,43 @@
                     (py (cdr (aref scaled-phantom k))))
                 (setf (aref ux idx) px (aref uy idx) py
                       (aref ox idx) px (aref oy idx) py
-                      (aref cx idx) px (aref cy idx) py
+                      (aref cx idx) (round-26-6 px) (aref cy idx) (round-26-6 py)
                       (aref zf idx) 0)))
             ;; The points of a composite glyph are scaled already.
-            (setf (runes/otf/tt-hint::eng-unscaled-scale eng) #x10000)
+            (setf (runes/otf/tt-hint::eng-unscaled-scale eng) #x10000
+                  (runes/otf/tt-hint::eng-composite-p eng) t)
             (run-glyph-bytecode-in-zone eng instr)
             (dotimes (k n)
               (setf (aref (op-xs out) (+ point-base k)) (aref cx k)
                     (aref (op-ys out) (+ point-base k)) (aref cy k)
                     (aref (op-on out) (+ point-base k))
                     (logtest (aref zf k) runes/otf/tt-hint:+point-on-curve+)))
-            (dotimes (k 4)
-              (setf (aref scaled-phantom k)
-                    (cons (aref cx (+ n k)) (aref cy (+ n k))))))))
+            ;; As for a simple glyph, the program leaves them alone in backward
+            ;; compatibility mode.
+            (unless (runes/otf/tt-hint::gs-backward-compatibility (runes/otf/tt-hint::eng-gs eng))
+              (dotimes (k 4)
+                (setf (aref scaled-phantom k)
+                      (cons (aref cx (+ n k)) (aref cy (+ n k)))))))))
       scaled-phantom)))
 
 ;;; ============================================================================
 ;;; 4. Public High-Level & Test Harness APIs
 ;;; ============================================================================
+
+(defun shift-outline-by-pp1 (xs phantom)
+  "Move the x coordinates XS (26.6 pixels) of a hinted outline so that its
+first phantom point, in PHANTOM, is at 0, as FreeType does.
+
+Every consumer that returns the coordinates of a hinted glyph has to do this:
+in backward compatibility mode the phantom points are not rounded, so
+pp1.x is usually not 0 (xMin - lsb is not 0 for some glyphs) and the points
+as loaded are off by it.  The hinted advance does not need it, as it is the
+difference of two phantom points."
+  (let ((pp1x (car (aref phantom 0))))
+    (unless (zerop pp1x)
+      (dotimes (i (length xs))
+        (decf (aref xs i) pp1x))))
+  xs)
 
 (defun hint-outline-26dot6 (loader gid ppem &key coords)
   "Hint glyph GID of LOADER at PPEM and return raw F26Dot6 coordinates for
@@ -461,6 +506,7 @@ point-by-point comparison against FreeType's FT_Outline:
         (out (make-outline-points)))
     (with-pooled-tt-engine (eng loader ppem coords-vec)
       (let ((phantom (load-hinted-glyph-points loader eng gid out coords-vec)))
+        (shift-outline-by-pp1 (op-xs out) phantom)
         (values (copy-seq (op-xs out))
                 (copy-seq (op-ys out))
                 (copy-seq (op-on out))
@@ -495,7 +541,7 @@ in pixel coordinates (where 1.0 is one pixel)."))
         (let ((coords (or (loader-gvar-coords loader) #()))
               (out (make-outline-points)))
           (with-pooled-tt-engine (eng loader ppem coords)
-            (load-hinted-glyph-points loader eng gid out coords))
+            (shift-outline-by-pp1 (op-xs out) (load-hinted-glyph-points loader eng gid out coords)))
           (dotimes (i (length (op-xs out)))
             (setf (aref (op-xs out) i) (f26dot6->pixels (aref (op-xs out) i))
                   (aref (op-ys out) i) (f26dot6->pixels (aref (op-ys out) i))))
@@ -514,7 +560,7 @@ commands in pixel coordinates."))
 
 (defgeneric hinted-advance-width (glyph ppem)
   (:documentation "Return the hinted advance width of GLYPH at PPEM pixels per em,
-in pixels, from its hinted phantom points."))
+in whole pixels, from its hinted phantom points."))
 
 (defmethod hinted-advance-width ((glyph glyph) ppem)
   (let ((loader (font-loader glyph))
@@ -525,4 +571,5 @@ in pixels, from its hinted phantom points."))
               (out (make-outline-points)))
           (with-pooled-tt-engine (eng loader ppem coords)
             (let ((phantom (load-hinted-glyph-points loader eng gid out coords)))
-              (f26dot6->pixels (- (car (aref phantom 1)) (car (aref phantom 0))))))))))
+              ;; Whole pixels, as FreeType's hinted advance.
+              (f26dot6->pixels (round-26-6 (- (car (aref phantom 1)) (car (aref phantom 0)))))))))))

@@ -41,6 +41,11 @@
     (load (merge-pathnames "woff-test.lisp" this-dir))
     (uiop:symbol-call :runes/otf/woff-test :run-woff-tests)
 
+    ;; 7. TrueType hinting against FreeType
+    (format t "~%--- 7. Running TrueType Hinting Tests (hint-test.lisp) ---~%")
+    (load (merge-pathnames "hint-test.lisp" this-dir))
+    (uiop:symbol-call :runes/otf/hint-test :run-hint-tests)
+
     (format t "~%========================================================~%")
     (format t "ALL TEST SUITES PASSED CLEANLY!~%")
     (format t "========================================================~%")
