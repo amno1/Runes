@@ -16,13 +16,31 @@
              (not (find-package "SB-SIMD-AVX512F")))
     (ignore-errors (require :sb-simd)))
   (when (find-package "SB-SIMD-AVX512F")
-    (pushnew :zpb-avx512 *features*)))
+    (pushnew :zpb-avx512 *features*)
+    ;; The glyph decoder also needs the byte permute and the widening of
+    ;; bytes to 32-bit lanes, which the fork has since it exposes them.
+    (when (and (find-package "SB-SIMD-AVX512VBMI")
+               (find-package "SB-SIMD-AVX512BW")
+               (find-symbol "S32.16-FROM-U8.16" "SB-SIMD-AVX512F")
+               (find-symbol "U8.64-PERMUTE" "SB-SIMD-AVX512VBMI"))
+      (pushnew :zpb-avx512-decode *features*))))
 
 (sb-ext:defglobal **avx512** nil
   "True if the processor running this has the AVX-512 instructions used here.")
 
+(sb-ext:defglobal **avx512-decode** nil
+  "True if the processor has the instructions the glyph decoder uses: AVX-512
+F, DQ, BW and VBMI.")
+
 #+zpb-avx512
-(setf **avx512** (and (sb-simd-internals:avx512f-supported-p) t))
+(setf **avx512** (and (sb-simd-internals:avx512f-supported-p)
+                      (sb-simd-internals:avx512dq-supported-p) t))
+
+#+zpb-avx512-decode
+(setf **avx512-decode** (and **avx512**
+                             (sb-simd-internals:avx512bw-supported-p)
+                             (sb-simd-internals:avx512vbmi-supported-p)
+                             t))
 
 (deftype i32-array () '(simple-array (signed-byte 32) (*)))
 
@@ -86,3 +104,117 @@ bits of the source as the high ones: FIXED-FROM-INT), for i below N."
           do (setf (aref dest i) (sb-c::mask-signed-field 32 (ash (aref source i) 16)))
              (incf i))
     nil))
+
+
+(declaim (inline mul-fix-1))
+(defun mul-fix-1 (a b)
+  "A times B rounded half away from zero as FreeType's FT_MulFix, wrapped to 32 bits."
+  (declare (type (signed-byte 32) a b) (optimize (speed 3) (safety 0)))
+  (let ((ab (* a b)))
+    (sb-c::mask-signed-field 32 (ash (+ ab #x8000 (ash ab -63)) -16))))
+
+(defun mul-fix-into (out1 out2 source factor n)
+  "OUT1[i] = OUT2[i] = SOURCE[i] times FACTOR as FreeType's FT_MulFix, for i
+below N.  With AVX-512 the 32x32 to 64 bit products of eight points are made
+by one instruction, and the sixteen results put together again."
+  (declare (type i32-array out1 out2 source) (type (signed-byte 32) factor) (fixnum n)
+           (optimize (speed 3) (safety 0)))
+  (let ((i 0))
+    (declare (fixnum i))
+    #+zpb-avx512
+    (when (and **avx512** (>= n 16))
+      (let ((f (sb-simd-avx512f:s64.8-broadcast factor))
+            (half (sb-simd-avx512f:s64.8-broadcast #x8000))
+            (low (sb-simd-avx512f:s64.8-broadcast #xFFFFFFFF)))
+        (flet ((rounded (p)
+                 ;; (p + 0x8000 + (p >> 63)) >> 16
+                 (sb-simd-avx512f:s64.8-shifta
+                  (sb-simd-avx512f:s64.8+ (sb-simd-avx512f:s64.8+ p half)
+                                          (sb-simd-avx512f:s64.8-shifta p 63))
+                  16)))
+          (declare (inline rounded))
+          (loop while (<= (+ i 16) n)
+                do (let* ((u (sb-simd-avx512f::s64.8!-from-p512
+                              (sb-simd-avx512f:s32.16-aref source i)))
+                          ;; The even-numbered points are the low halves of the
+                          ;; 64-bit lanes, the odd ones the high halves.
+                          (even (rounded (sb-simd-avx512dq:s64.8-mul u f)))
+                          (odd (rounded (sb-simd-avx512dq:s64.8-mul
+                                         (sb-simd-avx512f:s64.8-shifta u 32) f)))
+                          (both (sb-simd-avx512f::s32.16!-from-p512
+                                 (sb-simd-avx512f:s64.8-or
+                                  (sb-simd-avx512f:s64.8-and even low)
+                                  (sb-simd-avx512f:s64.8-shiftl odd 32)))))
+                     (setf (sb-simd-avx512f:s32.16-aref out1 i) both
+                           (sb-simd-avx512f:s32.16-aref out2 i) both))
+                   (incf i 16)))))
+    (loop while (< i n)
+          do (let ((v (mul-fix-1 (aref source i) factor)))
+               (setf (aref out1 i) v
+                     (aref out2 i) v))
+             (incf i))
+    nil))
+
+#+zpb-avx512-decode
+(progn
+  (defmacro %v+ (a b) `(sb-simd-avx512f:s32.16+ ,a ,b))
+  (defmacro %v- (a b) `(sb-simd-avx512f:s32.16- ,a ,b))
+  (defmacro %vand (a b) `(sb-simd-avx512f:s32.16-and ,a ,b))
+  (defmacro %vor (a b) `(sb-simd-avx512f:s32.16-or ,a ,b))
+  (defmacro %vxor (a b) `(sb-simd-avx512f:s32.16-xor ,a ,b))
+  (defmacro %vshl (a n) `(sb-simd-avx512f:s32.16-shiftl ,a ,n))
+  (defmacro %vshr (a n) `(sb-simd-avx512f:s32.16-shiftr ,a ,n))
+  (defmacro %vsar (a n) `(sb-simd-avx512f:s32.16-shifta ,a ,n))
+  (defmacro %bc (n) `(sb-simd-avx512f:s32.16-broadcast ,n))
+
+  (defmacro %prefix-sum (x zero)
+    "The inclusive running sums of the sixteen lanes of X: shifted copies
+added, by 1, 2, 4 and 8 lanes (VALIGND with zeros brought in)."
+    `(let* ((x ,x)
+            (x (%v+ x (sb-simd-avx512f:s32.16-alignr x ,zero 15)))
+            (x (%v+ x (sb-simd-avx512f:s32.16-alignr x ,zero 14)))
+            (x (%v+ x (sb-simd-avx512f:s32.16-alignr x ,zero 12)))
+            (x (%v+ x (sb-simd-avx512f:s32.16-alignr x ,zero 8))))
+       x))
+
+  (defmacro decode-axis-block (bytes q flags j out carry cell short-bit same-bit mask-flags)
+    "Decode sixteen coordinates of one axis of a simple glyph: the flags at
+FLAGS from J, the coordinate bytes of BYTES from Q, where each is a byte
+(SHORT-BIT; its sign from SAME-BIT), the previous value (SAME-BIT without
+SHORT-BIT) or a big-endian word.  The running values, from CARRY, go to OUT from
+J; CELL (sixteen 32-bit integers) gets the byte offsets after each point, so
+its last element is the number of bytes used.  With MASK-FLAGS the flags are cut
+to their low bit.  Q must have 64 bytes in BYTES.
+
+The length of each point's coordinate is 1 for a short one, 0 for a repeat,
+else 2; their running sums are the offsets, VPERMB puts each point's two bytes
+in its lane, and the sum of the values, again running, plus CARRY gives the
+coordinates."
+    `(let* ((zero (%bc 0)) (one (%bc 1))
+            (fbytes (sb-simd-avx:u8.16-aref ,flags ,j))
+            (f (sb-simd-avx512f:s32.16-from-u8.16 fbytes))
+            (s (%vand (%vshr f ,short-bit) one))
+            (m (%vand (%vshr f ,same-bit) one))
+            ;; 1 where the coordinate is a word: neither short nor repeated
+            (tw (%vand (%vxor (%vor s m) one) one))
+            (len (%v+ s (%vshl tw 1)))
+            (incl (%prefix-sum len zero))
+            (off (%v- incl len))
+            (idx (%vor off (%vshl (%v+ off one) 8)))
+            (src (sb-simd-avx512bw:u8.64-aref ,bytes ,q))
+            (got (sb-simd-avx512f::s32.16!-from-p512
+                  (sb-simd-avx512vbmi:u8.64-permute
+                   (sb-simd-avx512bw::u8.64!-from-p512 idx) src)))
+            (b0 (%vand got (%bc 255)))
+            (b1 (%vand (%vshr got 8) (%bc 255)))
+            (negate (%v- m one))
+            (bytev (%v- (%vxor b0 negate) negate))
+            (wordv (%vsar (%vor (%vshl b0 24) (%vshl b1 16)) 16))
+            (value (%vor (%vand bytev (%v- zero s)) (%vand wordv (%v- zero tw))))
+            (sum (%v+ (%prefix-sum value zero) (%bc ,carry))))
+       (setf (sb-simd-avx512f:s32.16-aref ,out ,j) sum
+             (sb-simd-avx512f:s32.16-aref ,cell 0) incl)
+       ,@(when mask-flags
+           `((setf (sb-simd-avx:u8.16-aref ,flags ,j)
+                   (sb-simd-avx:u8.16-and fbytes (sb-simd-avx:u8.16-broadcast 1)))))
+       nil)))

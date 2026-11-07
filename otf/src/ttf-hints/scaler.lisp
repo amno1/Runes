@@ -564,9 +564,21 @@ scaled into SCALED-1 and SCALED-2: each a byte (sign from SAME-BIT), the
 previous value (SAME-BIT without SHORT-BIT), or a word.  With MASK-FLAGS, the
 flags are cut to the on-curve bit, which nothing after the y pass reads
 beyond."
-    `(let ((current 0))
-       (declare (type (signed-byte 32) current))
-       (dotimes (j n)
+    `(let ((current 0)
+           (start 0))
+       (declare (type (signed-byte 32) current) (type (unsigned-byte 17) start))
+       ,@(when (not checked)
+           ;; Sixteen points at a time with AVX-512, while 64 bytes of the font
+           ;; data are there to be loaded; the points after go one by one.
+           `((when vdecode
+               (loop while (and (<= (+ start 16) n) (<= (+ base p 64) (length bytes)))
+                     do (decode-axis-block bytes (+ base p) zf start ,out current cell
+                                           ,short-bit ,same-bit ,mask-flags)
+                        (setf current (aref ,out (+ start 15)))
+                        (incf p (aref cell 15))
+                        (incf start 16)))))
+       (loop for j of-type (unsigned-byte 17) from start below n
+             do
          (let ((flag (locally (declare (optimize (safety 0))) (aref zf j))))
            (setf current
                  (+ current
@@ -579,12 +591,14 @@ beyond."
                                (incf p 2))))))
            (locally (declare (optimize (safety 0)))
              (setf (aref ,out j) current)
-             (let ((scaled (scale-funit current scale)))
-               (setf (aref ,scaled-1 j) scaled
-                     (aref ,scaled-2 j) scaled))
+             ;; With AVX-512 the scaling is done afterwards, sixteen at a time.
+             (unless vdecode
+               (let ((scaled (scale-funit current scale)))
+                 (setf (aref ,scaled-1 j) scaled
+                       (aref ,scaled-2 j) scaled)))
              ,@(when mask-flags
                  `((setf (aref zf j)
-                         (logand flag runes/otf/tt-hint:+point-on-curve+)))))))))) 
+                         (logand flag runes/otf/tt-hint:+point-on-curve+))))))))))
 
 (defmacro decode-glyph-flags-and-coordinates (checked)
   "Read the flags and the coordinates of a simple glyph into ZF, UX, UY and
@@ -608,7 +622,10 @@ bounds checks."
                              (setf (aref zf i) flag))
                            (incf i)))))
      ,(glyph-coordinates-form checked 'ux 'ox 'cx 1 4 nil)
-     ,(glyph-coordinates-form checked 'uy 'oy 'cy 2 5 t)))
+     ,(glyph-coordinates-form checked 'uy 'oy 'cy 2 5 t)
+     (when vdecode
+       (mul-fix-into ox cx ux scale n)
+       (mul-fix-into oy cy uy scale n))))
 
 (defun decode-simple-glyph-into-zone (fd pos contour-count z n scale)
   "Read the simple glyph at POS (contour count CONTOUR-COUNT, N points) into
@@ -649,9 +666,15 @@ READ-SIMPLE-POINTS, but straight into the zone's arrays."
     ;; they can be read without a check each; a glyph at the very end of the
     ;; data is read with the checks.
     (let ((bytes (runes/otf:font-data-bytes fd))
-          (base (runes/otf:font-data-offset fd)))
+          (base (runes/otf:font-data-offset fd))
+          ;; Read with AVX-512, if the processor has it and the glyph has
+          ;; points enough for it to pay.  CELL: the byte offsets of a block.
+          (vdecode (and **avx512-decode** (>= n 16)))
+          (cell (make-array 16 :element-type '(signed-byte 32))))
       (declare (type (simple-array (unsigned-byte 8) (*)) bytes)
-               (type (unsigned-byte 32) base))
+               (type (unsigned-byte 32) base)
+               (dynamic-extent cell)
+               (ignorable cell vdecode))
       (if (<= (+ p (* 6 n)) (runes/otf:font-data-length fd))
           (locally (declare (optimize (safety 0)))
             (decode-glyph-flags-and-coordinates nil))
