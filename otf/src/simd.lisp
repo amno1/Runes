@@ -15,15 +15,44 @@
   (when (and (find-package "SB-VM") (find-symbol "MOVE-TO-AVX512" "SB-VM")
              (not (find-package "SB-SIMD-AVX512F")))
     (ignore-errors (require :sb-simd)))
-  (when (find-package "SB-SIMD-AVX512F")
-    (pushnew :zpb-avx512 *features*)
-    ;; The glyph decoder also needs the byte permute and the widening of
-    ;; bytes to 32-bit lanes, which the fork has since it exposes them.
-    (when (and (find-package "SB-SIMD-AVX512VBMI")
-               (find-package "SB-SIMD-AVX512BW")
-               (find-symbol "S32.16-FROM-U8.16" "SB-SIMD-AVX512F")
-               (find-symbol "U8.64-PERMUTE" "SB-SIMD-AVX512VBMI"))
-      (pushnew :zpb-avx512-decode *features*))))
+  ;; An SBCL can have the packages and lack what is used from them (the stock
+  ;; SB-SIMD has some AVX-512), so each function is looked for.  A name is
+  ;; (PACKAGE SYMBOL); with a :INTERNAL after it, any symbol will do.
+  (flet ((has-all (names)
+           (every (lambda (entry)
+                    (destructuring-bind (package name &optional internal) entry
+                      (let ((package (find-package package)))
+                        (and package
+                             (multiple-value-bind (symbol status) (find-symbol name package)
+                               (and symbol (fboundp symbol)
+                                    (or internal (eq status :external))))))))
+                  names)))
+    (when (has-all '(("SB-SIMD-AVX512F" "S32.16-BROADCAST") ("SB-SIMD-AVX512F" "S32.16-AREF")
+                     ("SB-SIMD-AVX512F" "S32.16+") ("SB-SIMD-AVX512F" "S32.16-")
+                     ("SB-SIMD-AVX512F" "S32.16*") ("SB-SIMD-AVX512F" "S32.16-SHIFTL")
+                     ("SB-SIMD-AVX512F" "S64.8-BROADCAST") ("SB-SIMD-AVX512F" "S64.8-SHIFTA")
+                     ("SB-SIMD-AVX512F" "S64.8-SHIFTL") ("SB-SIMD-AVX512F" "S64.8+")
+                     ("SB-SIMD-AVX512F" "S64.8-AND") ("SB-SIMD-AVX512F" "S64.8-OR")
+                     ("SB-SIMD-AVX512F" "S64.8!-FROM-P512" :internal)
+                     ("SB-SIMD-AVX512F" "S32.16!-FROM-P512" :internal)
+                     ("SB-SIMD-AVX512DQ" "S64.8-MUL")
+                     ("SB-SIMD-INTERNALS" "AVX512F-SUPPORTED-P")
+                     ("SB-SIMD-INTERNALS" "AVX512DQ-SUPPORTED-P")))
+      (pushnew :zpb-avx512 *features*)
+      ;; The glyph decoder also needs the byte permute and the widening of
+      ;; bytes to 32-bit lanes, which the fork has since it exposes them.
+      (when (has-all '(("SB-SIMD-AVX512F" "S32.16-FROM-U8.16") ("SB-SIMD-AVX512F" "S32.16-ALIGNR")
+                       ("SB-SIMD-AVX512F" "S32.16-AND") ("SB-SIMD-AVX512F" "S32.16-OR")
+                       ("SB-SIMD-AVX512F" "S32.16-XOR") ("SB-SIMD-AVX512F" "S32.16-SHIFTR")
+                       ("SB-SIMD-AVX512F" "S32.16-SHIFTA")
+                       ("SB-SIMD-AVX512BW" "U8.64-AREF")
+                       ("SB-SIMD-AVX512BW" "U8.64!-FROM-P512" :internal)
+                       ("SB-SIMD-AVX512VBMI" "U8.64-PERMUTE")
+                       ("SB-SIMD-AVX" "U8.16-AREF") ("SB-SIMD-AVX" "U8.16-AND")
+                       ("SB-SIMD-AVX" "U8.16-BROADCAST")
+                       ("SB-SIMD-INTERNALS" "AVX512BW-SUPPORTED-P")
+                       ("SB-SIMD-INTERNALS" "AVX512VBMI-SUPPORTED-P")))
+        (pushnew :zpb-avx512-decode *features*)))))
 
 (sb-ext:defglobal **avx512** nil
   "True if the processor running this has the AVX-512 instructions used here.")
