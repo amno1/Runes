@@ -309,15 +309,23 @@
       (setf (eng-call-top eng) 0
             (eng-glyph-base eng) start)
       (select-program eng prog-id start end)
-      (loop while (< (eng-pc eng) (eng-end eng))
-            ;; The limit is for programs that never end, which this finds as
-            ;; well when it looks once in 1024 instructions (late by up to that
-            ;; many).
-            do (when (zerop (logand (incf executed) 1023))
-                 (when (> executed +max-instructions+)
-                   (hint-fail 'tt-hint-limit-exceeded "Exceeded maximum instruction count")))
-               (let ((op (fetch-u8 eng)))
-                 (dispatch-instruction eng op)
-                 (loop while (and (>= (eng-pc eng) (eng-end eng))
-                                  (plusp (eng-call-top eng)))
-                       do (op-endf eng)))))))
+      (loop
+        ;; The program counter and the end are read once for the test and the
+        ;; fetch: the test is the fetch's bounds check.
+        (let ((pc (eng-pc eng)))
+          (declare (fixnum pc))
+          (unless (< pc (eng-end eng))
+            (return))
+          ;; The limit is for programs that never end, which this finds as
+          ;; well when it looks once in 1024 instructions (late by up to that
+          ;; many).
+          (when (zerop (logand (incf executed) 1023))
+            (when (> executed +max-instructions+)
+              (hint-fail 'tt-hint-limit-exceeded "Exceeded maximum instruction count")))
+          (let ((op (locally (declare (optimize (safety 0)))
+                      (aref (eng-bytes eng) pc))))
+            (setf (eng-pc eng) (1+ pc))
+            (dispatch-instruction eng op)
+            (loop while (and (>= (eng-pc eng) (eng-end eng))
+                             (plusp (eng-call-top eng)))
+                       do (op-endf eng))))))))
