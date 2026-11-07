@@ -207,15 +207,17 @@ and COORDS; made if there is none."
 ;;; 3. Hinted Simple & Composite Glyph Loading (Arena Zone Reuse)
 ;;; ============================================================================
 
-(defun read-simple-glyph-instructions (fd pos contour-count)
+(defun simple-glyph-instruction-range (fd pos contour-count)
+  "The start and end of the instructions of the simple glyph at POS in the
+font's byte array (FONT-DATA-BYTES of FD)."
   (let* ((instr-pos (+ pos (* 2 contour-count)))
          (instr-len (runes/otf:font-data-read-u16 fd instr-pos))
-         (bytes (make-array instr-len :element-type '(unsigned-byte 8)))
          (abs-start (+ (runes/otf:font-data-offset fd) instr-pos 2)))
-    (replace bytes (runes/otf:font-data-bytes fd) :start2 abs-start :end2 (+ abs-start instr-len))
-    bytes))
+    (values abs-start (+ abs-start instr-len))))
 
-(defun read-composite-glyph-instructions (fd pos)
+(defun composite-glyph-instruction-range (fd pos)
+  "As SIMPLE-GLYPH-INSTRUCTION-RANGE, for the composite glyph at POS; 0 and 0
+if it has no instructions."
   (let ((p pos)
         (have-instr nil))
     (loop
@@ -229,19 +231,18 @@ and COORDS; made if there is none."
                          (t 0))))
         (unless (logbitp 5 flags) (return))))
     (if (not have-instr)
-        (make-array 0 :element-type '(unsigned-byte 8))
+        (values 0 0)
         (let* ((instr-len (runes/otf:font-data-read-u16 fd p))
-               (bytes (make-array instr-len :element-type '(unsigned-byte 8)))
                (abs-start (+ (runes/otf:font-data-offset fd) p 2)))
-          (replace bytes (runes/otf:font-data-bytes fd) :start2 abs-start :end2 (+ abs-start instr-len))
-          bytes))))
+          (values abs-start (+ abs-start instr-len))))))
 
 (declaim (inline scale-funit round-26-6))
 (defun scale-funit (u scale) (runes/otf/tt-hint::mul-fix u scale))
 (defun round-26-6 (x) (logand (+ x 32) -64))
 
-(defun run-glyph-bytecode-in-zone (eng instr)
-  "Reset per-glyph state and run INSTR on ENG's already-populated glyph zone."
+(defun run-glyph-bytecode-in-zone (eng bytes start end)
+  "Reset per-glyph state and run the instructions START to END of the byte array
+BYTES on ENG's already-populated glyph zone."
   (let* ((default-gs (runes/otf/tt-hint::eng-default-gs eng))
          (gs (runes/otf/tt-hint:reset-graphics-state-per-glyph
               (runes/otf/tt-hint::eng-gs eng) default-gs)))
@@ -249,11 +250,54 @@ and COORDS; made if there is none."
     ;; executed WCVTP/WCVTF/WS in its glyph program, as Skrifa does).
     (replace (runes/otf/tt-hint::eng-cvt eng) (runes/otf/tt-hint::eng-default-cvt eng))
     (replace (runes/otf/tt-hint::eng-storage eng) (runes/otf/tt-hint::eng-default-storage eng))
-    (when (and (plusp (length instr))
+    (when (and (> end start)
                (not (logbitp 0 (runes/otf/tt-hint::gs-instruct-control gs))))
-      (setf (svref (runes/otf/tt-hint::eng-programs eng) 2) instr)
+      (setf (svref (runes/otf/tt-hint::eng-programs eng) 2) bytes)
       (runes/otf/tt-hint::vs-clear (runes/otf/tt-hint::eng-stack eng))
-      (runes/otf/tt-hint:run-program eng 2))))
+      (runes/otf/tt-hint:run-program eng 2 start end))))
+
+(defun engine-outline (eng)
+  "ENG's reusable outline buffer, emptied.  Use it only while ENG is held, and
+copy what is wanted out of it."
+  (let ((out (runes/otf/tt-hint::eng-scratch eng)))
+    (cond (out
+           (setf (fill-pointer (op-xs out)) 0
+                 (fill-pointer (op-ys out)) 0
+                 (fill-pointer (op-on out)) 0
+                 (fill-pointer (op-ends out)) 0)
+           out)
+          (t (setf (runes/otf/tt-hint::eng-scratch eng) (make-outline-points))))))
+
+(defun engine-tables (eng loader)
+  "The #(GLYF-OFFSET LOCA-OFFSET SHORT-P) of LOADER, found once per engine;
+GLYF-OFFSET is NIL when the font has no 'glyf', LOCA-OFFSET when no 'loca'."
+  (or (runes/otf/tt-hint::eng-tables eng)
+      (setf (runes/otf/tt-hint::eng-tables eng)
+            (let ((glyf (table-info "glyf" loader))
+                  (loca (table-info "loca" loader)))
+              (vector (and glyf (offset glyf))
+                      (and loca (offset loca))
+                      (eql (loca-offset-format loader) :short))))))
+
+(defun engine-glyph-range (eng loader gid)
+  "Offset and length of glyph GID's data in 'glyf', as GLYPH-LOCA-INFO, and
+the offset of 'glyf' (NIL if none)."
+  (declare (type (unsigned-byte 32) gid))
+  (let* ((tables (engine-tables eng loader))
+         (glyf (svref tables 0))
+         (loca (svref tables 1))
+         (short (svref tables 2)))
+    (if (null loca)
+        (values 0 0 glyf)
+        (let ((fd (font-data loader)))
+          (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) loca))
+          (if short
+              (let ((off1 (* (runes/otf:font-data-read-u16 fd (+ loca (* gid 2))) 2))
+                    (off2 (* (runes/otf:font-data-read-u16 fd (+ loca (* (1+ gid) 2))) 2)))
+                (values off1 (- off2 off1) glyf))
+              (let ((off1 (runes/otf:font-data-read-u32 fd (+ loca (* gid 4))))
+                    (off2 (runes/otf:font-data-read-u32 fd (+ loca (* (1+ gid) 4)))))
+                (values off1 (- off2 off1) glyf)))))))
 
 (defun load-hinted-glyph-points (loader eng gid out coords)
   (when (> (length *compound-glyph-stack*) *max-compound-glyph-depth*)
@@ -266,9 +310,8 @@ and COORDS; made if there is none."
                               :location (format nil "glyph ~D" (first *compound-glyph-stack*))
                               :actual-value gid
                               :expected-values '("a glyph that does not contain itself")))
-  (multiple-value-bind (g-off len) (glyph-loca-info loader gid)
-    (let ((glyf (table-info "glyf" loader))
-          (fd (font-data loader))
+  (multiple-value-bind (g-off len glyf) (engine-glyph-range eng loader gid)
+    (let ((fd (font-data loader))
           (scale (runes/otf/tt-hint::eng-scale eng)))
       (if (or (zerop len) (null glyf))
           (let ((phantom (phantom-points loader gid 0 0))
@@ -283,7 +326,7 @@ and COORDS; made if there is none."
                            (cons (round-26-6 (scale-funit (car p) scale))
                                  (round-26-6 (scale-funit (cdr p) scale))))
                  phantom))
-          (let* ((pos (+ (offset glyf) g-off))
+          (let* ((pos (+ glyf g-off))
                  (contour-count (runes/otf:font-data-read-i16 fd pos))
                  (phantom (phantom-points loader gid
                                           (runes/otf:font-data-read-i16 fd (+ pos 2))
@@ -382,10 +425,10 @@ VECTOR-PUSH-EXTEND and AREF on an adjustable vector make for each element."
             (assert (and (zerop (logand 63 (aref cx (+ n k))))
                          (zerop (logand 63 (aref cy (+ n k)))))
                     () "phantom point ~D is not rounded" k)))
-        (let ((instr (read-simple-glyph-instructions fd pos contour-count)))
+        (multiple-value-bind (istart iend) (simple-glyph-instruction-range fd pos contour-count)
           (setf (runes/otf/tt-hint::eng-unscaled-scale eng) scale
                 (runes/otf/tt-hint::eng-composite-p eng) nil)
-          (run-glyph-bytecode-in-zone eng instr))
+          (run-glyph-bytecode-in-zone eng (runes/otf:font-data-bytes fd) istart iend))
         (let ((base (fill-pointer (op-xs out))))
           (append-hinted-points out n cx cy zf)
           (loop for end across ends
@@ -467,8 +510,8 @@ VECTOR-PUSH-EXTEND and AREF on an adjustable vector make for each element."
                      (loop for j from start below end
                            do (incf (aref xs j) ox)
                               (incf (aref ys j) oy))))))
-      (let ((instr (read-composite-glyph-instructions fd pos)))
-        (when (and (zerop (length instr))
+      (multiple-value-bind (istart iend) (composite-glyph-instruction-range fd pos)
+        (when (and (= iend istart)
                    (not (runes/otf/tt-hint::gs-backward-compatibility
                          (runes/otf/tt-hint::eng-default-gs eng))))
           ;; No program to move them: the phantom points are rounded, as
@@ -476,7 +519,7 @@ VECTOR-PUSH-EXTEND and AREF on an adjustable vector make for each element."
           (map-into scaled-phantom
                     (lambda (p) (cons (round-26-6 (car p)) (round-26-6 (cdr p))))
                     scaled-phantom))
-        (when (plusp (length instr))
+        (when (> iend istart)
           (let* ((n (- (fill-pointer (op-xs out)) point-base))
                  (total (+ n 4))
                  (n-contours (- (length (op-ends out)) contour-base))
@@ -512,7 +555,7 @@ VECTOR-PUSH-EXTEND and AREF on an adjustable vector make for each element."
             ;; The points of a composite glyph are scaled already.
             (setf (runes/otf/tt-hint::eng-unscaled-scale eng) #x10000
                   (runes/otf/tt-hint::eng-composite-p eng) t)
-            (run-glyph-bytecode-in-zone eng instr)
+            (run-glyph-bytecode-in-zone eng (runes/otf:font-data-bytes fd) istart iend)
             (dotimes (k n)
               (setf (aref (op-xs out) (+ point-base k)) (aref cx k)
                     (aref (op-ys out) (+ point-base k)) (aref cy k)
@@ -552,10 +595,10 @@ point-by-point comparison against FreeType's FT_Outline:
   (let ((coords-vec (if coords
                         (map 'vector #'runes/otf/charstring::f2dot14-from-real
                              (normalize-coordinates loader coords))
-                        (or (loader-gvar-coords loader) #())))
-        (out (make-outline-points)))
+                        (or (loader-gvar-coords loader) #()))))
     (with-pooled-tt-engine (eng loader ppem coords-vec)
-      (let ((phantom (load-hinted-glyph-points loader eng gid out coords-vec)))
+      (let* ((out (engine-outline eng))
+             (phantom (load-hinted-glyph-points loader eng gid out coords-vec)))
         (shift-outline-by-pp1 (op-xs out) phantom)
         (values (copy-seq (op-xs out))
                 (copy-seq (op-ys out))
@@ -588,14 +631,14 @@ in pixel coordinates (where 1.0 is one pixel)."))
     (if (cff-outlines-p loader)
         (let ((*cubic-tolerance* (/ *cubic-tolerance* (/ (units/em loader) ppem))))
           (outline->contours (cff-hinted-outline loader gid ppem)))
-        (let ((coords (or (loader-gvar-coords loader) #()))
-              (out (make-outline-points)))
+        (let ((coords (or (loader-gvar-coords loader) #())))
           (with-pooled-tt-engine (eng loader ppem coords)
-            (shift-outline-by-pp1 (op-xs out) (load-hinted-glyph-points loader eng gid out coords)))
-          (dotimes (i (length (op-xs out)))
-            (setf (aref (op-xs out) i) (f26dot6->pixels (aref (op-xs out) i))
-                  (aref (op-ys out) i) (f26dot6->pixels (aref (op-ys out) i))))
-          (outline-points->contours out)))))
+            (let ((out (engine-outline eng)))
+              (shift-outline-by-pp1 (op-xs out) (load-hinted-glyph-points loader eng gid out coords))
+              (dotimes (i (length (op-xs out)))
+                (setf (aref (op-xs out) i) (f26dot6->pixels (aref (op-xs out) i))
+                      (aref (op-ys out) i) (f26dot6->pixels (aref (op-ys out) i))))
+              (outline-points->contours out)))))))
 
 (defgeneric hinted-cubic-contours (glyph ppem)
   (:documentation "Return the exact grid-fitted outline of GLYPH at PPEM pixels per em
@@ -617,9 +660,8 @@ in whole pixels, from its hinted phantom points."))
         (gid (font-index glyph)))
     (if (cff-outlines-p loader)
         (float (* (advance-width glyph) (/ ppem (units/em loader))) 1.0)
-        (let ((coords (or (loader-gvar-coords loader) #()))
-              (out (make-outline-points)))
+        (let ((coords (or (loader-gvar-coords loader) #())))
           (with-pooled-tt-engine (eng loader ppem coords)
-            (let ((phantom (load-hinted-glyph-points loader eng gid out coords)))
+            (let ((phantom (load-hinted-glyph-points loader eng gid (engine-outline eng) coords)))
               ;; Whole pixels, as FreeType's hinted advance.
               (f26dot6->pixels (round-26-6 (- (car (aref phantom 1)) (car (aref phantom 0)))))))))))

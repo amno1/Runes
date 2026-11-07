@@ -28,6 +28,7 @@
 ;;; ============================================================================
 
 (defun op-fdef (eng)
+  (declare (tt-engine eng))
   (let* ((key (vs-pop (eng-stack eng)))
          (fdefs (eng-fdefs eng))
          (def (or (when (< -1 key (length fdefs))
@@ -46,6 +47,7 @@
     (setf (fdef-end def) (eng-pc eng))))
 
 (defun op-idef (eng)
+  (declare (tt-engine eng))
   (let* ((opcode (ldb (byte 8 0) (vs-pop (eng-stack eng))))
          (idefs (eng-idefs eng))
          (def (or (find-if (lambda (d) (and (fdef-active-p d) (= (fdef-key d) opcode))) idefs)
@@ -60,6 +62,7 @@
     (setf (fdef-end def) (eng-pc eng))))
 
 (defun op-endf (eng)
+  (declare (tt-engine eng))
   (when (<= (eng-call-top eng) 0)
     (hint-fail 'tt-hint-invalid-opcode "ENDF with empty call stack"))
   (let* ((idx (1- (eng-call-top eng)))
@@ -75,6 +78,7 @@
                           (call-current-end rec))))))
 
 (defun op-call (eng)
+  (declare (tt-engine eng))
   (let* ((key (vs-pop (eng-stack eng)))
          (def (find-fdef eng key)))
     (unless def
@@ -82,6 +86,7 @@
     (invoke-function eng def 1)))
 
 (defun op-loopcall (eng)
+  (declare (tt-engine eng))
   (let* ((s (eng-stack eng))
          (key (vs-pop s))
          (count (vs-pop s))
@@ -94,7 +99,9 @@
 (defun do-jump (eng offset)
   (declare (tt-engine eng) (fixnum offset))
   (let ((target (+ (eng-pc eng) -1 offset)))
-    (when (or (< target 0) (> target (eng-end eng)))
+    ;; The glyph program is a slice of the font's bytes: a jump may not leave it.
+    (when (or (< target (if (= (eng-cur-program eng) 2) (eng-glyph-base eng) 0))
+              (> target (eng-end eng)))
       (hint-fail 'tt-hint-invalid-opcode "Jump target out of bounds"))
     (setf (eng-pc eng) target)))
 
@@ -129,6 +136,7 @@
           (values ux uy)))))
 
 (defun op-vtl (eng op)
+  (declare (tt-engine eng))
   (let* ((s (eng-stack eng))
          (p1 (vs-pop s))
          (p2 (vs-pop s))
@@ -163,6 +171,7 @@
 
 (defun op-mdap (eng round-p)
   "MDAP[0/1]: Move Direct Absolute Point."
+  (declare (tt-engine eng))
   (let* ((pt (vs-pop (eng-stack eng)))
          (gs (eng-gs eng))
          (z0-id (gs-zp0 gs))
@@ -178,6 +187,7 @@
 
 (defun op-miap (eng round-p)
   "MIAP[0/1]: Move Indirect Absolute Point (matches FreeType Ins_MIAP / skrifa point.rs)."
+  (declare (tt-engine eng))
   (let* ((s (eng-stack eng))
          (cvt-idx (vs-pop s))
          (pt (vs-pop s))
@@ -213,6 +223,7 @@
 
 (defun op-mdrp (eng flags)
   "MDRP[abcde]: Move Direct Relative Point (0xC0..0xDF)."
+  (declare (tt-engine eng) (fixnum flags))
   (let* ((pt (vs-pop (eng-stack eng)))
          (gs (eng-gs eng))
          (set-rp0-p (logbitp 4 flags))
@@ -249,6 +260,7 @@
 (defun op-mirp (eng flags)
   "MIRP[abcde]: Move Indirect Relative Point (0xE0..0xFF).
 Matches FreeType Ins_MIRP / Skrifa point.rs."
+  (declare (tt-engine eng) (fixnum flags))
   (let* ((s (eng-stack eng))
          (cvt-idx (vs-pop s))
          (pt (vs-pop s))
@@ -310,6 +322,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
       (values proj zone pt))))
 
 (defun op-shp (eng use-rp1-p)
+  (declare (tt-engine eng))
   (let* ((gs (eng-gs eng))
          (s (eng-stack eng))
          (count (gs-loop gs))
@@ -324,6 +337,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
           (move-zone-point gs z2 z2-id pt dist :touch t))))))
 
 (defun op-shc (eng use-rp1-p)
+  (declare (tt-engine eng))
   (let* ((gs (eng-gs eng))
          (contour-idx (vs-pop (eng-stack eng)))
          (z2-id (gs-zp2 gs))
@@ -338,6 +352,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
                 do (move-zone-point gs z2 z2-id pt dist :touch t))))))
 
 (defun op-shz (eng use-rp1-p)
+  (declare (tt-engine eng))
   (let* ((gs (eng-gs eng))
          (zone-idx (vs-pop (eng-stack eng)))
          (z-id (if (zerop zone-idx) 0 1))
@@ -348,6 +363,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
           (move-zone-point gs z z-id pt dist :touch nil))))))
 
 (defun op-shpix (eng)
+  (declare (tt-engine eng))
   (when (< (vs-len (eng-stack eng)) (1+ (gs-loop (eng-gs eng))))
     (setf (gs-loop (eng-gs eng)) 1)
     (return-from op-shpix))
@@ -389,6 +405,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
   "IP: Interpolate Point by the last relative stretch.  Out of the twilight
 zone the original distances are measured on the unscaled outline, as FreeType
 does; they only matter as a ratio."
+  (declare (tt-engine eng))
   (let* ((gs (eng-gs eng))
          (s (eng-stack eng))
          (count (gs-loop gs))
@@ -473,6 +490,7 @@ between two touched points comes from the unscaled coordinates."
          (interp-range start first prev first))))))
 
 (defun op-iup (eng x-axis-p)
+  (declare (tt-engine eng))
   (let* ((gs (eng-gs eng))
          (z (eng-glyph eng))
          (n-contours (zone-n-contours z)))
@@ -499,6 +517,7 @@ between two touched points comes from the unscaled coordinates."
           (setf start (1+ end)))))))
 
 (defun op-isect (eng)
+  (declare (tt-engine eng))
   (let* ((s (eng-stack eng))
          (b1 (vs-pop s)) (b0 (vs-pop s))
          (a1 (vs-pop s)) (a0 (vs-pop s))
@@ -544,6 +563,7 @@ between two touched points comes from the unscaled coordinates."
             (s32 (ash steps (- (- shift 6)))))))))
 
 (defun op-deltap (eng band-offset)
+  (declare (tt-engine eng) (fixnum band-offset))
   (let* ((s (eng-stack eng))
          (n (vs-pop s))
          (gs (eng-gs eng))
@@ -566,6 +586,7 @@ between two touched points comes from the unscaled coordinates."
             (move-zone-point gs z0 z0-id pt delta :touch t)))))))
 
 (defun op-deltac (eng band-offset)
+  (declare (tt-engine eng) (fixnum band-offset))
   (let* ((s (eng-stack eng))
          (n (vs-pop s))
          (gs (eng-gs eng))

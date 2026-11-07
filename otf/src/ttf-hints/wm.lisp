@@ -151,6 +151,12 @@
   ;; 1.0 for a composite one, whose unscaled points are already scaled.
   (unscaled-scale 0 :type s32)
   (composite-p nil :type boolean)
+  ;; Per-engine caches of the scaler: a reusable outline buffer (the engine
+  ;; is used by one thread at a time) and the offsets of 'glyf' and 'loca'.
+  ;; Where the glyph program starts in its byte array, which is the font's.
+  (glyph-base 0 :type fixnum)
+  (scratch nil)
+  (tables nil)
   (rotated-p nil :type boolean)
   (stretched-p nil :type boolean)
   (axis-coords #() :type simple-vector)
@@ -271,13 +277,18 @@
       (incf (eng-call-top eng))
       (select-program eng (fdef-program def) (fdef-start def) (fdef-end def)))))
 
-(defun run-program (eng prog-id)
-  (declare (tt-engine eng) (type program-id prog-id) (optimize (speed 3) (safety 1)))
-  (let ((bytes (svref (eng-programs eng) prog-id)))
-    (when (plusp (length bytes))
+(defun run-program (eng prog-id &optional (start 0) end)
+  "Run program PROG-ID of ENG from START to END (default: all of it)."
+  (declare (tt-engine eng) (type program-id prog-id) (fixnum start)
+           (optimize (speed 3) (safety 1)))
+  (let* ((bytes (svref (eng-programs eng) prog-id))
+         (end (or end (length bytes))))
+    (declare (fixnum end))
+    (when (> end start)
       (setf (eng-call-top eng) 0
-            (eng-ops-executed eng) 0)
-      (select-program eng prog-id 0 (length bytes))
+            (eng-ops-executed eng) 0
+            (eng-glyph-base eng) start)
+      (select-program eng prog-id start end)
       (loop while (< (eng-pc eng) (eng-end eng))
             do (when (> (incf (eng-ops-executed eng)) +max-instructions+)
                  (hint-fail 'tt-hint-limit-exceeded "Exceeded maximum instruction count"))
