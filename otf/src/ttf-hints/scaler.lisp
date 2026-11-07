@@ -1149,26 +1149,39 @@ value (/ V 64) has, without making a ratio."
       (ash v -6)
       (* (float v 1.0f0) 0.015625f0)))
 
-(defun hint-buffer->contours (buffer)
-  "The contours of the hinted outline in BUFFER as vectors of control points,
-in pixels."
-  (declare (type hint-buffer buffer))
-  (let ((xs (hb-xs buffer)) (ys (hb-ys buffer)) (flags (hb-flags buffer))
-        (ends (hb-ends buffer))
-        (contours (make-array (hb-n-ends buffer)))
+(declaim (inline points->contours))
+(defun points->contours (xs ys flags ends n-ends x-shift)
+  "The contours, as vectors of control points in pixels, of the hinted points in
+the arrays XS, YS and FLAGS (the on-curve bit being the first), whose
+contours end at the first N-ENDS elements of ENDS; the x coordinates are
+moved by -X-SHIFT (26.6 pixels) first."
+  (declare (type (simple-array (signed-byte 32) (*)) xs ys)
+           (type (simple-array (unsigned-byte 8) (*)) flags)
+           (fixnum n-ends) (type (signed-byte 32) x-shift))
+  ;; ENDS is the hint buffer's (32-bit) or the zone's (16-bit): the types are
+  ;; known where this is inlined.
+  (let ((contours (make-array n-ends))
         (start 0))
     (declare (fixnum start))
-    (dotimes (c (hb-n-ends buffer) contours)
+    (dotimes (c n-ends contours)
       (let* ((end (aref ends c))
              (contour (make-array (max 0 (- (1+ end) start)))))
         (loop for i of-type fixnum from start to end
               for j of-type fixnum from 0
               do (setf (svref contour j)
-                       (make-control-point (f26dot6->pixels (aref xs i))
+                       (make-control-point (f26dot6->pixels
+                                            (runes/otf/tt-hint::f26- (aref xs i) x-shift))
                                            (f26dot6->pixels (aref ys i))
                                            (logbitp 0 (aref flags i)))))
         (setf (svref contours c) contour
               start (1+ end))))))
+
+(defun hint-buffer->contours (buffer)
+  "The contours of the hinted outline in BUFFER as vectors of control points,
+in pixels."
+  (declare (type hint-buffer buffer))
+  (points->contours (hb-xs buffer) (hb-ys buffer) (hb-flags buffer) (hb-ends buffer)
+                    (hb-n-ends buffer) 0))
 
 (defgeneric hinted-contours (glyph ppem)
   (:documentation "Return the grid-fitted contours of GLYPH at PPEM pixels per em,
@@ -1183,8 +1196,23 @@ in pixel coordinates (where 1.0 is one pixel)."))
         (let ((coords (or (loader-gvar-coords loader) #())))
           (with-pooled-tt-engine (eng loader ppem coords)
             (let ((out (engine-outline eng)))
-              (shift-outline-by-pp1 out (load-hinted-glyph-points loader eng gid out coords))
-              (hint-buffer->contours out)))))))
+              ;; A simple glyph stays in the glyph zone, and its contours are
+              ;; made from there, with the shift by the first phantom point.
+              (setf (runes/otf/tt-hint::eng-direct eng) :request)
+              (let* ((phantom (load-hinted-glyph-points loader eng gid out coords))
+                     (in-zone (eq (runes/otf/tt-hint::eng-direct eng) :done)))
+                (setf (runes/otf/tt-hint::eng-direct eng) nil)
+                (if in-zone
+                    (let ((zone (runes/otf/tt-hint::eng-glyph eng)))
+                      (points->contours (runes/otf/tt-hint:zone-cur-x zone)
+                                        (runes/otf/tt-hint:zone-cur-y zone)
+                                        (runes/otf/tt-hint:zone-flags zone)
+                                        (runes/otf/tt-hint:zone-contours zone)
+                                        (runes/otf/tt-hint:zone-n-contours zone)
+                                        (aref phantom 0)))
+                    (progn
+                      (shift-outline-by-pp1 out phantom)
+                      (hint-buffer->contours out))))))))))
 
 (defgeneric hinted-cubic-contours (glyph ppem)
   (:documentation "Return the exact grid-fitted outline of GLYPH at PPEM pixels per em
@@ -1208,6 +1236,9 @@ in whole pixels, from its hinted phantom points."))
         (float (* (advance-width glyph) (/ ppem (units/em loader))) 1.0)
         (let ((coords (or (loader-gvar-coords loader) #())))
           (with-pooled-tt-engine (eng loader ppem coords)
+            ;; The points are not wanted: a simple glyph's stay in the zone.
+            (setf (runes/otf/tt-hint::eng-direct eng) :request)
             (let ((phantom (load-hinted-glyph-points loader eng gid (engine-outline eng) coords)))
+              (setf (runes/otf/tt-hint::eng-direct eng) nil)
               ;; Whole pixels, as FreeType's hinted advance.
               (f26dot6->pixels (round-26-6 (- (aref phantom 2) (aref phantom 0))))))))))
