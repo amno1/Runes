@@ -11,6 +11,8 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (deftype growable-vector ()
   "An adjustable vector with a fill pointer, as MAKE-ARRAY makes."
   '(and (vector t) (not simple-array)))
@@ -27,8 +29,9 @@
 (defun grow-fill-pointer (vector count)
   "Make room in the growable VECTOR for COUNT more elements and move its fill
 pointer past them; their values are left to the caller."
-  (declare (type growable-vector vector) (fixnum count))
-  (let ((new (+ (fill-pointer vector) count)))
+  (declare (type growable-vector vector)
+           (type (integer 0 #.array-dimension-limit) count))
+  (let ((new (the (integer 0 #.array-dimension-limit) (+ (fill-pointer vector) count))))
     (when (> new (array-dimension vector 0))
       (adjust-array vector (max new (* 2 (array-dimension vector 0)))))
     (setf (fill-pointer vector) new)
@@ -43,7 +46,16 @@ for every glyph."
         (setf (%gvar-coords-cache loader)
               (let ((coords (normalized-coordinates loader)))
                 (when (and coords (table-info "gvar" loader))
-                  (map 'vector (lambda (c) (runes/otf/charstring::f2dot14-from-real c)) coords))))
+                  (if (listp coords)
+                      (let ((v (make-array (length (the list coords)) :element-type t)))
+                        (loop for c in coords for i of-type fixnum from 0
+                              do (setf (svref v i) (runes/otf/charstring::f2dot14-from-real c)))
+                        v)
+                      (let* ((cv (the simple-vector coords))
+                             (v (make-array (length cv) :element-type t)))
+                        (loop for i of-type fixnum from 0 below (length cv)
+                              do (setf (svref v i) (runes/otf/charstring::f2dot14-from-real (svref cv i))))
+                        v)))))
         cache)))
 
 ;;; Reading a simple glyph
@@ -117,16 +129,20 @@ whose contour count is at POS - 10, as four vectors."
 
 (defun phantom-array (loader gid x-min y-max)
   "The four phantom points of GID, in font units, from its metrics."
+  (declare (type font-loader loader)
+           (type (unsigned-byte 16) gid)
+           (type fixnum x-min y-max))
   (let* ((lsb (horizontal-bearing loader gid))
          (advance (horizontal-advance loader gid))
-         (ascent (slot-value loader 'ascender))
-         (descent (slot-value loader 'descender))
+         (ascent (the fixnum (slot-value loader 'ascender)))
+         (descent (the fixnum (slot-value loader 'descender)))
          (result (make-array 8 :element-type '(signed-byte 32))))
+    (declare (type fixnum lsb advance ascent descent))
     (multiple-value-bind (tsb vadvance)
         (if (vmtx-missing-p loader)
-            (values (- ascent y-max) (- ascent descent))
-            (values (vertical-bearing loader gid)
-                    (vertical-advance loader gid)))
+            (values (the fixnum (- ascent y-max)) (the fixnum (- ascent descent)))
+            (values (the fixnum (vertical-bearing loader gid))
+                    (the fixnum (vertical-advance loader gid))))
       (let ((pp1x (- x-min lsb)))
         (setf (aref result 0) pp1x
               (aref result 1) 0
@@ -138,6 +154,9 @@ whose contour count is at POS - 10, as four vectors."
               (aref result 7) (- (+ y-max tsb) vadvance))))
     result))
 
+(declaim (ftype (function (font-loader (unsigned-byte 16) fixnum fixnum)
+                          (values simple-vector &optional))
+                phantom-points))
 (defun phantom-points (loader gid x-min y-max)
   "The four phantom points of GID as a vector of (x . y), from its metrics."
   (let ((a (phantom-array loader gid x-min y-max)))
@@ -155,34 +174,51 @@ PHANTOM, as a vector."
 
 (defun add-phantom-array-deltas (phantom dx dy start)
   "A copy of the array PHANTOM moved by the rounded deltas at START of DX and DY."
-  (declare (type phantom-array phantom))
+  (declare (type phantom-array phantom)
+           (type fixed-array dx dy)
+           (type fixnum start))
   (let ((result (copy-seq phantom)))
+    (declare (type phantom-array result))
     (dotimes (i 4 result)
       (incf (aref result (* 2 i)) (the fixnum (fixed-round (aref dx (+ start i)))))
       (incf (aref result (1+ (* 2 i))) (the fixnum (fixed-round (aref dy (+ start i))))))))
 
 (defun add-phantom-array-deltas! (phantom dx dy start)
   "PHANTOM, the array, moved by the rounded deltas at START of DX and DY."
-  (declare (type phantom-array phantom))
+  (declare (type phantom-array phantom)
+           (type fixed-array dx dy)
+           (type fixnum start))
   (dotimes (i 4 phantom)
     (incf (aref phantom (* 2 i)) (the fixnum (fixed-round (aref dx (+ start i)))))
     (incf (aref phantom (1+ (* 2 i))) (the fixnum (fixed-round (aref dy (+ start i)))))))
 
 (defun add-phantom-deltas (phantom dx dy start)
   "Phantom points moved by the rounded deltas at START of DX and DY."
-  (map 'vector (lambda (p i)
-                 (cons (+ (car p) (fixed-round (aref dx (+ start i))))
-                       (+ (cdr p) (fixed-round (aref dy (+ start i))))))
-       phantom #(0 1 2 3)))
+  (declare (type simple-vector phantom)
+           (type fixed-array dx dy)
+           (type fixnum start))
+  (let ((res (make-array 4)))
+    (dotimes (i 4 res)
+      (let ((p (the cons (svref phantom i))))
+        (setf (svref res i)
+              (cons (the fixnum (+ (the fixnum (car p)) (the fixnum (fixed-round (aref dx (+ start i))))))
+                    (the fixnum (+ (the fixnum (cdr p)) (the fixnum (fixed-round (aref dy (+ start i))))))))))))
 
 ;;; Loading
 
+(declaim (ftype (function (font-loader (unsigned-byte 16) outline-points (or null simple-vector))
+                          (values simple-vector &optional))
+                load-glyph-points))
 (defun load-glyph-points (loader gid out coords)
   "Append the points of glyph GID to OUT; return its phantom points."
-  (when (> (length *compound-glyph-stack*) *max-compound-glyph-depth*)
+  (declare (type font-loader loader)
+           (type (unsigned-byte 16) gid)
+           (type outline-points out)
+           (type (or null simple-vector) coords))
+  (when (> (the fixnum (list-length *compound-glyph-stack*)) (the fixnum *max-compound-glyph-depth*))
     (error 'unsupported-value :description "Compound glyph nesting too deep"
                               :location (format nil "glyph ~D" gid)
-                              :actual-value (length *compound-glyph-stack*)
+                              :actual-value (the fixnum (list-length *compound-glyph-stack*))
                               :expected-values (list *max-compound-glyph-depth*)))
   (when (member gid *compound-glyph-stack*)
     (error 'unsupported-value :description "Recursive compound glyph"
@@ -198,13 +234,17 @@ PHANTOM, as a vector."
           (let ((phantom (phantom-points loader gid 0 0))
                 (data (and coords (gvar-glyph-data loader gid))))
             (if data
-                (multiple-value-bind (dx dy)
-                    (simple-glyph-deltas data coords (map 'vector #'car phantom) (map 'vector #'cdr phantom) '())
-                  (if dx
-                      (let ((moved (add-phantom-deltas phantom dx dy 0)))
-                        ;; Only the horizontal phantom points take deltas here.
-                        (vector (aref moved 0) (aref moved 1) (aref phantom 2) (aref phantom 3)))
-                      phantom))
+                (let ((px (make-array 4)) (py (make-array 4)))
+                  (dotimes (k 4)
+                    (setf (svref px k) (car (svref phantom k))
+                          (svref py k) (cdr (svref phantom k))))
+                  (multiple-value-bind (dx dy)
+                      (simple-glyph-deltas data coords px py '())
+                    (if dx
+                        (let ((moved (add-phantom-deltas phantom dx dy 0)))
+                          ;; Only the horizontal phantom points take deltas here.
+                          (vector (aref moved 0) (aref moved 1) (aref phantom 2) (aref phantom 3)))
+                        phantom)))
                 phantom))
           (let* ((pos (+ glyf-offset g-off))
                  (contour-count (runes/otf:font-data-read-i16 fd pos))
@@ -217,7 +257,16 @@ PHANTOM, as a vector."
                 (load-simple-points loader gid fd (+ pos 10) contour-count phantom out coords)))))))
 
 (defun load-simple-points (loader gid fd pos contour-count phantom out coords)
+  (declare (type font-loader loader)
+           (type (unsigned-byte 16) gid)
+           (type runes/otf:font-data fd)
+           (type (unsigned-byte 32) pos)
+           (type fixnum contour-count)
+           (type simple-vector phantom)
+           (type outline-points out)
+           (type (or null simple-vector) coords))
   (multiple-value-bind (ends xs ys on) (read-simple-points fd pos contour-count)
+    (declare (type simple-vector ends xs ys on))
     (let* ((n (length xs))
            (data (and coords (gvar-glyph-data loader gid))))
       (when data
@@ -229,12 +278,14 @@ PHANTOM, as a vector."
           (dotimes (k 4)
             (setf (svref all-x (+ n k)) (car (svref phantom k))
                   (svref all-y (+ n k)) (cdr (svref phantom k))))
-          (multiple-value-bind (dx dy) (simple-glyph-deltas data coords all-x all-y ends)
+          (multiple-value-bind (dx dy) (simple-glyph-deltas data coords all-x all-y (coerce ends 'list))
             (when dx
-              (dotimes (i n)
-                (setf (aref xs i) (+ (aref xs i) (fixed-round (aref dx i)))
-                      (aref ys i) (+ (aref ys i) (fixed-round (aref dy i)))))
-              (setf phantom (add-phantom-deltas phantom dx dy n))))))
+              (let ((dx (the fixed-array dx))
+                    (dy (the fixed-array dy)))
+                (dotimes (i n)
+                  (setf (svref xs i) (the fixnum (+ (the fixnum (svref xs i)) (the fixnum (fixed-round (aref dx i)))))
+                        (svref ys i) (the fixnum (+ (the fixnum (svref ys i)) (the fixnum (fixed-round (aref dy i)))))))
+                (setf phantom (add-phantom-deltas phantom dx dy n)))))))
       (let ((base (fill-pointer (op-xs out))))
         (declare (fixnum base))
         (grow-fill-pointer (op-xs out) n)
@@ -251,21 +302,31 @@ PHANTOM, as a vector."
                       (svref oys (+ ys0 base i)) (svref ys i)
                       (svref oon (+ on0 base i)) (svref on i))))))
         (let ((ends-out (op-ends out)))
+          (declare (type growable-vector ends-out))
           (let ((first (fill-pointer ends-out)))
+            (declare (type fixnum first))
             (grow-fill-pointer ends-out (length ends))
-            (dotimes (c (length ends))
-              (setf (aref ends-out (+ first c)) (+ base (the fixnum (svref ends c))))))))
+            (sb-kernel:with-array-data ((e ends-out) (e0) (ee))
+              (declare (ignore ee) (simple-vector e) (fixnum e0))
+              (let ((idx (the fixnum (+ e0 first))))
+                (declare (fixnum idx))
+                (dotimes (c (length ends))
+                  (setf (svref e idx) (the fixnum (+ base (the fixnum (svref ends c)))))
+                  (incf idx)))))))
       phantom)))
 
 (defun component-fields (fd pos)
   "The component record at POS: its flags, glyph, two arguments, the 16.16
 transform xx yx xy yy, and the position after it."
-  (let* ((flags (runes/otf:font-data-read-u16 fd pos))
-         (glyph (runes/otf:font-data-read-u16 fd (+ pos 2)))
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos))
+  (let* ((flags (the (unsigned-byte 16) (runes/otf:font-data-read-u16 fd pos)))
+         (glyph (the (unsigned-byte 16) (runes/otf:font-data-read-u16 fd (+ pos 2))))
          (words (logbitp 0 flags))
          (xy (logbitp 1 flags))
-         (p (+ pos 4))
+         (p (the (unsigned-byte 32) (+ pos 4)))
          arg1 arg2)
+    (declare (type (unsigned-byte 16) flags glyph)
+             (type (unsigned-byte 32) p))
     (if words
         (setf arg1 (if xy (runes/otf:font-data-read-i16 fd p) (runes/otf:font-data-read-u16 fd p))
               arg2 (if xy (runes/otf:font-data-read-i16 fd (+ p 2)) (runes/otf:font-data-read-u16 fd (+ p 2)))
@@ -275,97 +336,138 @@ transform xx yx xy yy, and the position after it."
               p (+ p 2)))
     ;; Transform elements as 16.16: the 2.14 bits times 4.
     (let ((xx #x10000) (yx 0) (xy-skew 0) (yy #x10000))
-      (flet ((f2 (at) (* 4 (runes/otf:font-data-read-i16 fd at))))
+      (declare (type (signed-byte 32) xx yx xy-skew yy))
+      (flet ((f2 (at) (the (signed-byte 32) (* 4 (the fixnum (runes/otf:font-data-read-i16 fd at))))))
+        (declare (inline f2))
         (cond ((logbitp 3 flags) (setf xx (f2 p) yy xx) (incf p 2))
               ((logbitp 6 flags) (setf xx (f2 p) yy (f2 (+ p 2))) (incf p 4))
               ((logbitp 7 flags) (setf xx (f2 p) yx (f2 (+ p 2)) xy-skew (f2 (+ p 4)) yy (f2 (+ p 6)))
                (incf p 8))))
-      (values flags glyph arg1 arg2 xx yx xy-skew yy p))))
+      (values flags glyph (the fixnum arg1) (the fixnum arg2) xx yx xy-skew yy p))))
 
 (defun read-component (fd pos)
   "The component record at POS as a plist, and the position after it."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos))
   (multiple-value-bind (flags glyph arg1 arg2 xx yx xy-skew yy p) (component-fields fd pos)
-    (values (list :flags flags :glyph glyph :xy (logbitp 1 flags) :arg1 arg1 :arg2 arg2
-                  :transform (vector xx yx xy-skew yy)
-                  :transformed (logtest flags #b11001000))
-            p)))
+    (declare (type (unsigned-byte 16) flags glyph)
+             (type fixnum arg1 arg2)
+             (type (signed-byte 32) xx yx xy-skew yy)
+             (type (unsigned-byte 32) p))
+    (let ((m (make-array 4 :element-type '(signed-byte 32))))
+      (setf (aref m 0) xx (aref m 1) yx (aref m 2) xy-skew (aref m 3) yy)
+      (values (list :flags flags :glyph glyph :xy (logbitp 1 flags) :arg1 arg1 :arg2 arg2
+                    :transform m
+                    :transformed (logtest flags #b11001000))
+              p))))
 
+(declaim (inline hypot-fixed))
+(declaim (ftype (function ((signed-byte 32) (signed-byte 32))
+                          (values (signed-byte 32) &optional))
+                hypot-fixed))
 (defun hypot-fixed (a b)
+  (declare (type (signed-byte 32) a b))
   (let ((a (abs a)) (b (abs b)))
-    (if (> a b) (+ a (ash (* 3 b) -3)) (+ b (ash (* 3 a) -3)))))
+    (declare (type (unsigned-byte 32) a b))
+    (wrap32 (the (unsigned-byte 34)
+                 (if (> a b)
+                     (+ a (the (unsigned-byte 31) (ash (the (unsigned-byte 34) (* 3 b)) -3)))
+                     (+ b (the (unsigned-byte 31) (ash (the (unsigned-byte 34) (* 3 a)) -3))))))))
 
 (defun read-components (fd pos)
   "The component records of the composite glyph at POS, in order."
-  (loop for p = pos then next
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos))
+  (loop for p of-type (unsigned-byte 32) = pos then next
         for (component next) = (multiple-value-list (read-component fd p))
         collect component
-        while (logbitp 5 (getf component :flags))))
+        while (logbitp 5 (the fixnum (getf component :flags)))))
 
 (defun transform-component-points (xs ys start end m)
   "Apply the 2x2 matrix M to points START below END."
-  (loop for j from start below end
-        for x = (aref xs j)
-        for y = (aref ys j)
-        ;; Font units taken as raw 16.16, as FreeType does.
-        do (setf (aref xs j) (f+ (f* x (aref m 0)) (f* y (aref m 2)))
-                 (aref ys j) (f+ (f* x (aref m 1)) (f* y (aref m 3))))))
+  (declare (type growable-vector xs ys)
+           (type fixnum start end)
+           (type (simple-array (signed-byte 32) (4)) m))
+  (let ((m0 (aref m 0)) (m1 (aref m 1))
+        (m2 (aref m 2)) (m3 (aref m 3)))
+    (declare (type (signed-byte 32) m0 m1 m2 m3))
+    (loop for j of-type fixnum from start below end
+          for x of-type (signed-byte 32) = (the fixnum (aref xs j))
+          for y of-type (signed-byte 32) = (the fixnum (aref ys j))
+          ;; Font units taken as raw 16.16, as FreeType does.
+          do (setf (aref xs j) (f+ (f* x m0) (f* y m2))
+                   (aref ys j) (f+ (f* x m1) (f* y m3))))))
 
 (defun component-offset (component gid xs ys point-base start end delta-x delta-y)
   "The offset of a component whose points are START below END: its x and y
 arguments, plus the variation deltas DELTA-X and DELTA-Y (16.16, or NIL),
 or the distance that moves its point ARG2 onto the glyph's point ARG1."
+  (declare (type list component)
+           (type (unsigned-byte 16) gid)
+           (type growable-vector xs ys)
+           (type fixnum point-base start end)
+           (type (or null (signed-byte 32)) delta-x delta-y))
   (if (getf component :xy)
-      (let ((x (getf component :arg1))
-            (y (getf component :arg2))
-            (m (getf component :transform)))
+      (let ((x (the fixnum (getf component :arg1)))
+            (y (the fixnum (getf component :arg2)))
+            (m (the (simple-array (signed-byte 32) (4)) (getf component :transform))))
         ;; SCALED_COMPONENT_OFFSET without UNSCALED_COMPONENT_OFFSET.
         (when (and (getf component :transformed)
-                   (= (logand (getf component :flags) #x1800) #x0800))
+                   (= (logand (the fixnum (getf component :flags)) #x1800) #x0800))
           (setf x (f* x (hypot-fixed (aref m 0) (aref m 2)))
                 y (f* y (hypot-fixed (aref m 3) (aref m 1)))))
         (if delta-x
-            (values (+ x (fixed-round delta-x)) (+ y (fixed-round delta-y)))
+            (values (the fixnum (+ x (the fixnum (fixed-round delta-x))))
+                    (the fixnum (+ y (the fixnum (fixed-round (the (signed-byte 32) delta-y))))))
             (values x y)))
-      (let ((base (+ point-base (getf component :arg1)))
-            (child (+ start (getf component :arg2))))
+      (let ((base (+ point-base (the fixnum (getf component :arg1))))
+            (child (+ start (the fixnum (getf component :arg2)))))
         (unless (and (< base start) (< child end))
           (error 'unsupported-value
                  :description "Compound glyph anchor point out of range"
                  :location (format nil "glyph ~D" gid)
                  :actual-value (list (getf component :arg1) (getf component :arg2))
                  :expected-values '("existing point indices")))
-        (values (- (aref xs base) (aref xs child))
-                (- (aref ys base) (aref ys child))))))
+        (values (the fixnum (- (the fixnum (aref xs base)) (the fixnum (aref xs child))))
+                (the fixnum (- (the fixnum (aref ys base)) (the fixnum (aref ys child))))))))
 
 (defun load-composite-points (loader gid pos phantom out coords)
+  (declare (type font-loader loader)
+           (type (unsigned-byte 16) gid)
+           (type (unsigned-byte 32) pos)
+           (type simple-vector phantom)
+           (type outline-points out)
+           (type (or null simple-vector) coords))
   (let* ((components (read-components (font-data loader) pos))
          (count (+ (length components) 4))
          (data (and coords (gvar-glyph-data loader gid)))
          (dx nil) (dy nil)
          (point-base (fill-pointer (op-xs out))))
+    (declare (type fixnum count point-base))
     (when data
       (multiple-value-setq (dx dy) (composite-glyph-deltas data coords count))
       (when dx
         (setf phantom (add-phantom-deltas phantom dx dy (- count 4)))))
     (loop for component in components
-          for i from 0
+          for i of-type fixnum from 0
           do (let* ((start (fill-pointer (op-xs out)))
                     (component-phantom (load-glyph-points loader (getf component :glyph) out coords))
                     (end (fill-pointer (op-xs out)))
                     (xs (op-xs out))
                     (ys (op-ys out)))
+               (declare (type fixnum start end))
                ;; USE_MY_METRICS takes the component's phantom points.
-               (when (logbitp 9 (getf component :flags))
+               (when (logbitp 9 (the fixnum (getf component :flags)))
                  (setf phantom component-phantom))
                (when (getf component :transformed)
                  (transform-component-points xs ys start end (getf component :transform)))
                (multiple-value-bind (ox oy)
                    (component-offset component gid xs ys point-base start end
-                                     (and dx (aref dx i)) (and dy (aref dy i)))
+                                     (and dx (aref (the fixed-array dx) i))
+                                     (and dy (aref (the fixed-array dy) i)))
+                 (declare (type fixnum ox oy))
                  (unless (and (zerop ox) (zerop oy))
-                   (loop for j from start below end
-                         do (incf (aref xs j) ox)
-                            (incf (aref ys j) oy))))))
+                   (loop for j of-type fixnum from start below end
+                         do (incf (the fixnum (aref xs j)) ox)
+                            (incf (the fixnum (aref ys j)) oy))))))
     phantom))
 
 (defun glyph-outline-points (loader gid)
