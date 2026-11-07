@@ -93,21 +93,55 @@ whose contour count is at POS - 10, as four vectors."
 
 ;;; Phantom points
 
-(defun phantom-points (loader gid x-min y-max)
-  "The four phantom points of GID as a vector of (x . y), from its metrics."
+(deftype phantom-array ()
+  "The four phantom points of a glyph as X0 Y0 X1 Y1 X2 Y2 X3 Y3."
+  '(simple-array (signed-byte 32) (8)))
+
+(defun phantom-array (loader gid x-min y-max)
+  "The four phantom points of GID, in font units, from its metrics."
   (let* ((lsb (bounded-aref (left-side-bearings loader) gid))
          (advance (bounded-aref (advance-widths loader) gid))
          (ascent (slot-value loader 'ascender))
-         (descent (slot-value loader 'descender)))
+         (descent (slot-value loader 'descender))
+         (result (make-array 8 :element-type '(signed-byte 32))))
     (multiple-value-bind (tsb vadvance)
         (if (vmtx-missing-p loader)
             (values (- ascent y-max) (- ascent descent))
             (values (bounded-aref (top-side-bearings loader) gid)
                     (bounded-aref (advance-heights loader) gid)))
-      (vector (cons (- x-min lsb) 0)
-              (cons (+ (- x-min lsb) advance) 0)
-              (cons 0 (+ y-max tsb))
-              (cons 0 (- (+ y-max tsb) vadvance))))))
+      (let ((pp1x (- x-min lsb)))
+        (setf (aref result 0) pp1x
+              (aref result 1) 0
+              (aref result 2) (+ pp1x advance)
+              (aref result 3) 0
+              (aref result 4) 0
+              (aref result 5) (+ y-max tsb)
+              (aref result 6) 0
+              (aref result 7) (- (+ y-max tsb) vadvance))))
+    result))
+
+(defun phantom-points (loader gid x-min y-max)
+  "The four phantom points of GID as a vector of (x . y), from its metrics."
+  (let ((a (phantom-array loader gid x-min y-max)))
+    (vector (cons (aref a 0) (aref a 1))
+            (cons (aref a 2) (aref a 3))
+            (cons (aref a 4) (aref a 5))
+            (cons (aref a 6) (aref a 7)))))
+
+(defun phantom-column (phantom column)
+  "The x (COLUMN 0) or y (COLUMN 1) of the four phantom points in the array
+PHANTOM, as a vector."
+  (declare (type phantom-array phantom) (type (integer 0 1) column))
+  (vector (aref phantom column) (aref phantom (+ 2 column))
+          (aref phantom (+ 4 column)) (aref phantom (+ 6 column))))
+
+(defun add-phantom-array-deltas (phantom dx dy start)
+  "A copy of the array PHANTOM moved by the rounded deltas at START of DX and DY."
+  (declare (type phantom-array phantom))
+  (let ((result (copy-seq phantom)))
+    (dotimes (i 4 result)
+      (incf (aref result (* 2 i)) (the fixnum (fixed-round (aref dx (+ start i)))))
+      (incf (aref result (1+ (* 2 i))) (the fixnum (fixed-round (aref dy (+ start i))))))))
 
 (defun add-phantom-deltas (phantom dx dy start)
   "Phantom points moved by the rounded deltas at START of DX and DY."
@@ -179,8 +213,9 @@ whose contour count is at POS - 10, as four vectors."
               do (vector-push-extend (+ base end) (op-ends out))))
       phantom)))
 
-(defun read-component (fd pos)
-  "The component record at POS as a plist, and the position after it."
+(defun component-fields (fd pos)
+  "The component record at POS: its flags, glyph, two arguments, the 16.16
+transform xx yx xy yy, and the position after it."
   (let* ((flags (runes/otf:font-data-read-u16 fd pos))
          (glyph (runes/otf:font-data-read-u16 fd (+ pos 2)))
          (words (logbitp 0 flags))
@@ -201,10 +236,15 @@ whose contour count is at POS - 10, as four vectors."
               ((logbitp 6 flags) (setf xx (f2 p) yy (f2 (+ p 2))) (incf p 4))
               ((logbitp 7 flags) (setf xx (f2 p) yx (f2 (+ p 2)) xy-skew (f2 (+ p 4)) yy (f2 (+ p 6)))
                (incf p 8))))
-      (values (list :flags flags :glyph glyph :xy xy :arg1 arg1 :arg2 arg2
-                    :transform (vector xx yx xy-skew yy)
-                    :transformed (logtest flags #b11001000))
-              p))))
+      (values flags glyph arg1 arg2 xx yx xy-skew yy p))))
+
+(defun read-component (fd pos)
+  "The component record at POS as a plist, and the position after it."
+  (multiple-value-bind (flags glyph arg1 arg2 xx yx xy-skew yy p) (component-fields fd pos)
+    (values (list :flags flags :glyph glyph :xy (logbitp 1 flags) :arg1 arg1 :arg2 arg2
+                  :transform (vector xx yx xy-skew yy)
+                  :transformed (logtest flags #b11001000))
+            p)))
 
 (defun hypot-fixed (a b)
   (let ((a (abs a)) (b (abs b)))
