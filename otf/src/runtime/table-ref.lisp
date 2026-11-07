@@ -4,6 +4,8 @@
 
 (in-package #:runes/otf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defstruct (table-ref (:constructor %make-table-ref (%table-font-data %table-offset %table-length)))
   "Base struct for all zero-copy OpenType table and subtable views."
   (%table-font-data nil :type font-data :read-only t)
