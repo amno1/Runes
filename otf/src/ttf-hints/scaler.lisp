@@ -681,39 +681,42 @@ variation deltas added to XS and YS, as DECODE-SIMPLE-GLYPH-INTO-ZONE does."
          (n 0)
          (z nil))
     (declare (type (signed-byte 32) scale) (type (unsigned-byte 17) n))
-    (if data
-        ;; A variable font's glyph: the deltas need the points as vectors.
-        (multiple-value-bind (ends xs ys on) (read-simple-points fd pos contour-count)
-          (declare (simple-vector ends xs ys on))
-          (setf n (length xs))
-          ;; All the points, the phantom points after the glyph's own.
-          (let ((all-x (make-array (+ n 4)))
-                (all-y (make-array (+ n 4))))
-            (replace all-x xs)
-            (replace all-y ys)
-            (dotimes (k 4)
-              (setf (svref all-x (+ n k)) (aref phantom (* 2 k))
-                    (svref all-y (+ n k)) (aref phantom (1+ (* 2 k)))))
-            (multiple-value-bind (dx dy) (simple-glyph-deltas data coords all-x all-y (coerce ends 'list))
-              (when dx
-                (let ((dx dx) (dy dy))
-                  (declare (type fixed-array dx dy))
-                  (dotimes (i n)
-                    (setf (svref xs i) (+ (the fixnum (svref xs i)) (fixed-round (aref dx i)))
-                          (svref ys i) (+ (the fixnum (svref ys i)) (fixed-round (aref dy i))))))
-                (setf phantom (add-phantom-array-deltas phantom dx dy n)))))
-          ;; Reuse the engine's glyph zone arena in place!
-          (setf z (runes/otf/tt-hint:ensure-zone-capacity
-                   (runes/otf/tt-hint::eng-glyph eng) (+ n 4) contour-count :n-glyph-points n))
-          (fill-zone-from-vectors z ends xs ys on n scale))
-        (progn
-          (setf n (if (zerop contour-count)
-                      0
-                      (1+ (runes/otf:font-data-read-u16
-                           fd (+ pos (* 2 (1- contour-count)))))))
-          (setf z (runes/otf/tt-hint:ensure-zone-capacity
-                   (runes/otf/tt-hint::eng-glyph eng) (+ n 4) contour-count :n-glyph-points n))
-          (decode-simple-glyph-into-zone fd pos contour-count z n scale)))
+    (setf n (if (zerop contour-count)
+                0
+                (1+ (runes/otf:font-data-read-u16
+                     fd (+ pos (* 2 (1- contour-count)))))))
+    (setf z (runes/otf/tt-hint:ensure-zone-capacity
+             (runes/otf/tt-hint::eng-glyph eng) (+ n 4) contour-count :n-glyph-points n))
+    (decode-simple-glyph-into-zone fd pos contour-count z n scale)
+    (when data
+      ;; A variable font's glyph: the deltas move the font unit points, which
+      ;; are scaled again.  The phantom points go after the glyph's own.
+      (let ((ux (runes/otf/tt-hint:zone-unscaled-x z))
+            (uy (runes/otf/tt-hint:zone-unscaled-y z))
+            (ox (runes/otf/tt-hint:zone-orig-x z))
+            (oy (runes/otf/tt-hint:zone-orig-y z))
+            (cx (runes/otf/tt-hint:zone-cur-x z))
+            (cy (runes/otf/tt-hint:zone-cur-y z)))
+        (declare (type fixed-array ux uy ox oy cx cy))
+        (dotimes (k 4)
+          (setf (aref ux (+ n k)) (aref phantom (* 2 k))
+                (aref uy (+ n k)) (aref phantom (1+ (* 2 k)))))
+        (multiple-value-bind (dx dy)
+            (zone-glyph-deltas data coords ux uy (+ n 4)
+                               (runes/otf/tt-hint:zone-contours z) contour-count)
+          (when dx
+            (let ((dx dx) (dy dy))
+              (declare (type fixed-array dx dy))
+              (dotimes (i n)
+                (let ((x (+ (aref ux i) (the fixnum (fixed-round (aref dx i)))))
+                      (y (+ (aref uy i) (the fixnum (fixed-round (aref dy i))))))
+                  (setf (aref ux i) x
+                        (aref uy i) y
+                        (aref ox i) (scale-funit x scale)
+                        (aref oy i) (scale-funit y scale)
+                        (aref cx i) (aref ox i)
+                        (aref cy i) (aref oy i)))))
+            (setf phantom (add-phantom-array-deltas phantom dx dy n))))))
     (let ((ux (runes/otf/tt-hint:zone-unscaled-x z))
           (uy (runes/otf/tt-hint:zone-unscaled-y z))
           (ox (runes/otf/tt-hint:zone-orig-x z))

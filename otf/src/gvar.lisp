@@ -76,27 +76,40 @@
   shared-points)                         ; :all, a vector of point numbers, or NIL
 
 (defun gvar-glyph-data (loader gid)
-  "The variation data for GID, or NIL if the glyph has none."
+  "The variation data for GID, or NIL if the glyph has none.  What is read is
+kept for the glyph, as the font does not change."
   (let ((cache (or (%gvar-cache loader)
                    (setf (%gvar-cache loader)
                          (let ((info (table-info "gvar" loader)))
                            (if info
-                               (cons info (runes/otf:read-gvar (font-data loader)
-                                                               (offset info) (size info)))
+                               (let ((gvar (runes/otf:read-gvar (font-data loader)
+                                                                (offset info) (size info))))
+                                 (vector info gvar
+                                         (make-array (runes/otf:gvar-glyph-count gvar)
+                                                     :initial-element nil)))
                                :none))))))
     (unless (eq cache :none)
-      (let* ((info (car cache))
+      (let* ((info (svref cache 0))
              (fd (font-data loader))
-             (gvar (cdr cache)))
-        (when (< gid (runes/otf:gvar-glyph-count gvar))
-          (flet ((data-position (i)
-                   (+ (offset info)
-                      (runes/otf:gvar-glyph-variation-data-array-offset gvar)
-                      (runes/otf:gvar-glyph-variation-data-offset-ref gvar i))))
-            (let ((start (data-position gid))
-                  (stop (data-position (1+ gid))))
-              (when (and (< start stop) (<= stop (+ (offset info) (size info))))
-                (read-glyph-var-data fd gvar start stop)))))))))
+             (gvar (svref cache 1))
+             (known (svref cache 2)))
+        (declare (simple-vector known))
+        (when (< gid (length known))
+          (let ((entry (svref known gid)))
+            (cond
+              ((null entry)
+               (flet ((data-position (i)
+                        (+ (offset info)
+                           (runes/otf:gvar-glyph-variation-data-array-offset gvar)
+                           (runes/otf:gvar-glyph-variation-data-offset-ref gvar i))))
+                 (let* ((start (data-position gid))
+                        (stop (data-position (1+ gid)))
+                        (data (and (< start stop) (<= stop (+ (offset info) (size info)))
+                                   (read-glyph-var-data fd gvar start stop))))
+                   (setf (svref known gid) (or data :none))
+                   data)))
+              ((eq entry :none) nil)
+              (t entry))))))))
 
 (defun read-glyph-var-data (fd gvar start stop)
   "The GlyphVariationData table from START to STOP of the 'gvar' table GVAR."
@@ -162,17 +175,44 @@
   (declare (gvar-cursor c) (type (member 0 1 2 4) width))
   (if (zerop width) 0 (gc-int c width t)))
 
+(declaim (inline gc-signed-unchecked))
+(defun gc-signed-unchecked (c bytes)
+  "The signed BYTES-byte value at C's position, which is known to be within the
+data; moves on."
+  (declare (gvar-cursor c) (type (member 1 2 4) bytes) (optimize (speed 3) (safety 0)))
+  (let ((fd (gc-fd c)) (pos (gc-pos c)) (v 0))
+    (declare (type (unsigned-byte 32) v) (fixnum pos))
+    (dotimes (i bytes)
+      (setf v (logior (ash v 8) (runes/otf:font-data-read-u8 fd (+ pos i)))))
+    (setf (gc-pos c) (+ pos bytes))
+    (if (logbitp (1- (* 8 bytes)) v) (- v (ash 1 (* 8 bytes))) v)))
+
 (defmacro do-delta-runs ((value width) c continue &body body)
   "While CONTINUE is true, read a run of deltas at cursor C and run BODY for
 each of its values, with VALUE bound to the delta and WIDTH to the run's
-byte width (0 for a run of zeros).  Runs are always read whole."
-  (let ((run (gensym "RUN")) (i (gensym "I")))
-    `(loop while ,continue
-           do (multiple-value-bind (,run ,width) (read-delta-run ,c)
-                (declare (ignorable ,width))
-                (dotimes (,i ,run)
-                  (let ((,value (read-run-value ,c ,width)))
-                    ,@body))))))
+byte width (0 for a run of zeros).  Runs are always read whole.  A run that
+fits in the data is read without a check for each value; one that does not
+is read value by value, so that the values before the end are used."
+  (let ((run (gensym "RUN")) (i (gensym "I")) (cursor (gensym "C")) (w (gensym "W")))
+    `(let ((,cursor ,c))
+       (loop while ,continue
+             do (multiple-value-bind (,run ,w) (read-delta-run ,cursor)
+                  (declare (fixnum ,run) (type (member 0 1 2 4) ,w))
+                  (let ((,width ,w))
+                    (declare (ignorable ,width))
+                    (macrolet ((run-of (bytes)
+                                 `(dotimes (,',i ,',run)
+                                    (let ((,',value (gc-signed-unchecked ,',cursor ,bytes)))
+                                      ,@',body))))
+                      (if (and (plusp ,w)
+                               (<= (+ (gc-pos ,cursor) (* ,w ,run)) (gc-end ,cursor)))
+                          (ecase ,w
+                            (1 (run-of 1))
+                            (2 (run-of 2))
+                            (4 (run-of 4)))
+                          (dotimes (,i ,run)
+                            (let ((,value (if (zerop ,w) 0 (gc-int ,cursor ,w t))))
+                              ,@body))))))))))
 
 (defmacro do-dense-deltas ((index delta) c count &body body)
   "Run BODY for each INDEX below COUNT with its DELTA, read at cursor C; runs
@@ -277,35 +317,83 @@ intermediate region as (start . end) or NIL, and the position after it."
                              (cons (next-tuple) (next-tuple)))))
         (values size index peak intermediate p)))))
 
+(defun header-scalar (data pos index coords)
+  "The scalar of the tuple whose header is at POS, with tuple index field
+INDEX, at COORDS, read straight from the font data: the same as
+GVAR-TUPLE-SCALAR on READ-TUPLE-HEADER's tuples, without making them.  NIL if
+the tuple does not apply, or names a shared tuple that does not exist."
+  (declare (type glyph-var-data data) (fixnum pos index) (simple-vector coords))
+  (let* ((fd (glyph-var-data-fd data))
+         (axis-count (glyph-var-data-axis-count data))
+         (tuple-size (* 2 axis-count))
+         (own (logbitp 15 index))
+         (peak-pos (if own
+                       (+ pos 4)
+                       (let ((shared (logand index #x0FFF)))
+                         (and (< shared (glyph-var-data-shared-tuple-count data))
+                              (+ (glyph-var-data-shared-tuples data) (* shared tuple-size))))))
+         (inter-start (and (logbitp 14 index) (+ pos 4 (if own tuple-size 0))))
+         (inter-end (and inter-start (+ inter-start tuple-size))))
+    (declare (fixnum axis-count tuple-size))
+    (when peak-pos
+      (flet ((coord (i) (if (< i (length coords)) (svref coords i) 0))
+             (scale (scalar numerator denominator)
+               (runes/otf/charstring::fixed-mul-div scalar (ash numerator 2) (ash denominator 2))))
+        (declare (inline coord scale))
+        (loop with scalar of-type (signed-byte 32) = #x10000
+              for i of-type fixnum below axis-count
+              for p of-type (signed-byte 16) = (runes/otf:font-data-read-i16 fd (+ peak-pos (* 2 i)))
+              for coord of-type (signed-byte 16) = (coord i)
+              do (cond
+                   ((or (zerop p) (= p coord)))
+                   ((zerop coord) (return nil))
+                   ((null inter-start)
+                    (if (<= (min p 0) coord (max p 0))
+                        (setf scalar (scale scalar coord p))
+                        (return nil)))
+                   (t
+                    (let ((start (runes/otf:font-data-read-i16 fd (+ inter-start (* 2 i))))
+                          (end (runes/otf:font-data-read-i16 fd (+ inter-end (* 2 i)))))
+                      (declare (type (signed-byte 16) start end))
+                      (cond
+                        ((or (> start p) (> p end) (and (minusp start) (plusp end))))
+                        ((or (<= coord start) (>= coord end)) (return nil))
+                        ((< coord p) (setf scalar (scale scalar (- coord start) (- p start))))
+                        (t (setf scalar (scale scalar (- end coord) (- end p))))))))
+              finally (return (unless (zerop scalar) scalar)))))))
+
 (defun map-active-tuples (data coords fn)
   "Call FN with (scalar points data-cursor) for each tuple that applies at
 COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
-  (declare (function fn))
+  (declare (function fn) (type glyph-var-data data) (simple-vector coords))
   ;; The headers come one after another, and so do the tuples' data.  One
   ;; cursor does for all of them: FN is done with it when it returns.
-  (let ((cursor (make-gvar-cursor :fd (glyph-var-data-fd data)))
-        (header (glyph-var-data-headers data))
-        (start (glyph-var-data-serialized data)))
-    (declare (fixnum header start))
+  (let* ((fd (glyph-var-data-fd data))
+         (cursor (make-gvar-cursor :fd fd))
+         (header (glyph-var-data-headers data))
+         (start (glyph-var-data-serialized data))
+         (tuple-size (* 2 (glyph-var-data-axis-count data))))
+    (declare (fixnum header start tuple-size))
     (dotimes (i (glyph-var-data-tuple-count data))
-      (multiple-value-bind (size index peak intermediate next-header)
-          (read-tuple-header data header)
-        (declare (fixnum size index next-header))
-        (let ((end (+ start size)))
-          ;; Tuple data past the end of the glyph's data ends the iteration.
-          (when (> end (glyph-var-data-serialized-end data))
-            (return))
-          (let ((scalar (and peak (gvar-tuple-scalar peak intermediate coords))))
-            (when scalar
-              (setf (gc-pos cursor) start
-                    (gc-end cursor) end)
-              (funcall fn scalar
-                       (if (logbitp 13 index)
-                           (read-packed-points cursor)
-                           (or (glyph-var-data-shared-points data) (gvar-fail)))
-                       cursor)))
-          (setf header next-header
-                start end))))))
+      (let* ((size (runes/otf:font-data-read-u16 fd header))
+             (index (runes/otf:font-data-read-u16 fd (+ header 2)))
+             (end (+ start size)))
+        (declare (fixnum size index end))
+        ;; Tuple data past the end of the glyph's data ends the iteration.
+        (when (> end (glyph-var-data-serialized-end data))
+          (return))
+        (let ((scalar (header-scalar data header index coords)))
+          (when scalar
+            (setf (gc-pos cursor) start
+                  (gc-end cursor) end)
+            (funcall fn scalar
+                     (if (logbitp 13 index)
+                         (read-packed-points cursor)
+                         (or (glyph-var-data-shared-points data) (gvar-fail)))
+                     cursor)))
+        (setf header (+ header 4 (* tuple-size (+ (if (logbitp 15 index) 1 0)
+                                                  (if (logbitp 14 index) 2 0))))
+              start end)))))
 
 (defun scaled-delta (delta scalar)
   (declare (type (signed-byte 32) delta scalar))
@@ -383,24 +471,29 @@ the typed arrays of the glyph path."
     (do-dense-deltas (i d) c n (add-fixed-delta dx i d scalar))
     (do-dense-deltas (i d) c n (add-fixed-delta dy i d scalar))))
 
-(defun interpolate-contours (fx fy out-x out-y touched ends)
-  "Infer the deltas of the untouched points of every contour (IUP)."
-  (declare (type fixed-array fx fy out-x out-y) (simple-bit-vector touched))
-  (loop with start = 0
-        for end in ends
+(defun interpolate-contours (fx fy out-x out-y touched ends n-ends)
+  "Infer the deltas of the untouched points of every contour (IUP); ENDS holds
+the N-ENDS contour end points."
+  (declare (type fixed-array fx fy out-x out-y) (simple-bit-vector touched)
+           (type (simple-array (unsigned-byte 16) (*)) ends) (fixnum n-ends))
+  (let ((start 0))
+    (declare (fixnum start))
+    (dotimes (c n-ends)
+      (let ((end (aref ends c)))
         ;; A contour ending before the previous one is skipped.
-        when (>= end start)
-          do (when (>= end (length fx)) (gvar-fail))
-             (interpolate-untouched fx fy out-x out-y touched start end)
-             (setf start (1+ end))))
+        (when (>= end start)
+          (when (>= end (length fx)) (gvar-fail))
+          (interpolate-untouched fx fy out-x out-y touched start end)
+          (setf start (1+ end)))))))
 
-(defun add-sparse-deltas (c scalar points fx fy ends dx dy)
+(defun add-sparse-deltas (c scalar points fx fy ends n-ends dx dy)
   "Add a tuple's deltas for POINTS, read at cursor C, to DX and DY, with
 those of the other points inferred from them.  FX and FY are the points'
 16.16 coordinates."
   (declare (gvar-cursor c) (type (signed-byte 32) scalar)
            (type (simple-array (unsigned-byte 16) (*)) points)
-           (type fixed-array fx fy dx dy))
+           (type fixed-array fx fy dx dy) (fixnum n-ends)
+           (type (simple-array (unsigned-byte 16) (*)) ends))
   (let* ((n (length fx))
          (out-x (copy-seq fx))
          (out-y (copy-seq fy))
@@ -414,54 +507,100 @@ those of the other points inferred from them.  FX and FY are the points'
     (do-sparse-deltas (i d) c points (length points)
       (when (< i n)
         (add-fixed-delta out-y i d scalar)))
-    (interpolate-contours fx fy out-x out-y touched ends)
+    (interpolate-contours fx fy out-x out-y touched ends n-ends)
     (dotimes (i n)
       (setf (aref dx i) (f+ (aref dx i) (f- (aref out-x i) (aref fx i)))
             (aref dy i) (f+ (aref dy i) (f- (aref out-y i) (aref fy i)))))))
 
-(defun simple-glyph-deltas (data coords xs ys ends)
-  "16.16 deltas for every point of a simple glyph, phantom points included,
-as two arrays; XS and YS are the font unit coordinates of all its points
-and ENDS its contour end points. NIL if the data is malformed."
-  (declare (simple-vector xs ys))
-  (let* ((n (length xs))
+(defun glyph-deltas-from-fixed (data coords fx fy ends n-ends)
+  "16.16 deltas for the points whose 16.16 coordinates are FX and FY, as two
+arrays; ENDS holds the N-ENDS contour end points. NIL if the data is malformed."
+  (declare (type fixed-array fx fy) (type (simple-array (unsigned-byte 16) (*)) ends)
+           (fixnum n-ends))
+  (let* ((n (length fx))
          (dx (make-array n :element-type '(signed-byte 32) :initial-element 0))
-         (dy (make-array n :element-type '(signed-byte 32) :initial-element 0))
-         (fx (make-array n :element-type '(signed-byte 32)))
-         (fy (make-array n :element-type '(signed-byte 32))))
-    (dotimes (i n)
-      (setf (aref fx i) (fixed-from-int (svref xs i))
-            (aref fy i) (fixed-from-int (svref ys i))))
+         (dy (make-array n :element-type '(signed-byte 32) :initial-element 0)))
     (handler-case
         (progn
           (map-active-tuples data coords
                              (lambda (scalar points c)
                                (if (eq points :all)
                                    (add-dense-deltas c scalar dx dy)
-                                   (add-sparse-deltas c scalar points fx fy ends dx dy))))
+                                   (add-sparse-deltas c scalar points fx fy ends n-ends dx dy))))
           (values dx dy))
       (gvar-data-error () nil))))
 
+(defun simple-glyph-deltas (data coords xs ys ends)
+  "16.16 deltas for every point of a simple glyph, phantom points included,
+as two arrays; XS and YS are the font unit coordinates of all its points
+and ENDS (a list) its contour end points. NIL if the data is malformed."
+  (declare (simple-vector xs ys))
+  (let* ((n (length xs))
+         (fx (make-array n :element-type '(signed-byte 32)))
+         (fy (make-array n :element-type '(signed-byte 32)))
+         (ends (coerce ends '(simple-array (unsigned-byte 16) (*)))))
+    (dotimes (i n)
+      (setf (aref fx i) (fixed-from-int (svref xs i))
+            (aref fy i) (fixed-from-int (svref ys i))))
+    (glyph-deltas-from-fixed data coords fx fy ends (length ends))))
+
+(defun zone-glyph-deltas (data coords ux uy count ends n-ends)
+  "Like SIMPLE-GLYPH-DELTAS for the COUNT points (phantom points included) in
+the first elements of the arrays UX and UY of font unit coordinates, and the
+N-ENDS contour end points in ENDS."
+  (declare (type fixed-array ux uy) (fixnum count n-ends)
+           (type (simple-array (unsigned-byte 16) (*)) ends))
+  (let ((fx (make-array count :element-type '(signed-byte 32)))
+        (fy (make-array count :element-type '(signed-byte 32))))
+    (dotimes (i count)
+      (setf (aref fx i) (fixed-from-int (aref ux i))
+            (aref fy i) (fixed-from-int (aref uy i))))
+    (glyph-deltas-from-fixed data coords fx fy ends n-ends)))
+
 ;;; Composite glyphs
 
-(defun component-deltas (c points)
-  "A tuple's component positions, as a list, and its deltas, read at cursor
-C: an x delta for each position, then as many y deltas."
-  (if (eq points :all)
-      ;; Every delta in the data, half of them x and half y.
-      (let ((all (read-all-deltas c)))
-        (values (loop for i below (floor (length all) 2) collect i) all))
-      (values (coerce points 'list) (read-n-deltas c (* 2 (length points))))))
+(defun add-component-deltas (points half deltas count scalar dx dy)
+  "Add the scaled DELTAS (the first COUNT of the array) of the positions
+POINTS, or 0.. when it is NIL, to DX and DY: HALF x deltas, then as many y
+deltas.  Positions past the components, or without a y delta, are skipped."
+  (declare (type (or null (simple-array (unsigned-byte 16) (*))) points)
+           (fixnum half count) (type fixed-array deltas dx dy)
+           (type (signed-byte 32) scalar))
+  (dotimes (i half)
+    (let ((position (if points (aref points i) i)))
+      (when (and (< position (length dx)) (< (+ half i) count))
+        (add-fixed-delta dx position (aref deltas i) scalar)
+        (add-fixed-delta dy position (aref deltas (+ half i)) scalar)))))
 
-(defun add-component-deltas (positions deltas scalar dx dy)
-  "Add the scaled DELTAS of POSITIONS, as COMPONENT-DELTAS gives them, to DX
-and DY.  Positions past the components, or without a y delta, are skipped."
-  (loop with half = (length positions)
-        for position in positions
-        for i from 0
-        when (and (< position (length dx)) (< (+ half i) (length deltas)))
-          do (add-fixed-delta dx position (aref deltas i) scalar)
-             (add-fixed-delta dy position (aref deltas (+ half i)) scalar)))
+(defun read-n-deltas (c limit)
+  "Up to LIMIT deltas from C, fewer if the data ends: an array, and how many."
+  (declare (fixnum limit))
+  (let ((out (make-array limit :element-type '(signed-byte 32)))
+        (n 0))
+    (declare (fixnum n))
+    (handler-case
+        (do-delta-runs (delta width) c (< n limit)
+          (when (< n limit)
+            (setf (aref out n) delta)
+            (incf n)))
+      (gvar-data-error () nil))
+    (values out n)))
+
+(defun read-all-deltas (c)
+  "Every delta from C to the end of its data: an array, and how many."
+  (let ((out (make-array 32 :element-type '(signed-byte 32)))
+        (n 0))
+    (declare (type fixed-array out) (fixnum n))
+    (handler-case
+        (do-delta-runs (delta width) c (< (gc-pos c) (gc-end c))
+          (when (= n (length out))
+            (let ((bigger (make-array (* 2 n) :element-type '(signed-byte 32))))
+              (replace bigger out)
+              (setf out bigger)))
+          (setf (aref out n) delta)
+          (incf n))
+      (gvar-data-error () nil))
+    (values out n)))
 
 (defun composite-glyph-deltas (data coords count)
   "16.16 deltas for the COUNT components and phantom points of a composite
@@ -470,27 +609,14 @@ glyph, as two vectors; NIL if the data is malformed."
         (dy (make-array count :element-type '(signed-byte 32) :initial-element 0)))
     (handler-case
         (progn
-          (map-active-tuples data coords
-                             (lambda (scalar points c)
-                               (multiple-value-bind (positions deltas) (component-deltas c points)
-                                 (add-component-deltas positions deltas scalar dx dy))))
+          (map-active-tuples
+           data coords
+           (lambda (scalar points c)
+             (if (eq points :all)
+                 ;; Every delta in the data, half of them x and half y.
+                 (multiple-value-bind (all n) (read-all-deltas c)
+                   (add-component-deltas nil (floor n 2) all n scalar dx dy))
+                 (multiple-value-bind (all n) (read-n-deltas c (* 2 (length points)))
+                   (add-component-deltas points (length points) all n scalar dx dy)))))
           (values dx dy))
       (gvar-data-error () nil))))
-
-(defun read-n-deltas (c limit)
-  "Up to LIMIT deltas from C, fewer if the data ends."
-  (let ((out (make-array limit :fill-pointer 0)))
-    (handler-case
-        (do-delta-runs (delta width) c (< (fill-pointer out) limit)
-          (when (< (fill-pointer out) limit) (vector-push delta out)))
-      (gvar-data-error () nil))
-    out))
-
-(defun read-all-deltas (c)
-  "Every delta from C to the end of its data."
-  (let ((out (make-array 16 :adjustable t :fill-pointer 0)))
-    (handler-case
-        (do-delta-runs (delta width) c (< (gc-pos c) (gc-end c))
-          (vector-push-extend delta out))
-      (gvar-data-error () nil))
-    out))
