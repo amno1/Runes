@@ -192,7 +192,10 @@ put back.")
   ;; Lookups that hit **TT-LAST-POOL-ENTRY** do not count, which is fine: the
   ;; size in use is the one that cache holds.
   (stamp 0 :type fixnum)
-  ;; The idle engines.  Taken and returned with ATOMIC-POP and ATOMIC-PUSH.
+  ;; An idle engine kept apart, taken and returned with a compare-and-swap: a
+  ;; caller using one size at a time, which is the usual, never conses.
+  (spare nil)
+  ;; The other idle engines.  Taken and returned with ATOMIC-POP and ATOMIC-PUSH.
   (engines nil :type list))
 
 (declaim (sb-ext:freeze-type pool-entry))
@@ -260,14 +263,21 @@ dropping the least recently used ones if the font has too many."
                        (list* (sb-ext:make-weak-pointer loader) ppem-key
                               (pe-coords entry) entry))
                  entry)))
-         (eng (or (sb-ext:atomic-pop (pe-engines pool-entry))
+         (eng (or (let ((spare (pe-spare pool-entry)))
+                    ;; Taken if still there: another caller may have it first.
+                    (and spare
+                         (eq (sb-ext:compare-and-swap (pe-spare pool-entry) spare nil) spare)
+                         spare))
+                  (sb-ext:atomic-pop (pe-engines pool-entry))
                   (make-tt-hint-engine loader ppem coords))))
     ;; A glyph that failed halfway may have left the depth of its composite.
     (setf (runes/otf/tt-hint::eng-depth eng) 0)
     (values eng pool-entry)))
 
 (defun release-tt-engine (eng pool-entry)
-  (sb-ext:atomic-push eng (pe-engines pool-entry)))
+  ;; The spare place if it is free, else the list.
+  (unless (null (sb-ext:compare-and-swap (pe-spare pool-entry) nil eng))
+    (sb-ext:atomic-push eng (pe-engines pool-entry))))
 
 (defmacro with-pooled-tt-engine ((eng loader ppem coords) &body body)
   (let ((entry (gensym "POOL-ENTRY")))

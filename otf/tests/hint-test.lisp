@@ -220,6 +220,33 @@ sizes, with what HINT-OUTLINE-26DOT6 returns."
               (setf same nil))))))
     same))
 
+(defun check-concurrent-hinting (loader)
+  "Threads hinting at the same size and at different ones, with engines taken
+from and returned to the same pools, get the outlines one thread does."
+  (let* ((glyphs (loop for g below (min 300 (zpb-ttf:glyph-count loader)) collect g))
+         (sizes '(12 16))
+         (expected (make-hash-table :test 'equal))
+         (failures 0)
+         (lock (sb-thread:make-mutex)))
+    (dolist (ppem sizes)
+      (dolist (g glyphs)
+        (setf (gethash (cons ppem g) expected)
+              (multiple-value-list (zpb-ttf:hint-outline-26dot6 loader g ppem)))))
+    (let ((threads
+            (loop for k below 6
+                  collect (let ((k k))
+                            (sb-thread:make-thread
+                             (lambda ()
+                               (dotimes (round 4)
+                                 (dolist (g (if (evenp k) glyphs (reverse glyphs)))
+                                   (let ((ppem (nth (mod (+ k round) 2) sizes)))
+                                     (unless (equalp (multiple-value-list
+                                                      (zpb-ttf:hint-outline-26dot6 loader g ppem))
+                                                     (gethash (cons ppem g) expected))
+                                       (sb-thread:with-mutex (lock) (incf failures))))))))))))
+      (mapc #'sb-thread:join-thread threads))
+    (zerop failures)))
+
 (defun check-bad-glyph-index (loader)
   "A glyph index past the font's glyphs is an error, not a read past the table."
   (let ((count (zpb-ttf:glyph-count loader)))
@@ -244,6 +271,8 @@ sizes, with what HINT-OUTLINE-26DOT6 returns."
                              (zerop fixed)))
                     (check (format nil "~A: HINT-OUTLINE-26DOT6-INTO gives the same outlines" label)
                            (check-outline-into loader))
+                    (check (format nil "~A: six threads hint what one does" label)
+                           (check-concurrent-hinting loader))
                     (check (format nil "~A: a glyph index out of range is an error" label)
                            (check-bad-glyph-index loader))
                     (multiple-value-bind (count different) (check-decoder-fallback loader)
