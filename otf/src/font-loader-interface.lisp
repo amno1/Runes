@@ -494,7 +494,6 @@ of fonts in the collection (NIL for a single font)."
       (load-post loader)
       (load-cmap loader)
       (load-kern loader)
-      (setf (glyph-cache loader) (make-array (glyph-count loader) :initial-element nil))
       loader)))
 
 (defun open-font-loader (thing &key (collection-index 0))

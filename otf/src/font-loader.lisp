@@ -313,12 +313,16 @@ them, 0 where the table is too short for it."
     (not (zerop (code-point-font-index cp font-loader)))))
 
 (defmethod index-glyph (index (font-loader font-loader))
-  (let ((cache (glyph-cache font-loader)))
-    (unless (and (integerp index) (< -1 index (glyph-count font-loader)) cache)
-      (error 'unsupported-value
-             :description "Glyph index out of range"
-             :actual-value index
-             :expected-values (list (format nil "0..~D" (1- (glyph-count font-loader))))))
+  (unless (and (integerp index) (< -1 index (glyph-count font-loader)))
+    (error 'unsupported-value
+           :description "Glyph index out of range"
+           :actual-value index
+           :expected-values (list (format nil "0..~D" (1- (glyph-count font-loader))))))
+  ;; The vector of glyph objects is made when the first is asked for: code that
+  ;; works with glyph indices only (hinting a glyph, say) never needs it.
+  (let ((cache (or (glyph-cache font-loader)
+                   (setf (glyph-cache font-loader)
+                         (make-array (glyph-count font-loader) :initial-element nil)))))
     (or (aref cache index)
         (setf (aref cache index)
               (make-instance 'glyph
