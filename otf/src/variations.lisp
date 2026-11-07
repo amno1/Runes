@@ -298,14 +298,19 @@ if the font has none.  Found once: the table does not change with the instance."
   "The normalized coordinates of LOADER's instance as raw 2.14 numbers in a
 simple vector, or NIL for the default instance.  Worked out once for an
 instance (SET-INSTANCE forgets it)."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((cache (%blend-coords-cache loader)))
     (if (eq cache :unset)
         (setf (%blend-coords-cache loader)
               (let ((coords (normalized-coordinates loader)))
                 (and coords
-                     (map 'simple-vector #'runes/otf/charstring::f2dot14-from-real coords))))
+                     (let ((raw (make-array (length coords))))
+                       (dotimes (i (length raw) raw)
+                         (setf (svref raw i)
+                               (runes/otf/charstring::f2dot14-from-real (elt coords i))))))))
         cache)))
 
+(declaim (ftype (function (t (unsigned-byte 32) (unsigned-byte 32) (unsigned-byte 32) simple-vector) (values fixnum &optional)) item-variation-delta-at))
 (defun item-variation-delta-at (fd store outer inner coords)
   "The change of item (OUTER, INNER) of the item variation store at position
 STORE of FD, at COORDS (a vector of raw 2.14 numbers), in 16.16 units without
@@ -343,7 +348,7 @@ read where it lies.  0 for an item the store does not have."
                      (sum 0))
                 (declare (type (unsigned-byte 16) axis-count region-count word-delta-count
                                words count)
-                         (type integer sum))
+                         (type fixnum sum))
                 (dotimes (i count sum)
                   (let* ((pos (+ row (if (< i words)
                                          (* i wide)
@@ -361,7 +366,7 @@ read where it lies.  0 for an item the store does not have."
                                                   (format nil "region ~D out of range" region-index)))
                     ;; A zero delta contributes nothing at any location.
                     (unless (zerop delta)
-                      (incf sum (* delta
+                      (incf sum (* (the (signed-byte 32) delta)
                                    (runes/otf/charstring::region-scalar
                                     fd (+ first-region (* region-index axis-count 6))
                                     axis-count coords))))))))))))
@@ -381,6 +386,7 @@ result is NIL, since the font does not vary that metric through this table."
               (store (mp-store positions))
               (map-position (funcall map-accessor positions)))
           (flet ((round-delta (sum)
+                   (declare (type fixnum sum))
                    ;; Round the 16.16 delta to an integer as FreeType does.
                    (ash (+ sum #x8000) -16)))
             (if (null map-position)
@@ -390,6 +396,7 @@ result is NIL, since the font does not vary that metric through this table."
                         (round-delta (item-variation-delta-at fd store 0 gid coords)))
                     nil)
                 (multiple-value-bind (outer inner) (delta-set-index map-position fd gid)
+                  (declare (type (unsigned-byte 32) outer inner))
                   (if (or (null store) (> inner #xFFFF))
                       0
                       (round-delta (item-variation-delta-at fd store outer inner coords))))))))))
