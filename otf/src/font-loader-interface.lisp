@@ -403,27 +403,30 @@ horizontal ones."
           (underline-thickness loader) (runes/otf:post-underline-thickness post))))
 
 (defun load-names (loader)
-  "Every entry of the 'name' table, decoded."
+  "Every entry of the 'name' table, its string not decoded until it is asked for."
   (with-table (name info) ("name" loader runes/otf:read-name)
     (let ((storage (+ (offset info) (runes/otf:name-storage-offset name)))
           (entries (make-array (runes/otf:name-count name))))
       (dotimes (i (length entries))
-        (let* ((rec (runes/otf:name-name-record-ref name i))
-               (plat (runes/otf:name-record-platform-id rec))
-               (enc (runes/otf:name-record-encoding-id rec)))
+        (let ((rec (runes/otf:name-name-record-ref name i)))
           (setf (aref entries i)
                 (make-instance 'name-entry
                                :font-loader loader
-                               :platform-id plat
-                               :encoding-id enc
+                               :platform-id (runes/otf:name-record-platform-id rec)
+                               :encoding-id (runes/otf:name-record-encoding-id rec)
                                :language-id (runes/otf:name-record-language-id rec)
                                :name-id (runes/otf:name-record-name-id rec)
-                               :value (decode-name-string-from-fd
-                                       (font-data loader)
-                                       (+ storage (runes/otf:name-record-string-offset rec))
-                                       (runes/otf:name-record-length rec)
-                                       plat enc)))))
-      (setf (name-entries loader) entries))))
+                               :source (list (+ storage (runes/otf:name-record-string-offset rec))
+                                             (runes/otf:name-record-length rec))))))
+      (setf (%name-entries loader) entries))))
+
+(defun name-entries (loader)
+  "The entries of LOADER's 'name' table, read on the first call: opening a font
+that is never asked for a name does not read them."
+  (or (%name-entries loader)
+      (progn (load-names loader)
+             (or (%name-entries loader)
+                 (setf (%name-entries loader) (vector))))))
 
 (defun load-cmap (loader)
   (with-table (cmap info) ("cmap" loader runes/otf:read-cmap)
@@ -489,7 +492,6 @@ of fonts in the collection (NIL for a single font)."
       (load-horizontal-metrics loader)
       (load-vertical-metrics loader)
       (load-post loader)
-      (load-names loader)
       (load-cmap loader)
       (load-kern loader)
       (setf (glyph-cache loader) (make-array (glyph-count loader) :initial-element nil))

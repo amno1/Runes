@@ -67,7 +67,8 @@ number of glyphs with a bearing, the table's long ones included."
    (%gdef-variation-store :initform :unknown :accessor %gdef-variation-store)
    (gpos-kerning-cache :initform (make-hash-table) :accessor gpos-kerning-cache)
    ;; from 'name' table
-   (name-entries :initform (vector) :accessor name-entries)
+   ;; The entries of the 'name' table, made when a name is first asked for
+   (name-entries :initform nil :accessor %name-entries)
    ;; from 'post' table
    (italic-angle :accessor italic-angle :initform 0)
    (fixed-pitch-p :accessor fixed-pitch-p :initform nil)
@@ -187,7 +188,19 @@ them, 0 where the table is too short for it."
    (encoding-id :initarg :encoding-id :reader encoding-id)
    (language-id :initarg :language-id :reader language-id)
    (name-id :initarg :name-id :reader name-id)
-   (value :initarg :value :reader value)))
+   ;; The string, decoded when it is asked for: where it is, and how, until then.
+   (%value :initarg :value :initform :unread :accessor %value)
+   (source :initarg :source :initform nil :reader source)))
+
+(defmethod value ((entry name-entry))
+  (let ((value (%value entry)))
+    (if (eq value :unread)
+        (destructuring-bind (position length) (source entry)
+          (setf (%value entry)
+                (decode-name-string-from-fd (font-data (font-loader entry))
+                                            position length
+                                            (platform-id entry) (encoding-id entry))))
+        value)))
 
 (defmethod print-object ((entry name-entry) stream)
   (print-unreadable-object (entry stream :type t)
