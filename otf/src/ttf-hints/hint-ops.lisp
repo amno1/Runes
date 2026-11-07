@@ -658,7 +658,7 @@ between two touched points comes from the unscaled coordinates."
     (loop for op from low to high collect op)))
 
 (defun dispatch-instruction (eng op)
-  (declare (tt-engine eng) (type (unsigned-byte 8) op) (optimize (speed 3) (safety 1)))
+  (declare (tt-engine eng) (type (unsigned-byte 8) op) (optimize (speed 3) (safety 0)))
   (let ((s (eng-stack eng))
         (gs (eng-gs eng)))
     (case op
