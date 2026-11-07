@@ -166,6 +166,11 @@
   ;; restores the post-prep copies before the next glyph only if it is.
   (tables-dirty nil :type boolean)
   (scratch nil)
+  ;; The phantom points, eight numbers each, that loading a glyph makes, so that
+  ;; none is allocated: two for each depth of composite glyph (what the glyph
+  ;; starts from, and what it comes to), as many as have been needed.
+  (phantoms (vector) :type simple-vector)
+  (depth 0 :type fixnum)
   ;; :REQUEST while a caller wants the points of a simple glyph left in the glyph
   ;; zone instead of the hint buffer; :DONE once they are.
   (direct nil)

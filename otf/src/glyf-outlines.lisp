@@ -155,6 +155,13 @@ PHANTOM, as a vector."
       (incf (aref result (* 2 i)) (the fixnum (fixed-round (aref dx (+ start i)))))
       (incf (aref result (1+ (* 2 i))) (the fixnum (fixed-round (aref dy (+ start i))))))))
 
+(defun add-phantom-array-deltas! (phantom dx dy start)
+  "PHANTOM, the array, moved by the rounded deltas at START of DX and DY."
+  (declare (type phantom-array phantom))
+  (dotimes (i 4 phantom)
+    (incf (aref phantom (* 2 i)) (the fixnum (fixed-round (aref dx (+ start i)))))
+    (incf (aref phantom (1+ (* 2 i))) (the fixnum (fixed-round (aref dy (+ start i)))))))
+
 (defun add-phantom-deltas (phantom dx dy start)
   "Phantom points moved by the rounded deltas at START of DX and DY."
   (map 'vector (lambda (p i)

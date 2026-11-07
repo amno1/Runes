@@ -260,9 +260,11 @@ dropping the least recently used ones if the font has too many."
                        (list* (sb-ext:make-weak-pointer loader) ppem-key
                               (pe-coords entry) entry))
                  entry)))
-         (eng (sb-ext:atomic-pop (pe-engines pool-entry))))
-    (values (or eng (make-tt-hint-engine loader ppem coords))
-            pool-entry)))
+         (eng (or (sb-ext:atomic-pop (pe-engines pool-entry))
+                  (make-tt-hint-engine loader ppem coords))))
+    ;; A glyph that failed halfway may have left the depth of its composite.
+    (setf (runes/otf/tt-hint::eng-depth eng) 0)
+    (values eng pool-entry)))
 
 (defun release-tt-engine (eng pool-entry)
   (sb-ext:atomic-push eng (pe-engines pool-entry)))
@@ -445,15 +447,14 @@ copy what is wanted out of it."
                     :ascender (slot-value loader 'ascender)
                     :descender (slot-value loader 'descender))))
 
-(defun tables-phantom-array (tables gid x-min y-max)
-  "PHANTOM-ARRAY from the cached TABLES."
+(defun tables-phantom-array (tables gid x-min y-max result)
+  "PHANTOM-ARRAY from the cached TABLES, made in the array RESULT."
   (declare (type tt-tables tables) (type (unsigned-byte 32) gid)
-           (type (signed-byte 32) x-min y-max))
+           (type (signed-byte 32) x-min y-max) (type phantom-array result))
   (let* ((lsb (bounded-aref (tt-lsb tables) gid))
          (advance (bounded-aref (tt-advance-widths tables) gid))
          (ascent (tt-ascender tables))
-         (descent (tt-descender tables))
-         (result (make-array 8 :element-type '(signed-byte 32))))
+         (descent (tt-descender tables)))
     (declare (fixnum lsb advance ascent descent))
     (multiple-value-bind (tsb vadvance)
         (if (tt-vmtx-missing-p tables)
@@ -497,6 +498,26 @@ the offset of 'glyf' (NIL if none)."
                     (off2 (runes/otf:font-data-read-u32 fd (+ loca (* (1+ gid) 4)))))
                 (values off1 (- off2 off1) glyf)))))))
 
+(declaim (inline engine-phantom))
+(defun engine-phantom (eng which)
+  "The engine's array for the phantom points at the depth of the glyph being
+loaded: WHICH 0 for what it starts from, 1 for what it comes to."
+  (declare (type runes/otf/tt-hint:tt-engine eng) (type (integer 0 1) which)
+           (optimize (speed 3) (safety 0)))
+  (let ((i (+ (* 2 (the (integer 0 1000) (runes/otf/tt-hint::eng-depth eng))) which))
+        (pool (runes/otf/tt-hint::eng-phantoms eng)))
+    (declare (fixnum i))
+    (when (>= i (length pool))
+      (let ((bigger (make-array (max (+ i 2) (* 2 (length pool))))))
+        (dotimes (k (length bigger))
+          (setf (svref bigger k)
+                (if (< k (length pool))
+                    (svref pool k)
+                    (make-array 8 :element-type '(signed-byte 32)))))
+        (setf (runes/otf/tt-hint::eng-phantoms eng) bigger
+              pool bigger)))
+    (sb-ext:truly-the phantom-array (svref pool i))))
+
 (declaim (ftype (function (font-loader runes/otf/tt-hint:tt-engine (unsigned-byte 32)
                            hint-buffer simple-vector)
                           phantom-array)
@@ -511,25 +532,26 @@ the offset of 'glyf' (NIL if none)."
            (fd (tt-font-data tables))
            (scale (runes/otf/tt-hint::eng-scale eng)))
       (if (or (zerop len) (null glyf))
-          (let ((phantom (tables-phantom-array tables gid 0 0))
+          (let ((phantom (tables-phantom-array tables gid 0 0 (engine-phantom eng 0)))
                 (data (and (plusp (length coords)) (gvar-glyph-data loader gid)))
-                (result (make-array 8 :element-type '(signed-byte 32))))
+                (result (engine-phantom eng 1)))
             (declare (type phantom-array phantom result))
             (when data
               (multiple-value-bind (dx dy)
                   (simple-glyph-deltas data coords (phantom-column phantom 0) (phantom-column phantom 1) '())
                 (when dx
                   ;; Only the horizontal phantom points move.
-                  (let ((moved (add-phantom-array-deltas phantom dx dy 0)))
-                    (setf phantom (copy-seq phantom))
-                    (replace phantom moved :end1 4 :end2 4)))))
+                  (dotimes (i 2)
+                    (incf (aref phantom (* 2 i)) (the fixnum (fixed-round (aref dx i))))
+                    (incf (aref phantom (1+ (* 2 i))) (the fixnum (fixed-round (aref dy i))))))))
             (dotimes (i 8 result)
               (setf (aref result i) (round-26-6 (scale-funit (aref phantom i) scale)))))
           (let* ((pos (+ glyf g-off))
                  (contour-count (runes/otf:font-data-read-i16 fd pos))
                  (phantom (tables-phantom-array tables gid
                                                 (runes/otf:font-data-read-i16 fd (+ pos 2))
-                                                (runes/otf:font-data-read-i16 fd (+ pos 8)))))
+                                                (runes/otf:font-data-read-i16 fd (+ pos 8))
+                                                (engine-phantom eng 0))))
             (if (minusp contour-count)
                 ;; Only a composite glyph can contain itself, or nest too deep.
                 (let ((*compound-glyph-stack* (cons gid *compound-glyph-stack*)))
@@ -833,7 +855,7 @@ variation deltas added to XS and YS, as DECODE-SIMPLE-GLYPH-INTO-ZONE does."
       ;; bearings and advance: the phantom points stay as scaled, not
       ;; rounded (FreeType, skrifa).
       (let ((bc (runes/otf/tt-hint::gs-backward-compatibility (runes/otf/tt-hint::eng-gs eng)))
-            (result (make-array 8 :element-type '(signed-byte 32))))
+            (result (engine-phantom eng 1)))
         (dotimes (k 4 result)
           (setf (aref result (* 2 k)) (if bc (aref ox (+ n k)) (aref cx (+ n k)))
                 (aref result (1+ (* 2 k))) (if bc (aref oy (+ n k)) (aref cy (+ n k)))))))))
@@ -888,13 +910,15 @@ the arrays XS and YS, as TRANSFORM-COMPONENT-POINTS does."
     (when data
       (multiple-value-setq (dx dy) (composite-glyph-deltas data coords count))
       (when dx
-        (setf phantom (add-phantom-array-deltas phantom dx dy (- count 4)))))
-    (let ((scaled-phantom (make-array 8 :element-type '(signed-byte 32))))
+        (add-phantom-array-deltas! phantom dx dy (- count 4))))
+    (let ((scaled-phantom (engine-phantom eng 1)))
       (declare (type phantom-array scaled-phantom))
       ;; Not rounded yet: the program's original positions are these, and
       ;; its current ones the rounded.
       (dotimes (i 8)
         (setf (aref scaled-phantom i) (scale-funit (aref phantom i) scale)))
+      ;; The components are loaded one level deeper, into the arrays of that level.
+      (incf (runes/otf/tt-hint::eng-depth eng))
       (dotimes (i component-count)
         (multiple-value-bind (flags component-gid arg1 arg2 xx yx xy-skew yy next)
             (component-fields fd p)
@@ -909,8 +933,9 @@ the arrays XS and YS, as TRANSFORM-COMPONENT-POINTS does."
                  (ys (hb-ys out))
                  (transformed (logtest flags #b11001000)))
             (declare (fixnum start end))
+            ;; A copy: the next component's loading uses the array again.
             (when (logbitp 9 flags)
-              (setf scaled-phantom comp-phantom))
+              (replace scaled-phantom comp-phantom))
             (when transformed
               (transform-buffer-points xs ys start end xx yx xy-skew yy))
             (multiple-value-bind (ox oy)
@@ -947,6 +972,7 @@ the arrays XS and YS, as TRANSFORM-COMPONENT-POINTS does."
                     (loop for j of-type fixnum from start below end
                           do (setf (aref xs j) (runes/otf/tt-hint::f26+ (aref xs j) ox)
                                    (aref ys j) (runes/otf/tt-hint::f26+ (aref ys j) oy))))))))))
+      (decf (runes/otf/tt-hint::eng-depth eng))
       (multiple-value-bind (istart iend) (composite-glyph-instruction-range fd pos)
         (when (and (= iend istart)
                    (not (runes/otf/tt-hint::gs-backward-compatibility
@@ -1055,7 +1081,8 @@ X0 Y0 X1 Y1 X2 Y2 X3 Y3 in an array of eight."
                 (subseq (hb-ys out) 0 n)
                 on-curve
                 (subseq (hb-ends out) 0 (hb-n-ends out))
-                phantom)))))
+                ;; The engine's array is used again by the next glyph.
+                (copy-seq phantom))))))
 
 (defstruct (outline-26dot6 (:conc-name o26-))
   "A hinted outline in F26Dot6 pixels that HINT-OUTLINE-26DOT6-INTO fills: the
