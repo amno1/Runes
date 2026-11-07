@@ -13,13 +13,22 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 ;;; Fixed point helpers, on raw signed 16.16 values
 
-(defun clamp-i32 (x) (max (- (ash 1 31)) (min (1- (ash 1 31)) x)))
+(declaim (inline clamp-i32))
+(defun clamp-i32 (x)
+  (declare (type integer x)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (the (signed-byte 32) (max (- (ash 1 31)) (min (1- (ash 1 31)) x))))
 
 (defun read-fixed-bits (fd pos) (runes/otf:font-data-read-i32 fd pos))
 
-(defun f2dot14-bits->fixed (bits) (ash bits 2))
+(declaim (inline f2dot14-bits->fixed))
+(defun f2dot14-bits->fixed (bits)
+  (declare (type (signed-byte 16) bits))
+  (the (signed-byte 32) (ash bits 2)))
 
 ;;; Axes
 
@@ -41,12 +50,14 @@
   (:documentation "List of (tag minimum default maximum) for each variation
 axis of LOADER's font, in user units; NIL for a font that does not vary.")
   (:method ((loader font-loader))
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
     (loop for (tag min default max) in (fvar-axes loader)
           collect (list tag (/ min 65536) (/ default 65536) (/ max 65536)))))
 
 (defun normalize-axis-value (value min default max)
   "VALUE (16.16) normalized to [-1, 1] for an axis (VariationAxisRecord::normalize)."
-  (declare (type (signed-byte 32) value min default max))
+  (declare (type (signed-byte 32) value min default max)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((max (max max min))
          (value (max min (min max value)))
          (result (cond ((< value default)
@@ -64,6 +75,7 @@ axis of LOADER's font, in user units; NIL for a font that does not vary.")
 (defun avar-segment-maps (loader)
   "For each axis, a vector of (from . to) 16.16 pairs from 'avar', or NIL.
 The second value is the position just past the segment maps."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((info (table-info "avar" loader)))
     (when info
       (let* ((fd (font-data loader))
@@ -95,11 +107,12 @@ The second value is the position just past the segment maps."
   "The ItemVariationStore of an 'avar' 2.0 table and the position of its
 axis index map (or NIL), from the offsets at MAPS-END; NIL for 'avar' 1.0
 or a table without a store."
+  (declare (type (unsigned-byte 32) maps-end))
   (let* ((info (table-info "avar" loader))
          (fd (font-data loader))
-         (start (offset info)))
+         (start (the (unsigned-byte 32) (offset info))))
     (when (and (= (runes/otf:font-data-read-u16 fd start) 2)
-               (<= (+ maps-end 8) (+ start (size info))))
+               (<= (+ maps-end 8) (+ start (the (unsigned-byte 32) (size info)))))
       (let ((map-offset (runes/otf:font-data-read-u32 fd maps-end))
             (store-offset (runes/otf:font-data-read-u32 fd (+ maps-end 4))))
         (unless (zerop store-offset)
@@ -108,7 +121,8 @@ or a table without a store."
 
 (defun fixed->f2dot14-bits (c)
   "16.16 C to 2.14 bits, rounding as Fixed::to_f2dot14 does."
-  (ash (runes/otf/charstring::s32 (+ c 2)) -2))
+  (declare (type (signed-byte 32) c))
+  (ash (the (signed-byte 32) (runes/otf/charstring::s32 (+ c 2))) -2))
 
 (defun avar2-delta (store map-pos fd axis at)
   "The 'avar' 2.0 delta of AXIS at AT (normalized reals), or NIL when the
@@ -120,6 +134,7 @@ store cannot be read, which leaves the axis alone."
 (defun add-avar2-delta (c delta)
   "16.16 C plus DELTA, which is in 2.14 units: times four, rounded half away
 from zero, added wrapping, and clamped to [-1, 1]."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (max #x-10000
        (min #x10000
             (runes/otf/charstring::s32
@@ -128,6 +143,7 @@ from zero, added wrapping, and clamped to [-1, 1]."
 (defun apply-avar2 (loader maps-end coords)
   "COORDS (16.16, after the segment maps) moved by 'avar' 2.0 deltas, all
 computed at the coordinates before any is added."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (multiple-value-bind (store map-pos) (avar2-mapping loader maps-end)
     (if (null store)
         coords
@@ -141,7 +157,8 @@ computed at the coordinates before any is added."
 (defun apply-segment-map (maps coord)
   "COORD (16.16) mapped through one axis's segment map, a vector of (from
 . to) pairs, as Fontations' SegmentMaps::apply, which follows HarfBuzz."
-  (declare (simple-vector maps) (type (signed-byte 32) coord))
+  (declare (simple-vector maps) (type (signed-byte 32) coord)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (labels ((from (i) (car (aref maps i)))
            (to (i) (cdr (aref maps i)))
            ;; COORD moved as pair I moves its from value
@@ -193,6 +210,7 @@ computed at the coordinates before any is added."
 (defun normalize-coordinates (loader user-coordinates)
   "Normalized coordinates (reals in [-1, 1], one per axis) for
 USER-COORDINATES, an alist of axis tag to user value."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((coords
           ;; Every axis with the tag is set, to permit non-linear
           ;; interpolation; a tag given twice takes its last value.
@@ -240,7 +258,7 @@ the change keep their old outlines; find them again.")
         (%gvar-coords-cache loader) :unset)
   ;; Outlines, bounding boxes and subfonts depend on the instance.
   (when (glyph-cache loader)
-    (fill (glyph-cache loader) nil))
+    (fill (the simple-vector (glyph-cache loader)) nil))
   (clrhash (cff-subfonts loader))
   ;; Kerning varies too ('GPOS' with GDEF deltas).
   (clrhash (gpos-kerning-cache loader)))
@@ -251,6 +269,7 @@ the HVAR or VVAR table TAG, read with READER. MAP-READER gives the offset of
 the metric's DeltaSetIndexMap. Without a map, GID indexes the store directly
 when DIRECT is true, as for advances; otherwise the result is NIL, since the
 font does not vary that metric through this table."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((coords (normalized-coordinates loader))
         (info (table-info tag loader)))
     (if (or (null coords) (null info))
@@ -266,6 +285,7 @@ font does not vary that metric through this table."
                 (store-delta store outer inner coords)))))))
 
 (defun store-delta (store outer inner coords)
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (if (or (null store) (> inner #xFFFF))
       0
       ;; Round the 16.16 delta to an integer as FreeType does.
@@ -301,7 +321,8 @@ font does not vary that metric through this table."
 
 (defun delta-set-index (pos fd index)
   "Outer and inner delta-set index for INDEX from the DeltaSetIndexMap at POS."
-  (declare (type (unsigned-byte 32) pos index) (type runes/otf:font-data fd))
+  (declare (type (unsigned-byte 32) pos index) (type runes/otf:font-data fd)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((format (runes/otf:font-data-read-u8 fd pos))
          (entry-format (runes/otf:font-data-read-u8 fd (+ pos 1)))
          (map-count (if (zerop format)
@@ -327,6 +348,7 @@ font does not vary that metric through this table."
 as \"xhgt\" or \"cpht\") at LOADER's instance, in font units; 0 at the
 default instance or when the font does not vary the metric.")
   (:method ((loader font-loader) tag)
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
     (let ((coords (normalized-coordinates loader))
           (info (table-info "MVAR" loader)))
       (if (or (null coords) (null info))
@@ -354,6 +376,7 @@ default instance or when the font does not vary the metric.")
 
 (defmacro define-varied-metric (reader tag &optional condition)
   `(defmethod ,reader :around ((loader font-loader))
+     (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
      (let ((value (call-next-method)))
        (if (and (normalized-coordinates loader) ,@(when condition (list condition)))
            (+ value (variation-metric-delta loader ,tag))
