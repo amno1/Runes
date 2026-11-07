@@ -57,8 +57,10 @@ number of glyphs with a bearing, the table's long ones included."
    (vmetrics :accessor vmetrics :initform nil)
    ;; The advance height of every glyph when there is no 'vmtx'.
    (missing-advance-height :accessor missing-advance-height :initform 0)
-   ;; from 'kern' table
-   (kerning-table :initform (make-hash-table) :accessor kerning-table)
+   ;; from 'kern' table: where it is, and the pairs it gives once they have been
+   ;; wanted (see KERNING-TABLE)
+   (kern-position :initform nil :accessor kern-position)
+   (kerning-table :initform nil :accessor %kerning-table)
    ;; from 'GPOS': the 'kern' lookups, found on first use, and the kerning
    ;; of each pair asked for (see gpos-kerning.lisp)
    (%gpos-kern-lookups :initform :unknown :accessor %gpos-kern-lookups)

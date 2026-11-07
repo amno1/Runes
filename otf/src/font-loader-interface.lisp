@@ -204,6 +204,9 @@ read: the table is looked in where it is."
     (make-long-metrics :fd data :offset offset :size size :long-count long-count
                        :count (max glyph-count long-count))))
 
+(defvar *kerning-fill* nil
+  "The hash table the kerning subtables being read put their pairs in.")
+
 (defun read-kerning-format-0 (loader body kend)
   "Format 0: an ordered list of (left, right, value) pairs at BODY."
   (declare (type (unsigned-byte 32) body kend))
@@ -217,7 +220,7 @@ read: the table is looked in where it is."
             (val (runes/otf:font-data-read-i16 data (+ pos 4))))
         ;; Apple specifies a terminating #xFFFF/#xFFFF entry with value 0.
         (unless (and (= left #xFFFF) (= right #xFFFF) (zerop val))
-          (setf (gethash (logior (ash left 16) right) (kerning-table loader)) val))
+          (setf (gethash (logior (ash left 16) right) *kerning-fill*) val))
         (incf pos 6)))))
 
 (defun read-kerning-class-table (data pos kend)
@@ -252,7 +255,7 @@ start of the subtable; a pair's value is at SUB-OFF + left + right."
                          when (<= (+ pos 2) kend)
                            do (let ((val (runes/otf:font-data-read-i16 data pos)))
                                 (unless (zerop val)
-                                  (setf (gethash (logior (ash left 16) right) (kerning-table loader))
+                                  (setf (gethash (logior (ash left 16) right) *kerning-fill*)
                                         val))))))))))
 
 (defun read-kerning-subtable (loader format sub-off body kend)
@@ -306,14 +309,31 @@ tupleIndex u16."
 (defun load-kern-table (loader koff ksize)
   "Read the horizontal format 0 and format 2 subtables of the Microsoft
 (version 0) or Apple (version 1.0) 'kern' table into the loader's
-kerning table."
+kerning table, which is there for the pairs read when this returns or fails."
   (let ((data (font-data loader))
-        (kend (+ koff ksize)))
-    (case (runes/otf:font-data-read-u16 data koff)
-      (0 (load-microsoft-kern-table loader koff kend))
-      ;; Version 1.0: a 16.16 version whose low half is 0.
-      (1 (when (zerop (runes/otf:font-data-read-u16 data (+ koff 2)))
-           (load-apple-kern-table loader koff kend))))))
+        (kend (+ koff ksize))
+        (table (make-hash-table)))
+    (unwind-protect
+         (let ((*kerning-fill* table))
+           (case (runes/otf:font-data-read-u16 data koff)
+             (0 (load-microsoft-kern-table loader koff kend))
+             ;; Version 1.0: a 16.16 version whose low half is 0.
+             (1 (when (zerop (runes/otf:font-data-read-u16 data (+ koff 2)))
+                  (load-apple-kern-table loader koff kend)))))
+      (setf (%kerning-table loader) table))))
+
+(defun kerning-table (loader)
+  "The pairs of LOADER's 'kern' table, as a hash table from (left glyph << 16)
+| right glyph to the value.  Read on the first call: a font that is not asked
+for them, or kerns by 'GPOS', does not pay for them."
+  (or (%kerning-table loader)
+      (let ((position (kern-position loader)))
+        (if position
+            ;; A truncated table gives what was read before the end.
+            (progn (handler-case (load-kern-table loader (car position) (cdr position))
+                     (runes/otf:font-out-of-bounds-error () nil))
+                   (%kerning-table loader))
+            (setf (%kerning-table loader) (make-hash-table))))))
 
 (defparameter *sfnt-versions*
   (list #x00010000 #x4F54544F #x74727565 #x74797031) ; 1.0, 'OTTO', 'true', 'typ1'
@@ -410,11 +430,10 @@ horizontal ones."
     (setup-cmap-lookup loader cmap (offset info) (size info))))
 
 (defun load-kern (loader)
-  "The 'kern' table; a truncated one gives what was read before the end."
+  "Note where the 'kern' table is: its pairs are read when they are wanted."
   (let ((info (table-info "kern" loader)))
     (when info
-      (handler-case (load-kern-table loader (offset info) (size info))
-        (runes/otf:font-out-of-bounds-error () nil)))))
+      (setf (kern-position loader) (cons (offset info) (size info))))))
 
 (defun collection-font-offset (data collection-index)
   "The position of font COLLECTION-INDEX's table directory, and the number
