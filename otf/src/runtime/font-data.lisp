@@ -99,9 +99,7 @@ non-negative integers, such as sizes computed from untrusted counts."
 (defun font-data-read-i8 (fd pos)
   (declare (type font-data fd) (type (unsigned-byte 32) pos) (optimize (speed 3) (safety 1)))
   (let ((u (font-data-read-u8 fd pos)))
-    (if (logbitp 7 u)
-        (the fixnum (- u 256))
-        (the fixnum u))))
+    (the (signed-byte 8) (- (logxor u #x80) #x80))))
 
 (declaim (inline font-data-read-u16))
 (defun font-data-read-u16 (fd pos)
@@ -120,9 +118,7 @@ non-negative integers, such as sizes computed from untrusted counts."
 (defun font-data-read-i16 (fd pos)
   (declare (type font-data fd) (type (unsigned-byte 32) pos) (optimize (speed 3) (safety 1)))
   (let ((u (font-data-read-u16 fd pos)))
-    (if (logbitp 15 u)
-        (the fixnum (- u 65536))
-        (the fixnum u))))
+    (the (signed-byte 16) (- (logxor u #x8000) #x8000))))
 
 (declaim (inline font-data-read-u24))
 (defun font-data-read-u24 (fd pos)
@@ -141,9 +137,7 @@ non-negative integers, such as sizes computed from untrusted counts."
 (defun font-data-read-i24 (fd pos)
   (declare (type font-data fd) (type (unsigned-byte 32) pos) (optimize (speed 3) (safety 1)))
   (let ((u (font-data-read-u24 fd pos)))
-    (if (logbitp 23 u)
-        (the fixnum (- u #x1000000))
-        (the fixnum u))))
+    (the (signed-byte 24) (- (logxor u #x800000) #x800000))))
 
 (declaim (inline font-data-read-u32))
 (defun font-data-read-u32 (fd pos)
@@ -163,9 +157,7 @@ non-negative integers, such as sizes computed from untrusted counts."
 (defun font-data-read-i32 (fd pos)
   (declare (type font-data fd) (type (unsigned-byte 32) pos) (optimize (speed 3) (safety 1)))
   (let ((u (font-data-read-u32 fd pos)))
-    (if (logbitp 31 u)
-        (- u #x100000000)
-        u)))
+    (the (signed-byte 32) (- (logxor u #x80000000) #x80000000))))
 
 (declaim (inline font-data-read-fixed))
 (defun font-data-read-fixed (fd pos)
