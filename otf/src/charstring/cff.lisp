@@ -11,6 +11,9 @@
 
 (in-package #:runes/otf/charstring)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+(declaim (sb-ext:muffle-conditions sb-ext:compiler-note))
+
 (declaim (inline cff-u8 cff-uint))
 (defun cff-u8 (fd pos) (runes/otf:font-data-read-u8 fd pos))
 (defun cff-uint (fd pos size)
@@ -29,7 +32,7 @@
   (off-size 0 :type (integer 0 4))
   (offsets-pos 0 :type fixnum)
   ;; Position of the byte before the first object: offsets are relative to it.
-  (base 0))
+  (base 0 :type fixnum))
 
 (defun read-cff-index (fd pos cff2-p)
   "The INDEX at POS. CFF2 INDEXes have a 32-bit count."
