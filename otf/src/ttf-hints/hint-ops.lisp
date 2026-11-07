@@ -483,6 +483,11 @@ does; they only matter as a ratio."
                              (t (mul-div org-dist cur-range old-range)))))
         (%move-zone-point gs z2 z2-id pt (f26- new-dist cur-dist) t)))))
 
+(defmacro sum32 (a b)
+  "A plus B, taken as the 32-bit number that is stored: an array of 32-bit numbers
+keeps the low 32 bits of what it is given, which is the wrap."
+  `(the s32 (+ (the s32 ,a) (the s32 ,b))))
+
 (defun iup-interpolate-contour (orig unscaled cur flags touch-mask start end)
   "IUP over the contour START..END of one axis: move the untouched points
 between touched ones.  As FreeType's _iup_worker_interpolate, the position
@@ -515,19 +520,19 @@ between two touched points comes from the unscaled coordinates."
                      (loop for i of-type fixnum from from below to
                            for a of-type s32 = (aref orig i)
                            do (setf (aref cur i)
-                                    (cond ((<= a org1) (f26+ a delta1))
-                                          ((>= a org2) (f26+ a delta2))
+                                    (cond ((<= a org1) (sum32 a delta1))
+                                          ((>= a org2) (sum32 a delta2))
                                           (t cur1))))
                      (let ((scale-valid nil))
                        (loop for i of-type fixnum from from below to
                              for a of-type s32 = (aref orig i)
                              do (setf (aref cur i)
-                                      (cond ((<= a org1) (f26+ a delta1))
-                                            ((>= a org2) (f26+ a delta2))
+                                      (cond ((<= a org1) (sum32 a delta1))
+                                            ((>= a org2) (sum32 a delta2))
                                             (t (unless scale-valid
                                                  (setf scale (div-fix (f26- cur2 cur1) (f26- orus2 orus1))
                                                        scale-valid t))
-                                               (f26+ cur1 (mul-fix (f26- (aref unscaled i) orus1)
+                                               (sum32 cur1 (mul-fix (f26- (aref unscaled i) orus1)
                                                                    scale))))))))))))
     (let ((first -1) (prev -1))
       (declare (fixnum first prev))
