@@ -168,6 +168,7 @@
           ((= code 255) (+ 253 (bs-u8 bs table)))
           (t code))))
 
+(declaim (ftype (function (bstream &optional t) (values (unsigned-byte 32) &optional)) bs-base128))
 (defun bs-base128 (bs &optional (table "WOFF2"))
   "Read a WOFF2 UIntBase128 value."
   (declare (type bstream bs))
@@ -927,8 +928,9 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
               p (put-u16 out p entry-selector)
               p (put-u16 out p range-shift)))
       (loop for e of-type woff2-table-entry across sorted
-            do (let* ((bytes (or (woff2-table-entry-bytes e)
-                                 (woff-fail "WOFF2" "missing table bytes")))
+            do (let* ((bytes (the (simple-array (unsigned-byte 8) (*))
+                                  (or (woff2-table-entry-bytes e)
+                                      (woff-fail "WOFF2" "missing table bytes"))))
                       (dst-off (woff2-table-entry-dst-offset e))
                       (dst-len (woff2-table-entry-dst-length e))
                       (csum (compute-table-checksum bytes 0 dst-len)))
@@ -967,8 +969,9 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
           do (when (> offset #xFFFFFFFF)
                (woff-fail "WOFF2" "TTC table offset overflow"))
              (let ((len (woff2-table-entry-dst-length e))
-                   (bytes (or (woff2-table-entry-bytes e)
-                              (woff-fail "WOFF2" "missing table bytes"))))
+                   (bytes (the (simple-array (unsigned-byte 8) (*))
+                               (or (woff2-table-entry-bytes e)
+                                   (woff-fail "WOFF2" "missing table bytes")))))
                (setf (woff2-table-entry-dst-offset e) offset
                      (woff2-table-entry-checksum e)
                      (compute-table-checksum bytes 0 len))
@@ -1011,8 +1014,9 @@ belonging to one font), reconstructing transformed 'glyf', 'loca', and 'hmtx'."
                            fp (put-u32 out fp (woff2-table-entry-dst-length e)))))))
       ;; Copy shared table bodies
       (loop for e of-type woff2-table-entry across entries
-            do (let ((bytes (or (woff2-table-entry-bytes e)
-                                (woff-fail "WOFF2" "missing table bytes"))))
+            do (let ((bytes (the (simple-array (unsigned-byte 8) (*))
+                                 (or (woff2-table-entry-bytes e)
+                                     (woff-fail "WOFF2" "missing table bytes")))))
                  (replace out bytes
                           :start1 (woff2-table-entry-dst-offset e)
                           :end2 (woff2-table-entry-dst-length e))))
