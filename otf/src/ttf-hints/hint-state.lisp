@@ -225,8 +225,8 @@ ROUND-ACCORDING-TO-STATE-GENERAL."
                        (f26+ distance compensation)
                        (f26+ (f26-neg distance) compensation)))
               (res
+                ;; (:TO-GRID is the first clause of the CASE above.)
                 (ecase mode
-                  (:to-grid        (logand (f26+ val 32) -64))
                   (:to-half-grid   (f26+ (f26-floor val) 32))
                   (:to-double-grid (logand (f26+ val 16) -32))
                   (:down-to-grid   (f26-floor val))
@@ -241,11 +241,13 @@ ROUND-ACCORDING-TO-STATE-GENERAL."
          (phase-code (ldb (byte 2 4) grid-period-byte))
          (thresh-code (ldb (byte 4 0) grid-period-byte))
          (period (if selector14-p
+                     ;; 1448 (1024 times the square root of 2) shifted right by 6, 5, 4
+                     ;; and 5, as FreeType does.
                      (ecase period-code
-                       (0 (ash 1448 -6))
-                       (1 (ash 1448 -5))
-                       (2 (ash 1448 -4))
-                       (3 (ash 1448 -5)))
+                       (0 22)
+                       (1 45)
+                       (2 90)
+                       (3 45))
                      (ecase period-code
                        (0 32)
                        (1 64)
@@ -256,7 +258,7 @@ ROUND-ACCORDING-TO-STATE-GENERAL."
                   (1 (ash period -2))
                   (2 (ash period -1))
                   (3 (if selector14-p
-                         (ash (* 1448 3) -7)
+                         33                 ; 1448 * 3 / 128, truncated
                          (* 3 (ash period -2)))))))
     (setf (rs-mode rs) (if selector14-p :super-45 :super)
           (rs-period rs) period
