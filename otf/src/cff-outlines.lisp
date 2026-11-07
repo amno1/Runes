@@ -10,6 +10,12 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
+(deftype growable-vector ()
+  "An adjustable vector with a fill pointer, as MAKE-ARRAY makes."
+  '(and (vector t) (not simple-array)))
+
 (defparameter *cubic-tolerance* 1/4
   "Largest distance, in font units, between a CFF cubic curve and the
 quadratic curves CONTOURS approximates it with.")
@@ -49,8 +55,10 @@ quadratic curves CONTOURS approximates it with.")
 
 (defun font-units (fixed)
   "A 16.16 value in font units: an integer when it is one, else a float."
-  (let ((r (/ fixed 65536)))
-    (if (integerp r) r (float r 1.0))))
+  (declare (type (signed-byte 32) fixed)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (multiple-value-bind (q r) (truncate fixed 65536)
+    (if (zerop r) q (float (/ fixed 65536) 1.0))))
 
 (defclass outline-sink ()
   ((contours :initform '() :accessor outline-contours)
@@ -59,17 +67,21 @@ quadratic curves CONTOURS approximates it with.")
 and (:curve cx0 cy0 cx1 cy1 x y) commands in font units."))
 
 (defun outline-add (sink command)
-  (vector-push-extend command (outline-current sink)))
+  (declare (type outline-sink sink))
+  (vector-push-extend command (the growable-vector (outline-current sink))))
 
 (defmethod runes/otf/charstring:sink-move-to ((s outline-sink) x y)
+  (declare (type outline-sink s) (type (signed-byte 32) x y))
   (setf (outline-current s) (make-array 8 :adjustable t :fill-pointer 0))
   (push (outline-current s) (outline-contours s))
   (outline-add s (list :move (font-units x) (font-units y))))
 
 (defmethod runes/otf/charstring:sink-line-to ((s outline-sink) x y)
+  (declare (type outline-sink s) (type (signed-byte 32) x y))
   (outline-add s (list :line (font-units x) (font-units y))))
 
 (defmethod runes/otf/charstring:sink-curve-to ((s outline-sink) cx0 cy0 cx1 cy1 x y)
+  (declare (type outline-sink s) (type (signed-byte 32) cx0 cy0 cx1 cy1 x y))
   (outline-add s (list :curve (font-units cx0) (font-units cy0) (font-units cx1) (font-units cy1)
                        (font-units x) (font-units y))))
 
@@ -77,6 +89,8 @@ and (:curve cx0 cy0 cx1 cy1 x y) commands in font units."))
 
 (defun cff-glyph-outline (loader gid)
   "The exact outline of glyph GID of LOADER's CFF font, at the loader's instance."
+  (declare (type font-loader loader)
+           (type (unsigned-byte 16) gid))
   (let* ((font (loader-cff-font loader))
          (index (or (runes/otf/charstring:cff-subfont-index font gid)
                     (error 'unsupported-value :description "Glyph not covered by FDSelect"
@@ -84,14 +98,26 @@ and (:curve cx0 cy0 cx1 cy1 x y) commands in font units."))
          (sink (make-instance 'outline-sink)))
     (runes/otf/charstring:cff-draw-glyph font (loader-cff-subfont loader index) gid sink
                                        (loader-coords loader))
-    (map 'vector #'copy-seq (reverse (outline-contours sink)))))
+    (let* ((contours (outline-contours sink))
+           (n (length contours))
+           (res (make-array n)))
+      (declare (type list contours)
+               (type fixnum n)
+               (type simple-vector res))
+      (loop for c in (nreverse contours)
+            for i of-type fixnum from 0
+            do (setf (svref res i) (copy-seq (the (vector t) c))))
+      res)))
 
 ;;; Quadratic approximation
 
-(defun lerp (a b u) (+ a (* u (- b a))))
+(defun lerp (a b u)
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (+ a (* u (- b a))))
 
 (defun split-cubic (p0 p1 p2 p3 u)
   "The parts of cubic P0..P3 (each (x . y)) before and after parameter U."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (flet ((mid (a b) (cons (lerp (car a) (car b) u) (lerp (cdr a) (cdr b) u))))
     (let* ((a (mid p0 p1)) (b (mid p1 p2)) (c (mid p2 p3))
            (d (mid a b)) (e (mid b c)) (f (mid d e)))
@@ -102,6 +128,7 @@ and (:curve cx0 cy0 cx1 cy1 x y) commands in font units."))
 One quadratic with control (3(P1+P2) - P0 - P3)/4 is within
 sqrt(3)/36 * |P3 - 3P2 + 3P1 - P0| of the cubic; splitting into N parts
 divides that by N^3."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((dx (+ (- (car p3) (* 3 (car p2))) (* 3 (car p1)) (- (car p0))))
          (dy (+ (- (cdr p3) (* 3 (cdr p2))) (* 3 (cdr p1)) (- (cdr p0))))
          (err (* (/ (sqrt 3d0) 36) (sqrt (float (+ (* dx dx) (* dy dy)) 1d0))))
@@ -121,6 +148,7 @@ divides that by N^3."
 
 (defun units (x)
   "X as a contour coordinate: an integer when it is one, else a float."
+  (declare (type real x) (sb-ext:muffle-conditions sb-ext:compiler-note))
   (if (integerp x) x (float x 1.0)))
 
 ;;; The same approximation without rational arithmetic, which spent most of
@@ -133,9 +161,10 @@ divides that by N^3."
 (defun fixed-units (v)
   "V (font units, an integer or a float) times 65536, or NIL if that is not
 an integer."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (if (integerp v)
-      (* v 65536)
-      (multiple-value-bind (mantissa exponent sign) (integer-decode-float v)
+      (* (the integer v) 65536)
+      (multiple-value-bind (mantissa exponent sign) (integer-decode-float (the float v))
         (let ((shift (+ exponent 16)))
           (when (>= shift 0)
             (* sign (ash mantissa shift)))))))
@@ -143,7 +172,8 @@ an integer."
 (defun ratio-units (numerator denominator)
   "NUMERATOR / DENOMINATOR as a contour coordinate, as UNITS gives it: an
 integer, or the float nearest the exact quotient."
-  (declare (integer numerator) (type (integer 1) denominator))
+  (declare (integer numerator) (type (integer 1) denominator)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (multiple-value-bind (q r) (floor numerator denominator)
     (cond ((zerop r) q)
           ;; Both exact as doubles: the double quotient is correctly
@@ -160,7 +190,8 @@ integer, or the float nearest the exact quotient."
 (defun cubic->quadratics-fixed (x0 y0 x1 y1 x2 y2 x3 y3 tolerance)
   "As CUBIC->QUADRATICS, for points given times 65536 as integers: a list of
 ((control-x . control-y) . (end-x . end-y)) in contour coordinates."
-  (declare (integer x0 y0 x1 y1 x2 y2 x3 y3))
+  (declare (integer x0 y0 x1 y1 x2 y2 x3 y3)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let* ((dx (+ (- x3 (* 3 x2)) (* 3 x1) (- x0)))
          (dy (+ (- y3 (* 3 y2)) (* 3 y1) (- y0)))
          ;; The same double as for the unscaled points: the scale is 2^32.
@@ -209,6 +240,7 @@ integer, or the float nearest the exact quotient."
 
 (defun curve-pieces (current cx0 cy0 cx1 cy1 x y)
   "The quadratic pieces of the curve from CURRENT, as CUBIC->QUADRATICS."
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((fx0 (fixed-units (car current))) (fy0 (fixed-units (cdr current)))
         (fx1 (fixed-units cx0)) (fy1 (fixed-units cy0))
         (fx2 (fixed-units cx1)) (fy2 (fixed-units cy1))
@@ -223,6 +255,8 @@ integer, or the float nearest the exact quotient."
 
 (defun outline->contours (outline)
   "TrueType-style contours of control points approximating OUTLINE."
+  (declare (type (vector t) outline)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (map 'vector
        (lambda (commands)
          (let ((points (make-array (length commands) :adjustable t :fill-pointer 0))
@@ -257,6 +291,8 @@ integer, or the float nearest the exact quotient."
 
 (defun contours-bounding-box (contours)
   "Bounds of all points of CONTOURS, on- and off-curve, as glyf records them."
+  (declare (type (vector t) contours)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let (xmin ymin xmax ymax)
     (loop for contour across contours
           do (loop for p across contour
@@ -286,6 +322,8 @@ contours are approximated only now: CUBIC-CONTOURS does not need them."
 
 (defun quadratic-contour->cubic (contour)
   "The commands of a TrueType CONTOUR, its quadratic curves as cubics."
+  (declare (type simple-vector contour)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((commands (make-array 8 :adjustable t :fill-pointer 0))
         (moved nil))
     (do-contour-segments (p0 p1 p2) contour
@@ -319,4 +357,4 @@ given as the cubic curves that trace them exactly."))
      (initialize-cff-outline glyph))
     (t
      (setf (%cubic-contours glyph)
-           (map 'vector #'quadratic-contour->cubic (contours glyph))))))
+           (map 'simple-vector #'quadratic-contour->cubic (the simple-vector (contours glyph)))))))
