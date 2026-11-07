@@ -26,6 +26,7 @@ and OUT-Y of one tuple, which of them are TOUCHED, and the REFS of a contour."
   (dy (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
   (out-x (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
   (out-y (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
+  (tmp (make-array 0 :element-type '(signed-byte 32)) :type fixed-array)
   (touched (make-array 0 :element-type 'bit) :type simple-bit-vector)
   (refs (make-array 0 :element-type '(unsigned-byte 32))
    :type (simple-array (unsigned-byte 32) (*))))
@@ -409,11 +410,15 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
                                                   (if (logbitp 14 index) 2 0))))
               start end)))))
 
+(declaim (inline scaled-delta))
 (defun scaled-delta (delta scalar)
+  "DELTA, a whole number of font units (its low 16 bits, as Rust's i << 16
+takes them), times the 16.16 SCALAR, as a 16.16 value: (F* (FIXED-FROM-INT
+DELTA) SCALAR).  The product of FIXED-FROM-INT's multiple of 65536 and the
+scalar is a multiple of 65536, which the rounding of F* leaves alone, so this
+is a plain multiplication."
   (declare (type (signed-byte 32) delta scalar))
-  (if (= scalar #x10000)
-      (fixed-from-int delta)
-      (f* (fixed-from-int delta) scalar)))
+  (wrap32 (* (the (signed-byte 16) (sb-c::mask-signed-field 16 delta)) scalar)))
 
 ;;; Simple glyphs (gvar/deltas.rs)
 
@@ -484,13 +489,24 @@ the typed arrays of the glyph path."
   (declare (type fixed-array array) (fixnum i) (type (signed-byte 32) delta scalar))
   (setf (aref array i) (f+ (aref array i) (scaled-delta delta scalar))))
 
-(defun add-dense-deltas (c scalar dx dy n)
-  "Add a tuple's deltas for the N points, read at cursor C, to DX and DY."
-  (declare (gvar-cursor c) (type (signed-byte 32) scalar) (type fixed-array dx dy)
+(defun add-dense-deltas (c scalar dx dy n tmp)
+  "Add a tuple's deltas for the N points, read at cursor C, to DX and DY.
+TMP is room for N deltas."
+  (declare (gvar-cursor c) (type (signed-byte 32) scalar) (type fixed-array dx dy tmp)
            (fixnum n))
-  (progn
-    (do-dense-deltas (i d) c n (add-fixed-delta dx i d scalar))
-    (do-dense-deltas (i d) c n (add-fixed-delta dy i d scalar))))
+  (if (and **avx512** (>= n 16))
+      ;; Read the deltas, then multiply and add them sixteen at a time.  The
+      ;; scalar takes the low 16 bits of a delta, as SCALED-DELTA does.
+      (progn
+        (do-dense-deltas (i d) c n
+          (setf (aref tmp i) (the (signed-byte 16) (sb-c::mask-signed-field 16 d))))
+        (add-products dx tmp scalar n)
+        (do-dense-deltas (i d) c n
+          (setf (aref tmp i) (the (signed-byte 16) (sb-c::mask-signed-field 16 d))))
+        (add-products dy tmp scalar n))
+      (progn
+        (do-dense-deltas (i d) c n (add-fixed-delta dx i d scalar))
+        (do-dense-deltas (i d) c n (add-fixed-delta dy i d scalar)))))
 
 (defun interpolate-contours (fx fy out-x out-y touched refs ends n-ends n)
   "Infer the deltas of the untouched points of every contour (IUP); ENDS holds
@@ -531,9 +547,8 @@ are N points."
       (when (< i n)
         (add-fixed-delta out-y i d scalar)))
     (interpolate-contours fx fy out-x out-y touched (gs-refs sc) ends n-ends n)
-    (dotimes (i n)
-      (setf (aref dx i) (f+ (aref dx i) (f- (aref out-x i) (aref fx i)))
-            (aref dy i) (f+ (aref dy i) (f- (aref out-y i) (aref fy i)))))))
+    (add-differences dx out-x fx n)
+    (add-differences dy out-y fy n)))
 
 (defun gvar-scratch-for (sc count)
   "SC, or a new scratch if it is NIL, with room for COUNT points; its deltas
@@ -544,7 +559,7 @@ for them are zero."
       (let ((cap (max count 64 (* 2 (length (gs-fx sc))))))
         (flet ((fixed () (make-array cap :element-type '(signed-byte 32))))
           (setf (gs-fx sc) (fixed) (gs-fy sc) (fixed) (gs-dx sc) (fixed) (gs-dy sc) (fixed)
-                (gs-out-x sc) (fixed) (gs-out-y sc) (fixed)
+                (gs-out-x sc) (fixed) (gs-out-y sc) (fixed) (gs-tmp sc) (fixed)
                 (gs-touched sc) (make-array cap :element-type 'bit)
                 (gs-refs sc) (make-array cap :element-type '(unsigned-byte 32))))))
     (let ((dx (gs-dx sc)) (dy (gs-dy sc)))
@@ -565,7 +580,7 @@ is malformed."
           (map-active-tuples data coords
                              (lambda (scalar points c)
                                (if (eq points :all)
-                                   (add-dense-deltas c scalar dx dy count)
+                                   (add-dense-deltas c scalar dx dy count (gs-tmp sc))
                                    (add-sparse-deltas c scalar points sc count ends n-ends))))
           t)
       (gvar-data-error () nil))))
@@ -594,10 +609,8 @@ GVAR-SCRATCH-FOR).  The deltas are in SC's DX and DY: true, or NIL if the data
 is malformed."
   (declare (type fixed-array ux uy) (fixnum count n-ends)
            (type (simple-array (unsigned-byte 16) (*)) ends) (type gvar-scratch sc))
-  (let ((fx (gs-fx sc)) (fy (gs-fy sc)))
-    (dotimes (i count)
-      (setf (aref fx i) (fixed-from-int (aref ux i))
-            (aref fy i) (fixed-from-int (aref uy i)))))
+  (shifted-left-16 (gs-fx sc) ux count)
+  (shifted-left-16 (gs-fy sc) uy count)
   (scratch-glyph-deltas data coords sc count ends n-ends))
 
 ;;; Composite glyphs
