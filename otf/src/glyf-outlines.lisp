@@ -35,10 +35,16 @@ pointer past them; their values are left to the caller."
     vector))
 
 (defun loader-gvar-coords (loader)
-  "The instance as raw 2.14 coordinates when 'gvar' applies to it, else NIL."
-  (let ((coords (normalized-coordinates loader)))
-    (when (and coords (table-info "gvar" loader))
-      (map 'vector (lambda (c) (runes/otf/charstring::f2dot14-from-real c)) coords))))
+  "The instance as raw 2.14 coordinates when 'gvar' applies to it, else NIL.
+Worked out once for an instance (SET-INSTANCE forgets it): hinting asks for it
+for every glyph."
+  (let ((cache (%gvar-coords-cache loader)))
+    (if (eq cache :unset)
+        (setf (%gvar-coords-cache loader)
+              (let ((coords (normalized-coordinates loader)))
+                (when (and coords (table-info "gvar" loader))
+                  (map 'vector (lambda (c) (runes/otf/charstring::f2dot14-from-real c)) coords))))
+        cache)))
 
 ;;; Reading a simple glyph
 

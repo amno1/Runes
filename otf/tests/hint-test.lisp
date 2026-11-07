@@ -247,6 +247,16 @@ from and returned to the same pools, get the outlines one thread does."
       (mapc #'sb-thread:join-thread threads))
     (zerop failures)))
 
+(defun check-instance-change (loader)
+  "Hinting follows the instance of a variable font as it is changed: the first
+instance again gives the first outlines, a different one other outlines."
+  (flet ((outlines (weight)
+           (setf (zpb-ttf:variation-coordinates loader) `(("wght" . ,weight)))
+           (loop for gid in '(36 43 50 61 100)
+                 collect (multiple-value-list (zpb-ttf:hint-outline-26dot6 loader gid 16)))))
+    (let* ((first (outlines 400)) (other (outlines 800)) (again (outlines 400)))
+      (and (equalp first again) (not (equalp first other))))))
+
 (defun check-bad-glyph-index (loader)
   "A glyph index past the font's glyphs is an error, not a read past the table."
   (let ((count (zpb-ttf:glyph-count loader)))
@@ -301,7 +311,9 @@ from and returned to the same pools, get the outlines one thread does."
                                       count)
                               (<= differ 16))
                        (check "Adwaita Sans wght=700: none differs by more than a 64th of a pixel"
-                              (zerop far))))
+                              (zerop far))
+                       (check "Adwaita Sans: hinting follows a change of instance"
+                              (check-instance-change loader))))
                 (zpb-ttf:close-font-loader loader)))
             (format t "  [SKIP] Adwaita Sans is not installed.~%")))
       (let ((dejavu (find-if #'probe-file *dejavu-candidates*)))

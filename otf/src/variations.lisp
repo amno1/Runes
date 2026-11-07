@@ -236,7 +236,8 @@ the change keep their old outlines; find them again.")
 (defun set-instance (loader user-coordinates normalized-coordinates)
   "Set LOADER's instance and drop everything that depends on it."
   (setf (user-coordinates loader) user-coordinates
-        (normalized-coordinates loader) normalized-coordinates)
+        (normalized-coordinates loader) normalized-coordinates
+        (%gvar-coords-cache loader) :unset)
   ;; Outlines, bounding boxes and subfonts depend on the instance.
   (when (glyph-cache loader)
     (fill (glyph-cache loader) nil))

@@ -22,6 +22,8 @@ number of glyphs with a bearing, the table's long ones included."
    (outlines-kind :initform nil :accessor %outlines-kind)
    ;; (TABLE-INFO . GVAR) once GVAR-GLYPH-DATA has read the header, or :NONE.
    (gvar-cache :initform nil :accessor %gvar-cache)
+   ;; LOADER-GVAR-COORDS of the instance, once it has been worked out (or :UNSET)
+   (gvar-coords-cache :initform :unset :accessor %gvar-coords-cache)
    ;; What the glyph loaders read from 'glyf' and 'loca', found on first use.
    (outline-tables :initform nil :accessor %outline-tables)
    (font-data :initarg :font-data :accessor font-data)
