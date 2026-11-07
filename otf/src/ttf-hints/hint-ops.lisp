@@ -612,7 +612,7 @@ between two touched points comes from the unscaled coordinates."
 
 (defun decode-delta-arg (gs ppem arg band-offset)
   (declare (graphics-state gs) (fixnum ppem) (s32 arg) (type (integer 0 32) band-offset))
-  (let ((target-ppem (+ (gs-delta-base gs) band-offset (ldb (byte 4 4) arg))))
+  (let ((target-ppem (the fixnum (+ (the (integer -1000000 1000000) (gs-delta-base gs)) band-offset (ldb (byte 4 4) arg)))))
     (when (= target-ppem ppem)
       (let* ((mag-code (ldb (byte 4 0) arg))
              (steps (if (>= mag-code 8) (- mag-code 7) (- mag-code 8)))
