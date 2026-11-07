@@ -44,7 +44,6 @@
        (setf (eng-pc eng) (+ pc (* ,width count))
              (vs-top s) (+ top count)))))
 
-(declaim (inline push-bytes push-words))
 (define-push push-bytes 1)
 (define-push push-words 2)
 
