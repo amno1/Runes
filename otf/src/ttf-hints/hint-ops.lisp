@@ -8,7 +8,8 @@
 ;;; ones the font can trigger (stack, point and table indices, program bounds).
 (declaim (optimize (speed 3) (safety 1) (debug 0)))
 
-(declaim (ftype (function (tt-engine fixnum) s32) read-cvt-val)
+(declaim (inline read-cvt-val apply-min-distance decode-delta-arg)
+         (ftype (function (tt-engine fixnum) s32) read-cvt-val)
          (ftype (function (graphics-state s32 s32) s32) apply-min-distance)
          (ftype (function (graphics-state fixnum fixnum fixnum) (or null s32))
                 decode-delta-arg)

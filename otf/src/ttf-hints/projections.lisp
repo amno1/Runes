@@ -22,7 +22,9 @@
 ;;; Vector Projections & Point Movement (zone.rs / graphics.rs)
 ;;; ============================================================================
 
-(declaim (inline project-point dual-project-point zone-check-point))
+(declaim (inline project-point dual-project-point zone-check-point
+                 zone-project-cur zone-dual-project-orig zone-project-cur-diff
+                 zone-dual-project-orig-diff zone-dual-project-unscaled))
 
 (defun project-point (gs x y)
   (declare (graphics-state gs) (s32 x y) (optimize (speed 3) (safety 0)))
