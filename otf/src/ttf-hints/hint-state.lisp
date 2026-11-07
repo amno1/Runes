@@ -363,6 +363,11 @@ reusing existing buffers in place when large enough."
   ;; IUP has run on both axes in backward compatibility mode: the flags above
   ;; are set only then, so this is their conjunction, kept.
   (post-iup nil :type boolean)
+  ;; A program set one of the values RESET-GRAPHICS-STATE-PER-GLYPH takes from
+  ;; the state after the prep program (the cut-ins, the single width, the
+  ;; minimum distance, the deltas, the rounding): while none did, they are
+  ;; those already and are not copied again.
+  (slots-dirty t :type boolean)
   ;; The axis moves are along when the freedom and projection vectors make
   ;; each move change the projection by exactly its distance: 0 for x, 1 for y,
   ;; else 2.  See UPDATE-PROJECTION-STATE.
@@ -417,24 +422,29 @@ a too small FDOTP."
           (gs-loop gs) 1
           (gs-auto-flip gs) t
           (gs-did-iup-x gs) nil (gs-did-iup-y gs) nil (gs-post-iup gs) nil
-          (gs-control-value-cutin gs)    (gs-control-value-cutin source)
-          (gs-single-width-cutin gs)     (gs-single-width-cutin source)
-          (gs-single-width-value gs)     (gs-single-width-value source)
-          (gs-min-distance gs)           (gs-min-distance source)
-          (gs-delta-base gs)             (gs-delta-base source)
-          (gs-delta-shift gs)            (gs-delta-shift source)
-          (gs-scan-control gs)           (gs-scan-control source)
-          (gs-scan-type gs)              (gs-scan-type source)
-          (gs-instruct-control gs)       (gs-instruct-control source)
-          (gs-backward-compatibility gs) (gs-backward-compatibility source)
           )
-    ;; The round state is copied into the one GS has, which no other state
-    ;; shares (see MAKE-TT-HINT-ENGINE), not into a new one.
-    (let ((rs (gs-round-state gs)) (from (gs-round-state source)))
-      (setf (rs-mode rs) (rs-mode from)
-            (rs-threshold rs) (rs-threshold from)
-            (rs-phase rs) (rs-phase from)
-            (rs-period rs) (rs-period from)))
+    ;; What a program can change, if one did (or this is the first glyph); the
+    ;; state of an engine whose prep program says to ignore the glyph programs'
+    ;; values is made anew each time.
+    (when (or (gs-slots-dirty gs) (not (eq source default-gs)))
+      (setf (gs-control-value-cutin gs)    (gs-control-value-cutin source)
+            (gs-single-width-cutin gs)     (gs-single-width-cutin source)
+            (gs-single-width-value gs)     (gs-single-width-value source)
+            (gs-min-distance gs)           (gs-min-distance source)
+            (gs-delta-base gs)             (gs-delta-base source)
+            (gs-delta-shift gs)            (gs-delta-shift source)
+            (gs-scan-control gs)           (gs-scan-control source)
+            (gs-scan-type gs)              (gs-scan-type source)
+            (gs-instruct-control gs)       (gs-instruct-control source)
+            (gs-backward-compatibility gs) (gs-backward-compatibility source))
+      ;; The round state is copied into the one GS has, which no other state
+      ;; shares (see MAKE-TT-HINT-ENGINE), not into a new one.
+      (let ((rs (gs-round-state gs)) (from (gs-round-state source)))
+        (setf (rs-mode rs) (rs-mode from)
+              (rs-threshold rs) (rs-threshold from)
+              (rs-phase rs) (rs-phase from)
+              (rs-period rs) (rs-period from)))
+      (setf (gs-slots-dirty gs) nil))
     gs))
 
 ;;; Function types, for callers in the files after this one.
