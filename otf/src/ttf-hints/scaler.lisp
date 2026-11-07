@@ -454,88 +454,186 @@ VECTOR-PUSH-EXTEND and AREF on an adjustable vector make for each element."
           (setf (svref do (+ so bo i))
                 (logtest (aref zf i) runes/otf/tt-hint:+point-on-curve+)))))))
 
+(defun decode-simple-glyph-into-zone (fd pos contour-count z n scale)
+  "Read the simple glyph at POS (contour count CONTOUR-COUNT, N points) into
+the glyph zone Z: contour ends, the unscaled points, and those scaled by
+SCALE as both original and current positions, with the on-curve flags.  As
+READ-SIMPLE-POINTS, but straight into the zone's arrays."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) pos)
+           (type (unsigned-byte 16) contour-count) (type runes/otf/tt-hint:tt-zone z)
+           (type (unsigned-byte 17) n) (type (signed-byte 32) scale)
+           (optimize (speed 3) (safety 1)))
+  (let ((ux (runes/otf/tt-hint:zone-unscaled-x z))
+        (uy (runes/otf/tt-hint:zone-unscaled-y z))
+        (ox (runes/otf/tt-hint:zone-orig-x z))
+        (oy (runes/otf/tt-hint:zone-orig-y z))
+        (cx (runes/otf/tt-hint:zone-cur-x z))
+        (cy (runes/otf/tt-hint:zone-cur-y z))
+        (zf (runes/otf/tt-hint:zone-flags z))
+        (zc (runes/otf/tt-hint:zone-contours z))
+        (p pos))
+    (declare (type (simple-array (signed-byte 32) (*)) ux uy ox oy cx cy)
+             (type (simple-array (unsigned-byte 8) (*)) zf)
+             (type (simple-array (unsigned-byte 16) (*)) zc)
+             (type (unsigned-byte 32) p))
+    (dotimes (c contour-count)
+      (setf (aref zc c) (runes/otf:font-data-read-u16 fd (+ pos (* 2 c)))))
+    (incf p (* 2 contour-count))
+    ;; Skip the instructions.
+    (incf p (+ 2 (the (unsigned-byte 16) (runes/otf:font-data-read-u16 fd p))))
+    ;; The flags: one byte each, a repeat bit followed by a count.  A repeat
+    ;; past the last point is dropped.
+    (let ((i 0))
+      (declare (type (unsigned-byte 17) i))
+      (loop while (< i n)
+            do (let ((flag (runes/otf:font-data-read-u8 fd p))
+                     (repeats 0))
+                 (declare (type (unsigned-byte 8) flag repeats))
+                 (incf p)
+                 (when (logbitp 3 flag)
+                   (setf repeats (runes/otf:font-data-read-u8 fd p))
+                   (incf p))
+                 (loop repeat (min (1+ repeats) (- n i))
+                       do (setf (aref zf i) flag)
+                          (incf i)))))
+    ;; The coordinates: each a byte (sign from SAME-BIT), the previous value
+    ;; (SAME-BIT without SHORT-BIT), or a word.
+    (macrolet ((coordinates (out short-bit same-bit)
+                 `(let ((current 0))
+                    (declare (type (signed-byte 32) current))
+                    (dotimes (j n)
+                      (let ((flag (aref zf j)))
+                        (setf current
+                              (+ current
+                                 (cond ((logbitp ,short-bit flag)
+                                        (let ((v (runes/otf:font-data-read-u8 fd p)))
+                                          (incf p)
+                                          (if (logbitp ,same-bit flag) v (- v))))
+                                       ((logbitp ,same-bit flag) 0)
+                                       (t (prog1 (runes/otf:font-data-read-i16 fd p)
+                                            (incf p 2))))))
+                        (setf (aref ,out j) current))))))
+      (coordinates ux 1 4)
+      (coordinates uy 2 5))
+    (dotimes (i n)
+      (let ((sx (scale-funit (aref ux i) scale))
+            (sy (scale-funit (aref uy i) scale)))
+        (setf (aref ox i) sx (aref oy i) sy
+              (aref cx i) sx (aref cy i) sy
+              (aref zf i) (logand (aref zf i) runes/otf/tt-hint:+point-on-curve+))))
+    z))
+
+(defun fill-zone-from-vectors (z ends xs ys on n scale)
+  "Fill the glyph zone Z from the vectors READ-SIMPLE-POINTS returns, with
+variation deltas added to XS and YS, as DECODE-SIMPLE-GLYPH-INTO-ZONE does."
+  (declare (type runes/otf/tt-hint:tt-zone z) (simple-vector ends xs ys on)
+           (type (unsigned-byte 17) n) (type (signed-byte 32) scale))
+  (let ((ux (runes/otf/tt-hint:zone-unscaled-x z))
+        (uy (runes/otf/tt-hint:zone-unscaled-y z))
+        (ox (runes/otf/tt-hint:zone-orig-x z))
+        (oy (runes/otf/tt-hint:zone-orig-y z))
+        (cx (runes/otf/tt-hint:zone-cur-x z))
+        (cy (runes/otf/tt-hint:zone-cur-y z))
+        (zf (runes/otf/tt-hint:zone-flags z))
+        (zc (runes/otf/tt-hint:zone-contours z)))
+    (declare (type (simple-array (signed-byte 32) (*)) ux uy ox oy cx cy)
+             (type (simple-array (unsigned-byte 8) (*)) zf)
+             (type (simple-array (unsigned-byte 16) (*)) zc))
+    (dotimes (c (length ends))
+      (setf (aref zc c) (svref ends c)))
+    (dotimes (i n)
+      (let ((sx (scale-funit (svref xs i) scale))
+            (sy (scale-funit (svref ys i) scale)))
+        (setf (aref ux i) (svref xs i) (aref uy i) (svref ys i)
+              (aref ox i) sx          (aref oy i) sy
+              (aref cx i) sx          (aref cy i) sy
+              (aref zf i) (if (svref on i) runes/otf/tt-hint:+point-on-curve+ 0))))
+    z))
+
 (defun load-hinted-simple-points (loader eng gid fd pos contour-count phantom out coords)
   (declare (type font-loader loader) (type runes/otf/tt-hint:tt-engine eng)
            (type (unsigned-byte 32) gid) (type runes/otf:font-data fd)
            (type (unsigned-byte 32) pos) (type (unsigned-byte 16) contour-count)
            (type simple-vector phantom coords) (type outline-points out))
-  (multiple-value-bind (ends xs ys on) (read-simple-points fd pos contour-count)
-    (declare (simple-vector ends xs ys on))
-    (let* ((n (length xs))
-           (total (+ n 4))
-           (scale (runes/otf/tt-hint::eng-scale eng))
-           (data (and (plusp (length coords)) (gvar-glyph-data loader gid))))
-      (when data
-        (let ((all-x (concatenate 'vector xs (map 'vector #'car phantom)))
-              (all-y (concatenate 'vector ys (map 'vector #'cdr phantom))))
-          (multiple-value-bind (dx dy) (simple-glyph-deltas data coords all-x all-y (coerce ends 'list))
-            (when dx
-              (dotimes (i n)
-                (setf (aref xs i) (+ (the fixnum (aref xs i)) (the fixnum (fixed-round (aref dx i))))
-                      (aref ys i) (+ (the fixnum (aref ys i)) (the fixnum (fixed-round (aref dy i))))))
-              (setf phantom (add-phantom-deltas phantom dx dy n))))))
-      ;; Reuse the engine's glyph zone arena in place!
-      (let* ((z (runes/otf/tt-hint:ensure-zone-capacity
-                 (runes/otf/tt-hint::eng-glyph eng) total contour-count :n-glyph-points n))
-             (ux (runes/otf/tt-hint:zone-unscaled-x z))
-             (uy (runes/otf/tt-hint:zone-unscaled-y z))
-             (ox (runes/otf/tt-hint:zone-orig-x z))
-             (oy (runes/otf/tt-hint:zone-orig-y z))
-             (cx (runes/otf/tt-hint:zone-cur-x z))
-             (cy (runes/otf/tt-hint:zone-cur-y z))
-             (zf (runes/otf/tt-hint:zone-flags z))
-             (zc (runes/otf/tt-hint:zone-contours z)))
-        (declare (type (simple-array (signed-byte 32) (*)) ux uy ox oy cx cy)
-                 (type (simple-array (unsigned-byte 8) (*)) zf)
-                 (type (simple-array (unsigned-byte 16) (*)) zc)
-                 (type (signed-byte 32) scale))
-        (dotimes (c contour-count)
-          (setf (aref zc c) (svref ends c)))
-        (dotimes (i n)
-          (let ((sx (scale-funit (svref xs i) scale))
-                (sy (scale-funit (svref ys i) scale)))
-            (setf (aref ux i) (svref xs i) (aref uy i) (svref ys i)
-                  (aref ox i) sx          (aref oy i) sy
-                  (aref cx i) sx          (aref cy i) sy
-                  (aref zf i) (if (svref on i) runes/otf/tt-hint:+point-on-curve+ 0))))
+  (let* ((scale (runes/otf/tt-hint::eng-scale eng))
+         (data (and (plusp (length coords)) (gvar-glyph-data loader gid)))
+         (n 0)
+         (z nil))
+    (declare (type (signed-byte 32) scale) (type (unsigned-byte 17) n))
+    (if data
+        ;; A variable font's glyph: the deltas need the points as vectors.
+        (multiple-value-bind (ends xs ys on) (read-simple-points fd pos contour-count)
+          (declare (simple-vector ends xs ys on))
+          (setf n (length xs))
+          (let ((all-x (concatenate 'vector xs (map 'vector #'car phantom)))
+                (all-y (concatenate 'vector ys (map 'vector #'cdr phantom))))
+            (multiple-value-bind (dx dy) (simple-glyph-deltas data coords all-x all-y (coerce ends 'list))
+              (when dx
+                (dotimes (i n)
+                  (setf (aref xs i) (+ (the fixnum (aref xs i)) (the fixnum (fixed-round (aref dx i))))
+                        (aref ys i) (+ (the fixnum (aref ys i)) (the fixnum (fixed-round (aref dy i))))))
+                (setf phantom (add-phantom-deltas phantom dx dy n)))))
+          ;; Reuse the engine's glyph zone arena in place!
+          (setf z (runes/otf/tt-hint:ensure-zone-capacity
+                   (runes/otf/tt-hint::eng-glyph eng) (+ n 4) contour-count :n-glyph-points n))
+          (fill-zone-from-vectors z ends xs ys on n scale))
+        (progn
+          (setf n (if (zerop contour-count)
+                      0
+                      (1+ (runes/otf:font-data-read-u16
+                           fd (+ pos (* 2 (1- contour-count)))))))
+          (setf z (runes/otf/tt-hint:ensure-zone-capacity
+                   (runes/otf/tt-hint::eng-glyph eng) (+ n 4) contour-count :n-glyph-points n))
+          (decode-simple-glyph-into-zone fd pos contour-count z n scale)))
+    (let ((ux (runes/otf/tt-hint:zone-unscaled-x z))
+          (uy (runes/otf/tt-hint:zone-unscaled-y z))
+          (ox (runes/otf/tt-hint:zone-orig-x z))
+          (oy (runes/otf/tt-hint:zone-orig-y z))
+          (cx (runes/otf/tt-hint:zone-cur-x z))
+          (cy (runes/otf/tt-hint:zone-cur-y z))
+          (zf (runes/otf/tt-hint:zone-flags z))
+          (zc (runes/otf/tt-hint:zone-contours z)))
+      (declare (type (simple-array (signed-byte 32) (*)) ux uy ox oy cx cy)
+               (type (simple-array (unsigned-byte 8) (*)) zf)
+               (type (simple-array (unsigned-byte 16) (*)) zc))
+      (dotimes (k 4)
+        (let* ((idx (+ n k))
+               (px (the (signed-byte 32) (car (svref phantom k))))
+               (py (the (signed-byte 32) (cdr (svref phantom k))))
+               (spx (scale-funit px scale))
+               (spy (scale-funit py scale)))
+          (setf (aref ux idx) px  (aref uy idx) py
+                (aref ox idx) spx (aref oy idx) spy
+                (aref cx idx) (round-26-6 spx)
+                (aref cy idx) (round-26-6 spy)
+                (aref zf idx) 0)))
+      ;; The two modes differ here: out of backward compatibility mode the
+      ;; program starts from rounded phantom points (and keeps what it makes
+      ;; of them), in it from the same ones but leaves the originals as
+      ;; scaled, which is what is returned (see SHIFT-OUTLINE-BY-PP1).
+      (unless (runes/otf/tt-hint::gs-backward-compatibility
+               (runes/otf/tt-hint::eng-default-gs eng))
         (dotimes (k 4)
-          (let* ((idx (+ n k))
-                 (px (the (signed-byte 32) (car (svref phantom k))))
-                 (py (the (signed-byte 32) (cdr (svref phantom k))))
-                 (spx (scale-funit px scale))
-                 (spy (scale-funit py scale)))
-            (setf (aref ux idx) px  (aref uy idx) py
-                  (aref ox idx) spx (aref oy idx) spy
-                  (aref cx idx) (round-26-6 spx)
-                  (aref cy idx) (round-26-6 spy)
-                  (aref zf idx) 0)))
-        ;; The two modes differ here: out of backward compatibility mode the
-        ;; program starts from rounded phantom points (and keeps what it makes
-        ;; of them), in it from the same ones but leaves the originals as
-        ;; scaled, which is what is returned (see SHIFT-OUTLINE-BY-PP1).
-        (unless (runes/otf/tt-hint::gs-backward-compatibility
-                 (runes/otf/tt-hint::eng-default-gs eng))
-          (dotimes (k 4)
-            (assert (and (zerop (logand 63 (aref cx (+ n k))))
-                         (zerop (logand 63 (aref cy (+ n k)))))
-                    () "phantom point ~D is not rounded" k)))
-        (multiple-value-bind (istart iend) (simple-glyph-instruction-range fd pos contour-count)
-          (setf (runes/otf/tt-hint::eng-unscaled-scale eng) scale
-                (runes/otf/tt-hint::eng-composite-p eng) nil)
-          (run-glyph-bytecode-in-zone eng (runes/otf:font-data-bytes fd) istart iend))
-        (let ((base (fill-pointer (op-xs out))))
-          (append-hinted-points out n cx cy zf)
-          (loop for end across ends
-                do (vector-push-extend (+ base end) (op-ends out))))
-        ;; In backward compatibility mode the program does not change the
-        ;; bearings and advance: the phantom points stay as scaled, not
-        ;; rounded (FreeType, skrifa).
-        (let ((bc (runes/otf/tt-hint::gs-backward-compatibility (runes/otf/tt-hint::eng-gs eng))))
-          (flet ((phantom-point (k)
-                   (if bc
-                       (cons (aref ox (+ n k)) (aref oy (+ n k)))
-                       (cons (aref cx (+ n k)) (aref cy (+ n k))))))
-            (vector (phantom-point 0) (phantom-point 1) (phantom-point 2) (phantom-point 3))))))))
+          (assert (and (zerop (logand 63 (aref cx (+ n k))))
+                       (zerop (logand 63 (aref cy (+ n k)))))
+                  () "phantom point ~D is not rounded" k)))
+      (multiple-value-bind (istart iend) (simple-glyph-instruction-range fd pos contour-count)
+        (setf (runes/otf/tt-hint::eng-unscaled-scale eng) scale
+              (runes/otf/tt-hint::eng-composite-p eng) nil)
+        (run-glyph-bytecode-in-zone eng (runes/otf:font-data-bytes fd) istart iend))
+      (let ((base (fill-pointer (op-xs out))))
+        (append-hinted-points out n cx cy zf)
+        (dotimes (c contour-count)
+          (vector-push-extend (+ base (aref zc c)) (op-ends out))))
+      ;; In backward compatibility mode the program does not change the
+      ;; bearings and advance: the phantom points stay as scaled, not
+      ;; rounded (FreeType, skrifa).
+      (let ((bc (runes/otf/tt-hint::gs-backward-compatibility (runes/otf/tt-hint::eng-gs eng))))
+        (flet ((phantom-point (k)
+                 (if bc
+                     (cons (aref ox (+ n k)) (aref oy (+ n k)))
+                     (cons (aref cx (+ n k)) (aref cy (+ n k))))))
+          (vector (phantom-point 0) (phantom-point 1) (phantom-point 2) (phantom-point 3)))))))
 
 (defun load-hinted-composite-points (loader eng gid pos phantom out coords)
   (declare (type font-loader loader) (type runes/otf/tt-hint:tt-engine eng)
