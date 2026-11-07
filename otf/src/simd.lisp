@@ -117,20 +117,22 @@ Sixteen at a time with AVX-512, if the processor has it."
              (incf i))
     nil))
 
-(defun shifted-left-16 (dest source n)
-  "DEST[i] = SOURCE[i] shifted left 16 bits, wrapping in 32 bits (the low 16
-bits of the source as the high ones: FIXED-FROM-INT), for i below N."
-  (declare (type i32-array dest source) (fixnum n) (optimize (speed 3) (safety 0)))
+(defun shifted-left-16 (dest source n &optional (src-start 0))
+  "DEST[i] = SOURCE[src-start + i] shifted left 16 bits, wrapping in 32 bits
+(the low 16 bits of the source as the high ones: FIXED-FROM-INT), for i below N."
+  (declare (type i32-array dest source) (fixnum n src-start) (optimize (speed 3) (safety 0)))
   (let ((i 0))
     (declare (fixnum i))
     #+zpb-avx512
     (when (and **avx512** (>= n 16))
       (loop while (<= (+ i 16) n)
             do (setf (sb-simd-avx512f:s32.16-aref dest i)
-                     (sb-simd-avx512f:s32.16-shiftl (sb-simd-avx512f:s32.16-aref source i) 16))
+                     (sb-simd-avx512f:s32.16-shiftl
+                      (sb-simd-avx512f:s32.16-aref source (+ src-start i)) 16))
                (incf i 16)))
     (loop while (< i n)
-          do (setf (aref dest i) (sb-c::mask-signed-field 32 (ash (aref source i) 16)))
+          do (setf (aref dest i)
+                   (sb-c::mask-signed-field 32 (ash (aref source (+ src-start i)) 16)))
              (incf i))
     nil))
 
@@ -142,11 +144,12 @@ bits of the source as the high ones: FIXED-FROM-INT), for i below N."
   (let ((ab (* a b)))
     (sb-c::mask-signed-field 32 (ash (+ ab #x8000 (ash ab -63)) -16))))
 
-(defun mul-fix-into (out1 out2 source factor n)
-  "OUT1[i] = OUT2[i] = SOURCE[i] times FACTOR as FreeType's FT_MulFix, for i
-below N.  With AVX-512 the 32x32 to 64 bit products of eight points are made
-by one instruction, and the sixteen results put together again."
-  (declare (type i32-array out1 out2 source) (type (signed-byte 32) factor) (fixnum n)
+(defun mul-fix-into (out1 out2 source factor n &optional (start 0))
+  "OUT1[start + i] = OUT2[start + i] = SOURCE[start + i] times FACTOR as
+FreeType's FT_MulFix, for i below N.  With AVX-512 the 32x32 to 64 bit products
+of eight points are made by one instruction, and the sixteen results put
+together again."
+  (declare (type i32-array out1 out2 source) (type (signed-byte 32) factor) (fixnum n start)
            (optimize (speed 3) (safety 0)))
   (let ((i 0))
     (declare (fixnum i))
@@ -163,8 +166,9 @@ by one instruction, and the sixteen results put together again."
                   16)))
           (declare (inline rounded))
           (loop while (<= (+ i 16) n)
-                do (let* ((u (sb-simd-avx512f::s64.8!-from-p512
-                              (sb-simd-avx512f:s32.16-aref source i)))
+                do (let* ((at (+ start i))
+                          (u (sb-simd-avx512f::s64.8!-from-p512
+                              (sb-simd-avx512f:s32.16-aref source at)))
                           ;; The even-numbered points are the low halves of the
                           ;; 64-bit lanes, the odd ones the high halves.
                           (even (rounded (sb-simd-avx512dq:s64.8-mul u f)))
@@ -174,13 +178,14 @@ by one instruction, and the sixteen results put together again."
                                  (sb-simd-avx512f:s64.8-or
                                   (sb-simd-avx512f:s64.8-and even low)
                                   (sb-simd-avx512f:s64.8-shiftl odd 32)))))
-                     (setf (sb-simd-avx512f:s32.16-aref out1 i) both
-                           (sb-simd-avx512f:s32.16-aref out2 i) both))
+                     (setf (sb-simd-avx512f:s32.16-aref out1 at) both
+                           (sb-simd-avx512f:s32.16-aref out2 at) both))
                    (incf i 16)))))
     (loop while (< i n)
-          do (let ((v (mul-fix-1 (aref source i) factor)))
-               (setf (aref out1 i) v
-                     (aref out2 i) v))
+          do (let* ((at (+ start i))
+                    (v (mul-fix-1 (aref source at) factor)))
+               (setf (aref out1 at) v
+                     (aref out2 at) v))
              (incf i))
     nil))
 

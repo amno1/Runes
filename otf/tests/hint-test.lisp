@@ -15,7 +15,8 @@
 ;;;
 ;;; (the last for the variable font Adwaita Sans at wght=700, see
 ;;; COMPARE-VARIABLE; the outlines of Liberation Sans: every 21st glyph of those, plus a few
-;;; from a wider recording; the advances in fonts/reference/*-advances.txt).
+;;; from a wider recording; DejaVu Sans also includes nested composite glyphs;
+;;; the advances in fonts/reference/*-advances.txt).
 ;;; Outlines in *EXCLUSIONS*, if any, differ still, and the test checks that
 ;;; they do, so that a fix, or a change that moves other glyphs, is noticed:
 ;;; when an excluded outline starts to match, remove it from the list.

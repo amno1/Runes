@@ -50,13 +50,17 @@
   (declare (graphics-state gs) (tt-zone zone) (fixnum pt)
            (optimize (speed 3) (safety 0)))
   (zone-check-point zone pt)
-  (project-point gs (aref (zone-cur-x zone) pt) (aref (zone-cur-y zone) pt)))
+  (let ((idx (+ (zone-base zone) pt)))
+    (declare (fixnum idx))
+    (project-point gs (aref (zone-cur-x zone) idx) (aref (zone-cur-y zone) idx))))
 
 (defun zone-dual-project-orig (gs zone pt)
   (declare (graphics-state gs) (tt-zone zone) (fixnum pt)
            (optimize (speed 3) (safety 0)))
   (zone-check-point zone pt)
-  (dual-project-point gs (aref (zone-orig-x zone) pt) (aref (zone-orig-y zone) pt)))
+  (let ((idx (+ (zone-base zone) pt)))
+    (declare (fixnum idx))
+    (dual-project-point gs (aref (zone-orig-x zone) idx) (aref (zone-orig-y zone) idx))))
 
 (defun zone-project-cur-diff (gs zone1 pt1 zone2 pt2 &optional (check t))
   "The distance from PT2 of ZONE2 to PT1 of ZONE1, current positions, along
@@ -68,9 +72,12 @@ false the caller has checked the point indices."
   (when check
     (zone-check-point zone1 pt1)
     (zone-check-point zone2 pt2))
-  (project-point gs
-                 (f26- (aref (zone-cur-x zone1) pt1) (aref (zone-cur-x zone2) pt2))
-                 (f26- (aref (zone-cur-y zone1) pt1) (aref (zone-cur-y zone2) pt2))))
+  (let ((i1 (+ (zone-base zone1) pt1))
+        (i2 (+ (zone-base zone2) pt2)))
+    (declare (fixnum i1 i2))
+    (project-point gs
+                   (f26- (aref (zone-cur-x zone1) i1) (aref (zone-cur-x zone2) i2))
+                   (f26- (aref (zone-cur-y zone1) i1) (aref (zone-cur-y zone2) i2)))))
 
 (defun zone-dual-project-orig-diff (gs zone1 pt1 zone2 pt2 &optional (check t))
   "As ZONE-PROJECT-CUR-DIFF, for the original positions and the dual
@@ -80,9 +87,12 @@ projection vector."
   (when check
     (zone-check-point zone1 pt1)
     (zone-check-point zone2 pt2))
-  (dual-project-point gs
-                      (f26- (aref (zone-orig-x zone1) pt1) (aref (zone-orig-x zone2) pt2))
-                      (f26- (aref (zone-orig-y zone1) pt1) (aref (zone-orig-y zone2) pt2))))
+  (let ((i1 (+ (zone-base zone1) pt1))
+        (i2 (+ (zone-base zone2) pt2)))
+    (declare (fixnum i1 i2))
+    (dual-project-point gs
+                        (f26- (aref (zone-orig-x zone1) i1) (aref (zone-orig-x zone2) i2))
+                        (f26- (aref (zone-orig-y zone1) i1) (aref (zone-orig-y zone2) i2)))))
 
 (defun zone-dual-project-unscaled (gs zone1 pt1 zone2 pt2)
   "The unscaled (font unit) distance from PT2 of ZONE2 to PT1 of ZONE1 along
@@ -91,9 +101,12 @@ the dual projection vector."
            (optimize (speed 3) (safety 0)))
   (zone-check-point zone1 pt1)
   (zone-check-point zone2 pt2)
-  (dual-project-point gs
-                      (f26- (aref (zone-unscaled-x zone1) pt1) (aref (zone-unscaled-x zone2) pt2))
-                      (f26- (aref (zone-unscaled-y zone1) pt1) (aref (zone-unscaled-y zone2) pt2))))
+  (let ((i1 (+ (zone-base zone1) pt1))
+        (i2 (+ (zone-base zone2) pt2)))
+    (declare (fixnum i1 i2))
+    (dual-project-point gs
+                        (f26- (aref (zone-unscaled-x zone1) i1) (aref (zone-unscaled-x zone2) i2))
+                        (f26- (aref (zone-unscaled-y zone1) i1) (aref (zone-unscaled-y zone2) i2)))))
 
 (declaim (ftype (function (graphics-state tt-zone fixnum s32 t) t) move-zone-point-general))
 (declaim (inline %move-zone-point))
@@ -105,23 +118,25 @@ projection vector) and y is not moved once IUP has run on both axes."
   (declare (graphics-state gs) (tt-zone zone) (type (integer 0 1) zone-id)
            (ignore zone-id) (fixnum pt) (s32 distance)
            (optimize (speed 3) (safety 0)))
-  (case (gs-move-axis gs)
-    ;; The common moves: along x or y with the projection on the same axis, so
-    ;; the point moves by the distance.  In backward compatibility mode x is
-    ;; never moved, and y not once IUP has run on both axes.
-    (0 (unless (gs-backward-compatibility gs)
-         (setf (aref (zone-cur-x zone) pt)
-               (f26+ (aref (zone-cur-x zone) pt) distance)))
-       (when touch
-         (setf (aref (zone-flags zone) pt)
-               (logior (aref (zone-flags zone) pt) +point-touched-x+))))
-    (1 (unless (gs-post-iup gs)
-         (setf (aref (zone-cur-y zone) pt)
-               (f26+ (aref (zone-cur-y zone) pt) distance)))
-       (when touch
-         (setf (aref (zone-flags zone) pt)
-               (logior (aref (zone-flags zone) pt) +point-touched-y+))))
-    (t (move-zone-point-general gs zone pt distance touch))))
+  (let ((idx (+ (zone-base zone) pt)))
+    (declare (fixnum idx))
+    (case (gs-move-axis gs)
+      ;; The common moves: along x or y with the projection on the same axis, so
+      ;; the point moves by the distance.  In backward compatibility mode x is
+      ;; never moved, and y not once IUP has run on both axes.
+      (0 (unless (gs-backward-compatibility gs)
+           (setf (aref (zone-cur-x zone) idx)
+                 (f26+ (aref (zone-cur-x zone) idx) distance)))
+         (when touch
+           (setf (aref (zone-flags zone) idx)
+                 (logior (aref (zone-flags zone) idx) +point-touched-x+))))
+      (1 (unless (gs-post-iup gs)
+           (setf (aref (zone-cur-y zone) idx)
+                 (f26+ (aref (zone-cur-y zone) idx) distance)))
+         (when touch
+           (setf (aref (zone-flags zone) idx)
+                 (logior (aref (zone-flags zone) idx) +point-touched-y+))))
+      (t (move-zone-point-general gs zone idx distance touch)))))
 
 (declaim (inline move-zone-point))
 (defun move-zone-point (gs zone zone-id pt distance touch)
@@ -132,9 +147,9 @@ changes by DISTANCE (see %MOVE-ZONE-POINT), after checking PT."
   (zone-check-point zone pt)
   (%move-zone-point gs zone zone-id pt distance touch))
 
-(defun move-zone-point-general (gs zone pt distance touch)
-  "MOVE-ZONE-POINT for any freedom and projection vectors."
-  (declare (graphics-state gs) (tt-zone zone) (fixnum pt) (s32 distance)
+(defun move-zone-point-general (gs zone idx distance touch)
+  "MOVE-ZONE-POINT for any freedom and projection vectors, at raw array index IDX."
+  (declare (graphics-state gs) (tt-zone zone) (fixnum idx) (s32 distance)
            (optimize (speed 3) (safety 0)))
   (let* ((fx (gs-free-x gs))
          (fy (gs-free-y gs))
@@ -151,15 +166,15 @@ changes by DISTANCE (see %MOVE-ZONE-POINT), after checking PT."
       (declare (inline delta horizontal-p post-iup-p))
       (when (not (zerop fx))
         (when (or (not bc) (and (not axis-aligned) (horizontal-p)))
-          (setf (aref (zone-cur-x zone) pt)
-                (f26+ (aref (zone-cur-x zone) pt) (delta fx))))
+          (setf (aref (zone-cur-x zone) idx)
+                (f26+ (aref (zone-cur-x zone) idx) (delta fx))))
         (when touch
-          (setf (aref (zone-flags zone) pt)
-                (logior (aref (zone-flags zone) pt) +point-touched-x+))))
+          (setf (aref (zone-flags zone) idx)
+                (logior (aref (zone-flags zone) idx) +point-touched-x+))))
       (when (not (zerop fy))
         (when (or (not (post-iup-p)) (and (not axis-aligned) (horizontal-p)))
-          (setf (aref (zone-cur-y zone) pt)
-                (f26+ (aref (zone-cur-y zone) pt) (delta fy))))
+          (setf (aref (zone-cur-y zone) idx)
+                (f26+ (aref (zone-cur-y zone) idx) (delta fy))))
         (when touch
-          (setf (aref (zone-flags zone) pt)
-                (logior (aref (zone-flags zone) pt) +point-touched-y+)))))))
+          (setf (aref (zone-flags zone) idx)
+                (logior (aref (zone-flags zone) idx) +point-touched-y+)))))))

@@ -512,29 +512,29 @@ TMP is room for N deltas."
         (do-dense-deltas (i d) c n (add-fixed-delta dx i d scalar))
         (do-dense-deltas (i d) c n (add-fixed-delta dy i d scalar)))))
 
-(defun interpolate-contours (fx fy out-x out-y touched refs ends n-ends n)
+(defun interpolate-contours (fx fy out-x out-y touched refs ends n-ends n &optional (ends-start 0))
   "Infer the deltas of the untouched points of every contour (IUP); ENDS holds
-the N-ENDS contour end points, and there are N points."
+the N-ENDS contour end points from ENDS-START, and there are N points."
   (declare (type fixed-array fx fy out-x out-y) (simple-bit-vector touched)
            (type (simple-array (unsigned-byte 32) (*)) refs)
-           (type (simple-array (unsigned-byte 16) (*)) ends) (fixnum n-ends n))
+           (type (simple-array (unsigned-byte 16) (*)) ends) (fixnum n-ends n ends-start))
   (let ((start 0))
     (declare (fixnum start))
     (dotimes (c n-ends)
-      (let ((end (aref ends c)))
+      (let ((end (aref ends (+ ends-start c))))
         ;; A contour ending before the previous one is skipped.
         (when (>= end start)
           (when (>= end n) (gvar-fail))
           (interpolate-untouched fx fy out-x out-y touched refs start end)
           (setf start (1+ end)))))))
 
-(defun add-sparse-deltas (c scalar points sc n ends n-ends)
+(defun add-sparse-deltas (c scalar points sc n ends n-ends &optional (ends-start 0))
   "Add a tuple's deltas for POINTS, read at cursor C, to the deltas of the
 scratch SC, with those of the other points inferred from them (IUP).  There
 are N points."
   (declare (gvar-cursor c) (type (signed-byte 32) scalar)
            (type (simple-array (unsigned-byte 16) (*)) points)
-           (type gvar-scratch sc) (fixnum n n-ends)
+           (type gvar-scratch sc) (fixnum n n-ends ends-start)
            (type (simple-array (unsigned-byte 16) (*)) ends))
   (let ((fx (gs-fx sc)) (fy (gs-fy sc)) (dx (gs-dx sc)) (dy (gs-dy sc))
         (out-x (gs-out-x sc)) (out-y (gs-out-y sc)) (touched (gs-touched sc)))
@@ -550,7 +550,7 @@ are N points."
     (do-sparse-deltas (i d) c points (length points)
       (when (< i n)
         (add-fixed-delta out-y i d scalar)))
-    (interpolate-contours fx fy out-x out-y touched (gs-refs sc) ends n-ends n)
+    (interpolate-contours fx fy out-x out-y touched (gs-refs sc) ends n-ends n ends-start)
     (add-differences dx out-x fx n)
     (add-differences dy out-y fy n)))
 
@@ -572,11 +572,11 @@ for them are zero."
               (aref dy i) 0)))
     sc))
 
-(defun scratch-glyph-deltas (data coords sc count ends n-ends)
+(defun scratch-glyph-deltas (data coords sc count ends n-ends &optional (ends-start 0))
   "Fill the deltas in SC, whose FX and FY hold the 16.16 coordinates of COUNT
-points; ENDS holds the N-ENDS contour end points.  True, or NIL if the data
-is malformed."
-  (declare (type gvar-scratch sc) (fixnum count n-ends)
+points; ENDS holds the N-ENDS contour end points from ENDS-START.  True, or NIL
+if the data is malformed."
+  (declare (type gvar-scratch sc) (fixnum count n-ends ends-start)
            (type (simple-array (unsigned-byte 16) (*)) ends))
   (let ((dx (gs-dx sc)) (dy (gs-dy sc)))
     (handler-case
@@ -585,7 +585,7 @@ is malformed."
                              (lambda (scalar points c)
                                (if (eq points :all)
                                    (add-dense-deltas c scalar dx dy count (gs-tmp sc))
-                                   (add-sparse-deltas c scalar points sc count ends n-ends))))
+                                   (add-sparse-deltas c scalar points sc count ends n-ends ends-start))))
           t)
       (gvar-data-error () nil))))
 
@@ -605,17 +605,17 @@ and ENDS (a list) its contour end points. NIL if the data is malformed."
       ;; Exact-size arrays, as the callers expect.
       (values (subseq (gs-dx sc) 0 n) (subseq (gs-dy sc) 0 n)))))
 
-(defun zone-glyph-deltas (data coords ux uy count ends n-ends sc)
+(defun zone-glyph-deltas (data coords ux uy count ends n-ends sc &optional (pbase 0) (cbase 0))
   "Like SIMPLE-GLYPH-DELTAS for the COUNT points (phantom points included) in
-the first elements of the arrays UX and UY of font unit coordinates, and the
-N-ENDS contour end points in ENDS, with the work arrays SC (from
+the elements from PBASE of the arrays UX and UY of font unit coordinates, and
+the N-ENDS contour end points from CBASE in ENDS, with the work arrays SC (from
 GVAR-SCRATCH-FOR).  The deltas are in SC's DX and DY: true, or NIL if the data
 is malformed."
-  (declare (type fixed-array ux uy) (fixnum count n-ends)
+  (declare (type fixed-array ux uy) (fixnum count n-ends pbase cbase)
            (type (simple-array (unsigned-byte 16) (*)) ends) (type gvar-scratch sc))
-  (shifted-left-16 (gs-fx sc) ux count)
-  (shifted-left-16 (gs-fy sc) uy count)
-  (scratch-glyph-deltas data coords sc count ends n-ends))
+  (shifted-left-16 (gs-fx sc) ux count pbase)
+  (shifted-left-16 (gs-fy sc) uy count pbase)
+  (scratch-glyph-deltas data coords sc count ends n-ends cbase))
 
 ;;; Composite glyphs
 
