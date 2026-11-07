@@ -11,6 +11,9 @@
 
 (in-package #:runes/otf/charstring)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+(declaim (sb-ext:muffle-conditions sb-ext:compiler-note))
+
 ;;; Binary coded decimal reals (num.rs)
 
 (defconstant +bcd-overflow+ #x7FFFFFFF)
