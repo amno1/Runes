@@ -47,12 +47,14 @@
     (hint-fail 'tt-hint-invalid-zone (format nil "point index ~D out of range" pt))))
 
 (defun zone-project-cur (gs zone pt)
-  (declare (graphics-state gs) (tt-zone zone) (fixnum pt))
+  (declare (graphics-state gs) (tt-zone zone) (fixnum pt)
+           (optimize (speed 3) (safety 0)))
   (zone-check-point zone pt)
   (project-point gs (aref (zone-cur-x zone) pt) (aref (zone-cur-y zone) pt)))
 
 (defun zone-dual-project-orig (gs zone pt)
-  (declare (graphics-state gs) (tt-zone zone) (fixnum pt))
+  (declare (graphics-state gs) (tt-zone zone) (fixnum pt)
+           (optimize (speed 3) (safety 0)))
   (zone-check-point zone pt)
   (dual-project-point gs (aref (zone-orig-x zone) pt) (aref (zone-orig-y zone) pt)))
 
@@ -61,7 +63,8 @@
 the projection vector: the difference projected, as FreeType and skrifa do,
 which rounds once, not the difference of two projected positions.  With CHECK
 false the caller has checked the point indices."
-  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2))
+  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2)
+           (optimize (speed 3) (safety 0)))
   (when check
     (zone-check-point zone1 pt1)
     (zone-check-point zone2 pt2))
@@ -72,7 +75,8 @@ false the caller has checked the point indices."
 (defun zone-dual-project-orig-diff (gs zone1 pt1 zone2 pt2 &optional (check t))
   "As ZONE-PROJECT-CUR-DIFF, for the original positions and the dual
 projection vector."
-  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2))
+  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2)
+           (optimize (speed 3) (safety 0)))
   (when check
     (zone-check-point zone1 pt1)
     (zone-check-point zone2 pt2))
@@ -83,7 +87,8 @@ projection vector."
 (defun zone-dual-project-unscaled (gs zone1 pt1 zone2 pt2)
   "The unscaled (font unit) distance from PT2 of ZONE2 to PT1 of ZONE1 along
 the dual projection vector."
-  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2))
+  (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2)
+           (optimize (speed 3) (safety 0)))
   (zone-check-point zone1 pt1)
   (zone-check-point zone2 pt2)
   (dual-project-point gs
