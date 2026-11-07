@@ -5,3 +5,6 @@ tests/cmp-*.pgm
 doc/runes.info
 doc/runes.html
 doc/runes.pdf
+
+# Built by otf/bench/run_comparison.sh with -march=native: not portable
+otf/bench/ft_hint_bench

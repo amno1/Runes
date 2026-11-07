@@ -24,6 +24,9 @@
 
 (defparameter *repetitions* 20)
 
+;; Lines starting with # are read by bench3x3.py for its disclosure.
+(format t "# SBCL ~a~%" (lisp-implementation-version))
+
 (defun now-ms ()
   "The monotonic clock, in milliseconds, to the nanosecond."
   (multiple-value-bind (seconds nanoseconds) (sb-unix:clock-gettime sb-unix:clock-monotonic)
@@ -35,11 +38,23 @@
 ;; enough that none runs during it.
 (setf (sb-ext:bytes-consed-between-gcs) (* 512 1024 1024))
 
+(defvar *nursery-bytes* (sb-ext:bytes-consed-between-gcs))
+
 (defun time-ms (thunk)
+  "The milliseconds THUNK takes.  It is an error if a collection ran meanwhile
+(the nursery was too small for what the row allocates), as that would time
+a pause that the row compared with does not have."
   (sb-ext:gc :full t)
-  (let ((start (now-ms)))
+  (let ((consed (sb-ext:get-bytes-consed))
+        (gc-time sb-ext:*gc-run-time*)
+        (start (now-ms)))
     (funcall thunk)
-    (- (now-ms) start)))
+    (let ((elapsed (- (now-ms) start))
+          (allocated (- (sb-ext:get-bytes-consed) consed)))
+      (when (or (> allocated *nursery-bytes*) (/= gc-time sb-ext:*gc-run-time*))
+        (error "a garbage collection may have run during the row: ~:D bytes allocated, nursery ~:D"
+               allocated *nursery-bytes*))
+      elapsed)))
 
 (defun row (name operations ms)
   (format t "~a ~d ~,3f ms~%" name operations ms))

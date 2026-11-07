@@ -28,6 +28,8 @@ COMPARED = ["dejavu-9", "dejavu-16", "dejavu-32", "liberation-12"]
 ONLY_RUNES = ["dejavu-16-contours", "dejavu-16-advances"]
 
 ROW = re.compile(r"^([a-zA-Z0-9\-_]+)\s+(\d+)\s+([\d.]+)\s+ms")
+RUNS_PER_BATCH = 3
+BATCHES = 3
 
 
 def run_once(label, env):
@@ -45,22 +47,32 @@ def parse(output):
     if "RUNNING RUNES/OTF" not in output:
         raise ValueError("unexpected benchmark output: no runes/otf section")
     ft_part, runes_part = output.split("RUNNING RUNES/OTF", 1)
-    ft, runes, ops = {}, {}, {}
+    ft, runes, ops, meta = {}, {}, {}, []
     for part, into in ((ft_part, ft), (runes_part, runes)):
         for line in part.splitlines():
-            m = ROW.match(line.strip())
+            line = line.strip()
+            if line.startswith("# "):
+                meta.append(line[2:])
+            m = ROW.match(line)
             if m:
                 into[m.group(1)] = float(m.group(3))
                 ops[m.group(1)] = int(m.group(2))
-    return ft, runes, ops
+    return ft, runes, ops, meta
 
 
 def median_of_batch_minima(batches, index, name):
+    """The median over the batches of the lowest time in each; None if the
+    benchmark is in no run.  A benchmark missing from some runs or batches is
+    an error: the median of fewer minima is not what the table says it is."""
     minima = []
-    for batch in batches:
+    for number, batch in enumerate(batches, 1):
         values = [run[index][name] for run in batch if name in run[index]]
+        if len(values) not in (0, len(batch)):
+            sys.exit(f"error: {name} is in {len(values)} of the {len(batch)} runs of batch {number}")
         if values:
             minima.append(min(values))
+    if minima and len(minima) != len(batches):
+        sys.exit(f"error: {name} is in {len(minima)} of the {len(batches)} batches")
     return statistics.median(minima) if minima else None
 
 
@@ -69,20 +81,29 @@ def main():
     if "--sbcl" in sys.argv:
         env["SBCL_BIN"] = sys.argv[sys.argv.index("--sbcl") + 1]
     sbcl = env.get("SBCL_BIN", "/home/arthur/repos/sb-simd-512/run-sbcl.sh")
-    bench_disclosure.print_banner([f"SBCL: {sbcl}"])
+    print(f"SBCL: {sbcl}")
     print("=" * 80)
     print("  RUNES/OTF vs FREETYPE: 3x3 HINTING BENCHMARK MATRIX (3 BATCHES x 3 RUNS)")
     print("=" * 80)
 
-    batches, ops = [], {}
-    for b in range(1, 4):
-        print(f"\n---> Set {b}/3 (3 runs):")
+    batches, ops, meta = [], {}, []
+    for b in range(1, BATCHES + 1):
+        print(f"\n---> Set {b}/{BATCHES} ({RUNS_PER_BATCH} runs):")
         batch = []
-        for r in range(1, 4):
-            ft, runes, o = run_once(f"Set {b} Run {r}", env)
+        for r in range(1, RUNS_PER_BATCH + 1):
+            ft, runes, o, m = run_once(f"Set {b} Run {r}", env)
             batch.append((ft, runes))
             ops.update(o)
+            for line in m:
+                if line not in meta:
+                    meta.append(line)
         batches.append(batch)
+    for name in COMPARED + ONLY_RUNES:
+        if not any(name in run[1] for batch in batches for run in batch):
+            sys.exit(f"error: no run timed {name}")
+    for name in COMPARED:
+        if not any(name in run[0] for batch in batches for run in batch):
+            sys.exit(f"error: FreeType timed no {name}")
 
     print("\n" + "=" * 86)
     print("      RESULTS (MEDIAN OF THE 3 LOWEST RUNS OF EACH 3-RUN SET), ms and microseconds per glyph")
@@ -99,7 +120,7 @@ def main():
         ratio = f"{rn / ft:7.2f}x" if ft and rn else "      -"
         print(f"| {name:<20} | {n:>10,} | {per(ft):>12} | {per(rn):>12} | {ratio:>8} |")
     print(rule)
-    print(bench_disclosure.banner([f"SBCL: {sbcl}"]))
+    print(bench_disclosure.banner([f"SBCL: {sbcl}"] + meta))
 
 
 if __name__ == "__main__":
