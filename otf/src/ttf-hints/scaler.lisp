@@ -67,7 +67,7 @@
                                              (e (read-tuple fd (+ p tuple-bytes) axis-count)))
                                          (incf p (* 2 tuple-bytes))
                                          (cons s e))))
-                       (data-end (+ data-pos data-size)))
+                       (data-end (+ (the (unsigned-byte 32) data-pos) data-size)))
                   (when (> data-end stop) (return))
                   (let ((scalar (and peak (gvar-tuple-scalar peak intermediate coords))))
                     (when scalar
@@ -654,7 +654,8 @@ beyond."
        ,@(when (not checked)
            ;; Sixteen points at a time with AVX-512, while 64 bytes of the font
            ;; data are there to be loaded; the points after go one by one.
-           `((when vdecode
+           `(#+zpb-avx512-decode
+             (when vdecode
                (loop while (and (<= (+ start 16) n) (<= (+ base p 64) (length bytes)))
                      do (decode-axis-block bytes (+ base p) zf start ,out current cell
                                            ,short-bit ,same-bit ,mask-flags)
