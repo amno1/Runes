@@ -4,6 +4,18 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (inline make-control-point))
+
+;; A structure, not a class: a hinted or scaled outline makes one per point,
+;; and an instance of a class costs several times as much to make and to
+;; read.  The accessors are X, Y and ON-CURVE-P as they always were.
+(defstruct (control-point (:constructor make-control-point (x y on-curve-p))
+                          (:conc-name nil)
+                          (:copier nil))
+  (x nil)
+  (y nil)
+  (on-curve-p nil :read-only t))
+
 (defun bounded-aref (vector index)
   "Return the element at INDEX, or the last element if INDEX is past the end."
   (declare (type (or null simple-vector) vector) (fixnum index))

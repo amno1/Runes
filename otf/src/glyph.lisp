@@ -4,17 +4,6 @@
 
 (in-package #:zpb-ttf)
 
-(defclass control-point ()
-  ((x :initarg :x :accessor x)
-   (y :initarg :y :accessor y)
-   (on-curve-p :initarg :on-curve-p :reader on-curve-p)))
-
-(defun make-control-point (x y on-curve-p)
-  (make-instance 'control-point
-                 :x x
-                 :y y
-                 :on-curve-p on-curve-p))
-
 (defmethod print-object ((control-point control-point) stream)
   (print-unreadable-object (control-point stream :type t)
     (format stream "~D,~D~:[~;*~]"

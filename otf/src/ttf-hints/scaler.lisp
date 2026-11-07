@@ -859,8 +859,13 @@ X0 Y0 X1 Y1 X2 Y2 X3 Y3 in an array of eight."
                 phantom)))))
 
 (defun f26dot6->pixels (v)
-  (let ((r (/ v 64)))
-    (if (integerp r) r (float r 1.0))))
+  "V, in 26.6 fixed point, in pixels: an integer for a whole number of them,
+else a single-float.  Dividing a single-float by 64 is exact, so this is the
+value (/ V 64) has, without making a ratio."
+  (declare (type (signed-byte 32) v))
+  (if (zerop (logand v 63))
+      (ash v -6)
+      (* (float v 1.0f0) 0.015625f0)))
 
 (defun cff-hinted-outline (loader gid ppem)
   (let* ((font (loader-cff-font loader))
