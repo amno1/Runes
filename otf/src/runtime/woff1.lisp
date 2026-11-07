@@ -4,6 +4,8 @@
 
 (in-package #:runes/otf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defconstant +woff1-signature+ #x774F4646) ; 'wOFF'
 (defconstant +woff1-tag-head+  #x68656164) ; 'head'
 
@@ -70,6 +72,7 @@
                (setf sum (ldb (byte 32 0) (+ sum w)))))
     (when (plusp rem)
       (let ((tail 0))
+        (declare (type (unsigned-byte 32) tail))
         (dotimes (i rem)
           (setf tail (logior tail (ash (aref bytes (+ end i)) (* 8 (- 3 i))))))
         (setf sum (ldb (byte 32 0) (+ sum tail)))))
@@ -83,12 +86,16 @@
          (range-shift (- (* num-tables 16) search-range)))
     (values search-range entry-selector range-shift)))
 
+(declaim (ftype (function (font-data (unsigned-byte 16) fixnum)
+                          (values list (unsigned-byte 62) &optional))
+                read-woff1-directory))
+
 (defun read-woff1-directory (fd num-tables dir-end)
   "The table directory of the WOFF font FD, each entry with its offset in
 the SFNT, in directory order; and the SFNT's size."
   (declare (type font-data fd) (type (unsigned-byte 16) num-tables) (fixnum dir-end))
   (let ((dst-offset (+ 12 (* 16 num-tables))))
-    (declare (type (unsigned-byte 64) dst-offset))
+    (declare (type (unsigned-byte 62) dst-offset))
     (values
      (loop for i below num-tables
            for rec-pos = (+ 44 (* i 20))
@@ -99,7 +106,8 @@ the SFNT, in directory order; and the SFNT's size."
                          (orig-csum (font-data-read-u32 fd (+ rec-pos 16))))
                      (when (or (> comp-len orig-len)
                                (< src-off dir-end)
-                               (not (font-data-valid-range-p fd src-off comp-len)))
+                               (not (font-data-valid-range-p fd src-off comp-len))
+                               (> dst-offset #xFFFFFFFF))
                        (woff1-fail (woff1-tag-string tag)
                                    "invalid table bounds (offset ~D, compLength ~D, origLength ~D)"
                                    src-off comp-len orig-len))
@@ -112,6 +120,9 @@ the SFNT, in directory order; and the SFNT's size."
 (defun woff1-copy-table (fd out e)
   "Copy table entry E of FD into OUT at its SFNT offset, decompressing it
 when it is compressed."
+  (declare (type font-data fd)
+           (type (simple-array (unsigned-byte 8) (*)) out)
+           (type woff1-table-entry e))
   (let* ((tag (woff1-table-entry-tag e))
          (comp-len (woff1-table-entry-comp-length e))
          (orig-len (woff1-table-entry-orig-length e))
@@ -121,11 +132,12 @@ when it is compressed."
     (if (= comp-len orig-len)
         (replace out raw-in :start1 dst-off :start2 abs-src :end2 (+ abs-src orig-len))
         (let ((decompressed
-                (handler-case
-                    (decompress:zlib-decompress raw-in :size-hint orig-len
-                                                       :start abs-src :end (+ abs-src comp-len))
-                  (decompress:decompression-error (c)
-                    (woff1-fail (woff1-tag-string tag) "zlib decompression failed: ~A" c)))))
+                (the (simple-array (unsigned-byte 8) (*))
+                     (handler-case
+                         (decompress:zlib-decompress raw-in :size-hint orig-len
+                                                            :start abs-src :end (+ abs-src comp-len))
+                       (decompress:decompression-error (c)
+                         (woff1-fail (woff1-tag-string tag) "zlib decompression failed: ~A" c))))))
           (unless (= (length decompressed) orig-len)
             (woff1-fail (woff1-tag-string tag)
                         "decompressed size ~D does not match origLength ~D"
@@ -135,15 +147,19 @@ when it is compressed."
 (defun woff1-verify-checksum (out e)
   "Check the checksum of table entry E, copied into OUT.  A 'head' table's
 checkSumAdjustment counts as zero."
+  (declare (type (simple-array (unsigned-byte 8) (*)) out)
+           (type woff1-table-entry e))
   (let* ((tag (woff1-table-entry-tag e))
          (dst-off (woff1-table-entry-dst-offset e))
          (orig-len (woff1-table-entry-orig-length e))
          (head-p (and (= tag +woff1-tag-head+) (>= orig-len 12)))
-         (saved (when head-p
-                  (prog1 (logior (ash (aref out (+ dst-off 8)) 24) (ash (aref out (+ dst-off 9)) 16)
-                                 (ash (aref out (+ dst-off 10)) 8) (aref out (+ dst-off 11)))
-                    (woff1-put-u32 out (+ dst-off 8) 0))))
+         (saved (if head-p
+                    (prog1 (logior (ash (aref out (+ dst-off 8)) 24) (ash (aref out (+ dst-off 9)) 16)
+                                   (ash (aref out (+ dst-off 10)) 8) (aref out (+ dst-off 11)))
+                      (woff1-put-u32 out (+ dst-off 8) 0))
+                    0))
          (actual (woff1-checksum out dst-off orig-len)))
+    (declare (type (unsigned-byte 32) saved actual))
     (when head-p
       (woff1-put-u32 out (+ dst-off 8) saved))
     (unless (= actual (woff1-table-entry-orig-checksum e))
@@ -152,6 +168,8 @@ checkSumAdjustment counts as zero."
 
 (defun woff1-set-checksum-adjustment (out head-entry)
   "Recompute head.checkSumAdjustment over the reconstructed SFNT OUT."
+  (declare (type (simple-array (unsigned-byte 8) (*)) out)
+           (type woff1-table-entry head-entry))
   (let ((head-off (woff1-table-entry-dst-offset head-entry))
         (head-len (woff1-table-entry-orig-length head-entry)))
     (when (< head-len 12)
@@ -233,13 +251,14 @@ vector, or NIL if SOURCE has no metadata block."
         (unless (font-data-valid-range-p fd meta-offset meta-length)
           (woff1-fail "WOFF" "metadata block out of bounds"))
         (let* ((start (+ (font-data-offset fd) meta-offset))
-               (xml-bytes (handler-case
-                              (decompress:zlib-decompress (font-data-bytes fd)
-                                                           :size-hint meta-orig-len
-                                                           :start start
-                                                           :end (+ start meta-length))
-                            (decompress:decompression-error (c)
-                              (woff1-fail "WOFF" "metadata zlib decompression failed: ~A" c)))))
+               (xml-bytes (the (simple-array (unsigned-byte 8) (*))
+                               (handler-case
+                                   (decompress:zlib-decompress (font-data-bytes fd)
+                                                               :size-hint meta-orig-len
+                                                               :start start
+                                                               :end (+ start meta-length))
+                                 (decompress:decompression-error (c)
+                                   (woff1-fail "WOFF" "metadata zlib decompression failed: ~A" c))))))
           (unless (= (length xml-bytes) meta-orig-len)
             (woff1-fail "WOFF" "metadata decompressed size ~D does not match metaOrigLength ~D"
                         (length xml-bytes) meta-orig-len))
