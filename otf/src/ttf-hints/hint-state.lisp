@@ -70,11 +70,14 @@
 (defun mul-div (a b c)
   "FreeType's FT_MulDiv: (a * b) / c with rounding to nearest."
   (declare (s32 a b c) (optimize (speed 3) (safety 0)))
-  (let* ((neg (not (eq (minusp a) (not (eq (minusp b) (minusp c))))))
-         (aa (abs a)) (ab (abs b)) (ac (abs c))
+  ;; The result is negative when an odd number of A, B and C are: the sign of
+  ;; their exclusive or.  The product of the magnitudes is the magnitude of the
+  ;; product, which fits in 64 bits.
+  (let* ((neg (minusp (logxor a b c)))
+         (ac (abs c))
          (res (if (zerop ac)
                   #x7FFFFFFF
-                  (values (floor (+ (* aa ab) (ash ac -1)) ac)))))
+                  (values (floor (+ (abs (* a b)) (ash ac -1)) ac)))))
     (if neg (s32 (- (s32 res))) (s32 res))))
 
 (defun f26-mul (a b)
