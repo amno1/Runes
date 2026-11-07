@@ -4,6 +4,8 @@
 
 (in-package #:runes/otf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (define-condition font-error (error)
   ((message :initarg :message :reader font-error-message :initform "Font error"))
   (:report (lambda (condition stream)
