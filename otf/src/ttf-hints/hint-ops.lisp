@@ -419,7 +419,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
     (let* ((dx (mul-f2dot14 dist fx))
            (dy (mul-f2dot14 dist fy))
            (bc (gs-backward-compatibility gs))
-           (did-iup (and (gs-did-iup-x gs) (gs-did-iup-y gs)))
+           (did-iup (gs-post-iup gs))
            (twilight (or (zerop (gs-zp0 gs)) (zerop (gs-zp1 gs)) (zerop z2-id))))
       (dotimes (i count)
         (let ((pt (vs-pop s)))
@@ -534,10 +534,12 @@ between two touched points comes from the unscaled coordinates."
     ;; In backward compatibility mode IUP runs until it has been done on
     ;; both axes (FreeType, skrifa).
     (when (gs-backward-compatibility gs)
-      (let ((done (and (gs-did-iup-x gs) (gs-did-iup-y gs))))
+      (let ((done (gs-post-iup gs)))
         (if x-axis-p
             (setf (gs-did-iup-x gs) t)
             (setf (gs-did-iup-y gs) t))
+        (when (and (gs-did-iup-x gs) (gs-did-iup-y gs))
+          (setf (gs-post-iup gs) t))
         (when done
           (return-from op-iup))))
     (let ((orig (if x-axis-p (zone-orig-x z) (zone-orig-y z)))
@@ -617,7 +619,7 @@ between two touched points comes from the unscaled coordinates."
           ;; both IUPs, and only points touched in y, or any point of a
           ;; composite glyph when the freedom vector has a y component.
           (when (or (not (gs-backward-compatibility gs))
-                    (and (not (and (gs-did-iup-x gs) (gs-did-iup-y gs)))
+                    (and (not (gs-post-iup gs))
                          (or (and (eng-composite-p eng) (not (zerop (gs-free-y gs))))
                              (logtest (aref (zone-flags z0) pt) +point-touched-y+))))
             (move-zone-point gs z0 z0-id pt delta t)))))))

@@ -99,6 +99,28 @@ projection vector) and y is not moved once IUP has run on both axes."
            (ignore zone-id) (fixnum pt) (s32 distance)
            (optimize (speed 3) (safety 0)))
   (zone-check-point zone pt)
+  (case (gs-move-axis gs)
+    ;; The common moves: along x or y with the projection on the same axis, so
+    ;; the point moves by the distance.  In backward compatibility mode x is
+    ;; never moved, and y not once IUP has run on both axes.
+    (0 (unless (gs-backward-compatibility gs)
+         (setf (aref (zone-cur-x zone) pt)
+               (f26+ (aref (zone-cur-x zone) pt) distance)))
+       (when touch
+         (setf (aref (zone-flags zone) pt)
+               (logior (aref (zone-flags zone) pt) +point-touched-x+))))
+    (1 (unless (gs-post-iup gs)
+         (setf (aref (zone-cur-y zone) pt)
+               (f26+ (aref (zone-cur-y zone) pt) distance)))
+       (when touch
+         (setf (aref (zone-flags zone) pt)
+               (logior (aref (zone-flags zone) pt) +point-touched-y+))))
+    (t (move-zone-point-general gs zone pt distance touch))))
+
+(defun move-zone-point-general (gs zone pt distance touch)
+  "MOVE-ZONE-POINT for any freedom and projection vectors."
+  (declare (graphics-state gs) (tt-zone zone) (fixnum pt) (s32 distance)
+           (optimize (speed 3) (safety 0)))
   (let* ((fx (gs-free-x gs))
          (fy (gs-free-y gs))
          (axis-aligned (gs-move-aligned gs))
@@ -110,7 +132,7 @@ projection vector) and y is not moved once IUP has run on both axes."
              (declare (s32 f))
              (if axis-aligned distance (mul-div distance f fdotp)))
            (horizontal-p () (zerop (gs-proj-y gs)))
-           (post-iup-p () (and bc (gs-did-iup-x gs) (gs-did-iup-y gs))))
+           (post-iup-p () (gs-post-iup gs)))
       (declare (inline delta horizontal-p post-iup-p))
       (when (not (zerop fx))
         (when (or (not bc) (and (not axis-aligned) (horizontal-p)))

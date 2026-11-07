@@ -360,6 +360,13 @@ reusing existing buffers in place when large enough."
   (backward-compatibility t :type boolean)
   (did-iup-x nil :type boolean)
   (did-iup-y nil :type boolean)
+  ;; IUP has run on both axes in backward compatibility mode: the flags above
+  ;; are set only then, so this is their conjunction, kept.
+  (post-iup nil :type boolean)
+  ;; The axis moves are along when the freedom and projection vectors make
+  ;; each move change the projection by exactly its distance: 0 for x, 1 for y,
+  ;; else 2.  See UPDATE-PROJECTION-STATE.
+  (move-axis 0 :type (integer 0 2))
   (round-state (make-round-state) :type round-state))
 
 ;; Nothing subtypes these: say so, and a type test is one comparison.
@@ -384,6 +391,10 @@ a too small FDOTP."
                                   ((and (zerop dx) (= dy #x4000)) 1)
                                   (t 2))
           (gs-move-aligned gs) (and (= raw #x4000) (or (= fx #x4000) (= fy #x4000)))
+          (gs-move-axis gs) (cond ((not (= raw #x4000)) 2)
+                                  ((= fx #x4000) 0)
+                                  ((= fy #x4000) 1)
+                                  (t 2))
           ;; At small sizes FDOTP can become too small and cause spikes.
           (gs-fdotp gs) (if (< (abs raw) #x400) #x4000 raw))
     gs))
@@ -400,12 +411,12 @@ a too small FDOTP."
           (gs-free-x gs) #x4000 (gs-free-y gs) 0
           ;; All three are the x axis: see UPDATE-PROJECTION-STATE.
           (gs-proj-axis gs) 0 (gs-dual-axis gs) 0
-          (gs-move-aligned gs) t (gs-fdotp gs) #x4000
+          (gs-move-aligned gs) t (gs-move-axis gs) 0 (gs-fdotp gs) #x4000
           (gs-rp0 gs) 0 (gs-rp1 gs) 0 (gs-rp2 gs) 0
           (gs-zp0 gs) 1 (gs-zp1 gs) 1 (gs-zp2 gs) 1
           (gs-loop gs) 1
           (gs-auto-flip gs) t
-          (gs-did-iup-x gs) nil (gs-did-iup-y gs) nil
+          (gs-did-iup-x gs) nil (gs-did-iup-y gs) nil (gs-post-iup gs) nil
           (gs-control-value-cutin gs)    (gs-control-value-cutin source)
           (gs-single-width-cutin gs)     (gs-single-width-cutin source)
           (gs-single-width-value gs)     (gs-single-width-value source)
