@@ -951,10 +951,13 @@ the arrays XS and YS, as TRANSFORM-COMPONENT-POINTS does."
            (type (unsigned-byte 32) gid) (type (unsigned-byte 32) pos)
            (type phantom-array phantom) (type simple-vector coords)
            (type hint-buffer out))
-  ;; The points of a composite glyph are put together in the hint buffer: a
-  ;; request to leave a simple glyph's in the zone is not for its components.
-  (setf (runes/otf/tt-hint::eng-direct eng) nil)
-  (let* ((fd (tt-font-data (engine-tables eng loader)))
+  (let* (;; A request for the points to be left in the glyph zone is for this
+         ;; glyph, if it is the one asked for (the hint buffer is empty), and not
+         ;; for its components, whose points are put together in the hint buffer.
+         (top-request-p (prog1 (and (eq (runes/otf/tt-hint::eng-direct eng) :request)
+                                    (zerop (hb-n out)))
+                          (setf (runes/otf/tt-hint::eng-direct eng) nil)))
+         (fd (tt-font-data (engine-tables eng loader)))
          (scale (runes/otf/tt-hint::eng-scale eng))
          (component-count (composite-component-count fd pos))
          (count (+ component-count 4))
@@ -1082,12 +1085,16 @@ the arrays XS and YS, as TRANSFORM-COMPONENT-POINTS does."
             (setf (runes/otf/tt-hint::eng-unscaled-scale eng) #x10000
                   (runes/otf/tt-hint::eng-composite-p eng) t)
             (run-glyph-bytecode-in-zone eng (runes/otf:font-data-bytes fd) istart iend)
-            (replace (hb-xs out) cx :start1 point-base :end2 n)
-            (replace (hb-ys out) cy :start1 point-base :end2 n)
-            (let ((flags (hb-flags out)))
-              (dotimes (k n)
-                (setf (aref flags (+ point-base k))
-                      (logand (aref zf k) runes/otf/tt-hint:+point-on-curve+))))
+            (if top-request-p
+                ;; The program has left the points in the zone, for the caller.
+                (setf (runes/otf/tt-hint::eng-direct eng) :done)
+                (progn
+                  (replace (hb-xs out) cx :start1 point-base :end2 n)
+                  (replace (hb-ys out) cy :start1 point-base :end2 n)
+                  (let ((flags (hb-flags out)))
+                    (dotimes (k n)
+                      (setf (aref flags (+ point-base k))
+                            (logand (aref zf k) runes/otf/tt-hint:+point-on-curve+))))))
             ;; As for a simple glyph, the program leaves them alone in backward
             ;; compatibility mode.
             (unless (runes/otf/tt-hint::gs-backward-compatibility (runes/otf/tt-hint::eng-gs eng))
