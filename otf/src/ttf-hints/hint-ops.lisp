@@ -214,7 +214,7 @@
                    (f26- (round-according-to-state (gs-round-state gs) cur-proj 0)
                          cur-proj)
                    0)))
-    (move-zone-point gs z0 z0-id pt dist t)
+    (%move-zone-point gs z0 z0-id pt dist t)
     (setf (gs-rp0 gs) pt
           (gs-rp1 gs) pt)))
 
@@ -243,7 +243,7 @@
         (when (> (abs (f26- distance org-proj)) (gs-control-value-cutin gs))
           (setf distance org-proj))
         (setf distance (round-according-to-state (gs-round-state gs) distance 0)))
-      (move-zone-point gs z0 z0-id pt (f26- distance org-proj) t))
+      (%move-zone-point gs z0 z0-id pt (f26- distance org-proj) t))
     (setf (gs-rp0 gs) pt
           (gs-rp1 gs) pt)))
 
@@ -285,7 +285,7 @@
         (setf dist (apply-min-distance gs org-dist dist)))
       ;; The first measure above checked the points (or the unscaled one did).
       (let ((cur-dist (zone-project-cur-diff gs z1 pt z0 rp0 nil)))
-        (move-zone-point gs z1 z1-id pt (f26- dist cur-dist) t)))
+        (%move-zone-point gs z1 z1-id pt (f26- dist cur-dist) t)))
     (setf (gs-rp1 gs) (gs-rp0 gs)
           (gs-rp2 gs) pt)
     (when set-rp0-p
@@ -341,7 +341,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
                       cvt-dist)))
         (when keep-min-p
           (setf dist (apply-min-distance gs org-dist dist)))
-        (move-zone-point gs z1 z1-id pt (f26- dist cur-dist) t)))
+        (%move-zone-point gs z1 z1-id pt (f26- dist cur-dist) t)))
     (setf (gs-rp1 gs) (gs-rp0 gs)
           (gs-rp2 gs) pt)
     (when set-rp0-p
@@ -397,7 +397,7 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
     (multiple-value-bind (dist ref-zone ref-pt) (compute-ref-displacement eng use-rp1-p)
       (dotimes (pt (zone-n-glyph-points z))
         (unless (and (eq z ref-zone) (= pt ref-pt))
-          (move-zone-point gs z z-id pt dist nil))))))
+          (%move-zone-point gs z z-id pt dist nil))))))
 
 (defun op-shpix (eng)
   (declare (tt-engine eng))
@@ -462,14 +462,16 @@ does; they only matter as a ratio."
     (when (< (vs-len s) count) (setf count 0))
     (dotimes (i count)
       (let* ((pt (vs-pop s))
-             (cur-dist (zone-project-cur-diff gs z2 pt z0 rp1))
+             ;; RP1 was checked with the ranges above.
+             (cur-dist (progn (zone-check-point z2 pt)
+                              (zone-project-cur-diff gs z2 pt z0 rp1 nil)))
              (org-dist (if twilight
-                           (zone-dual-project-orig-diff gs z2 pt z0 rp1)
+                           (zone-dual-project-orig-diff gs z2 pt z0 rp1 nil)
                            (zone-dual-project-unscaled gs z2 pt z0 rp1)))
              (new-dist (cond ((zerop org-dist) 0)
                              ((zerop old-range) org-dist)
                              (t (mul-div org-dist cur-range old-range)))))
-        (move-zone-point gs z2 z2-id pt (f26- new-dist cur-dist) t)))))
+        (%move-zone-point gs z2 z2-id pt (f26- new-dist cur-dist) t)))))
 
 (defun iup-interpolate-contour (orig unscaled cur flags touch-mask start end)
   "IUP over the contour START..END of one axis: move the untouched points
@@ -622,7 +624,7 @@ between two touched points comes from the unscaled coordinates."
                     (and (not (gs-post-iup gs))
                          (or (and (eng-composite-p eng) (not (zerop (gs-free-y gs))))
                              (logtest (aref (zone-flags z0) pt) +point-touched-y+))))
-            (move-zone-point gs z0 z0-id pt delta t)))))))
+            (%move-zone-point gs z0 z0-id pt delta t)))))))
 
 (defun op-deltac (eng band-offset)
   (declare (tt-engine eng) (fixnum band-offset))
@@ -716,8 +718,8 @@ between two touched points comes from the unscaled coordinates."
               (z1 (eng-zone eng z1-id)) (z0 (eng-zone eng z0-id))
               ;; Half of it, truncated towards zero as in C.
               (dist (truncate (zone-project-cur-diff gs z0 p2 z1 p1) 2)))
-         (move-zone-point gs z1 z1-id p1 dist t)
-         (move-zone-point gs z0 z0-id p2 (f26-neg dist) t)))
+         (%move-zone-point gs z1 z1-id p1 dist t)
+         (%move-zone-point gs z0 z0-id p2 (f26-neg dist) t)))
       (#x28 nil)
       (#x29
        (let* ((pt (vs-pop s)) (z0 (eng-zp0 eng)))
@@ -752,7 +754,7 @@ between two touched points comes from the unscaled coordinates."
                    (aref (zone-cur-x z1) pt)  (aref (zone-orig-x z1) pt)
                    (aref (zone-cur-y z1) pt)  (aref (zone-orig-y z1) pt))))
          (let ((cur-dist (zone-project-cur-diff gs z1 pt z0 rp0)))
-           (move-zone-point gs z1 z1-id pt (f26- dist cur-dist) t))
+           (%move-zone-point gs z1 z1-id pt (f26- dist cur-dist) t))
          (setf (gs-rp1 gs) (gs-rp0 gs) (gs-rp2 gs) pt)
          (when (= op #x3B) (setf (gs-rp0 gs) pt))))
       (#x3C
@@ -762,7 +764,7 @@ between two touched points comes from the unscaled coordinates."
          (when (< (vs-len s) count) (setf count 0))
          (dotimes (i count)
            (let ((pt (vs-pop s)))
-             (move-zone-point gs z1 z1-id pt (zone-project-cur-diff gs z0 rp0 z1 pt)
+             (%move-zone-point gs z1 z1-id pt (zone-project-cur-diff gs z0 rp0 z1 pt)
                               t)))))
       (#x3D (setf (rs-mode (gs-round-state gs)) :to-double-grid))
       ((#x3E #x3F) (op-miap eng (= op #x3F)))
@@ -790,7 +792,7 @@ between two touched points comes from the unscaled coordinates."
        (let* ((val (vs-pop s)) (pt (vs-pop s))
               (z2-id (gs-zp2 gs)) (z2 (eng-zone eng z2-id))
               (cur (zone-project-cur gs z2 pt)))
-         (move-zone-point gs z2 z2-id pt (f26- val cur) t)
+         (%move-zone-point gs z2 z2-id pt (f26- val cur) t)
          (when (zerop z2-id)
            (setf (aref (zone-orig-x z2) pt) (aref (zone-cur-x z2) pt)
                  (aref (zone-orig-y z2) pt) (aref (zone-cur-y z2) pt)))))

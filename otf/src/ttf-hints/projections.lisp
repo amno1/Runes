@@ -17,7 +17,7 @@
          (ftype (function (graphics-state tt-zone (integer 0 1) fixnum s32
                            t)
                           t)
-                move-zone-point))
+                %move-zone-point))
 
 ;;; ============================================================================
 ;;; Vector Projections & Point Movement (zone.rs / graphics.rs)
@@ -90,15 +90,14 @@ the dual projection vector."
                       (f26- (aref (zone-unscaled-x zone1) pt1) (aref (zone-unscaled-x zone2) pt2))
                       (f26- (aref (zone-unscaled-y zone1) pt1) (aref (zone-unscaled-y zone2) pt2))))
 
-(defun move-zone-point (gs zone zone-id pt distance touch)
-  "Move point PT in ZONE by DISTANCE along the Freedom Vector so its projection
+(defun %move-zone-point (gs zone zone-id pt distance touch)
+  "As MOVE-ZONE-POINT, for a PT the caller has checked.  Move point PT in ZONE by DISTANCE along the Freedom Vector so its projection
 changes by DISTANCE.  As FreeType's Direct_Move and skrifa's move_point, in
 v40 backward compatibility mode x is never moved (except along a horizontal
 projection vector) and y is not moved once IUP has run on both axes."
   (declare (graphics-state gs) (tt-zone zone) (type (integer 0 1) zone-id)
            (ignore zone-id) (fixnum pt) (s32 distance)
            (optimize (speed 3) (safety 0)))
-  (zone-check-point zone pt)
   (case (gs-move-axis gs)
     ;; The common moves: along x or y with the projection on the same axis, so
     ;; the point moves by the distance.  In backward compatibility mode x is
@@ -116,6 +115,15 @@ projection vector) and y is not moved once IUP has run on both axes."
          (setf (aref (zone-flags zone) pt)
                (logior (aref (zone-flags zone) pt) +point-touched-y+))))
     (t (move-zone-point-general gs zone pt distance touch))))
+
+(declaim (inline move-zone-point))
+(defun move-zone-point (gs zone zone-id pt distance touch)
+  "Move point PT in ZONE by DISTANCE along the freedom vector so its projection
+changes by DISTANCE (see %MOVE-ZONE-POINT), after checking PT."
+  (declare (graphics-state gs) (tt-zone zone) (type (integer 0 1) zone-id)
+           (fixnum pt) (s32 distance))
+  (zone-check-point zone pt)
+  (%move-zone-point gs zone zone-id pt distance touch))
 
 (defun move-zone-point-general (gs zone pt distance touch)
   "MOVE-ZONE-POINT for any freedom and projection vectors."
