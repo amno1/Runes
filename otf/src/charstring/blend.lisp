@@ -35,6 +35,7 @@
     (declare (type (unsigned-byte 63) result))
     (s32 (if negative (- (s32 result)) (s32 result)))))
 
+(declaim (ftype (function (t fixnum (unsigned-byte 16) simple-vector) (values (signed-byte 32) &optional)) region-scalar))
 (defun region-scalar (font-data region-pos axis-count coords)
   "Scalar of the VariationRegion at REGION-POS for COORDS, a vector of raw
 2.14 values; missing trailing coordinates are 0."
