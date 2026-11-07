@@ -170,27 +170,48 @@ arithmetic), so that the result agrees with its to the last bit."
   "Round F26Dot6 DISTANCE with COMPENSATION according to ROUND-STATE RS."
   (declare (round-state rs) (s32 distance compensation) (optimize (speed 3) (safety 0)))
   (let ((mode (rs-mode rs)))
-    (when (eq mode :off)
-      (return-from round-according-to-state distance))
-    (let* ((sign (if (>= distance 0) 1 -1))
-           (val (if (>= distance 0)
-                    (f26+ distance compensation)
-                    (f26+ (f26-neg distance) compensation)))
-           (res
-             (ecase mode
-               (:to-grid        (logand (f26+ val 32) -64))
-               (:to-half-grid   (f26+ (f26-floor val) 32))
-               (:to-double-grid (logand (f26+ val 16) -32))
-               (:down-to-grid   (f26-floor val))
-               (:up-to-grid     (f26-ceil val))
-               ((:super :super-45)
-                (let* ((period (rs-period rs))
-                       (phase (rs-phase rs))
-                       (threshold (rs-threshold rs))
-                       (v (logand (f26+ val (- threshold phase)) (- period))))
-                  (f26+ v phase))))))
-      (let ((clamped (max 0 res)))
-        (if (> sign 0) clamped (f26-neg clamped))))))
+    (case mode
+      (:off distance)
+      ((:super :super-45)
+       ;; FreeType's Round_Super and Round_Super_45: the period is a power of
+       ;; two for SROUND, so it masks; for S45ROUND it divides, truncating
+       ;; towards zero as C does.  A result on the wrong side of zero is the
+       ;; phase.
+       (let ((period (rs-period rs))
+             (phase (rs-phase rs))
+             (threshold (rs-threshold rs))
+             (45-p (eq mode :super-45)))
+         (declare (s32 period phase threshold))
+         (if (<= period 0)
+             distance
+             (flet ((grid (x)
+                      (declare (s32 x))
+                      (if 45-p
+                          (* (truncate x period) period)
+                          (logand x (- period)))))
+               (declare (inline grid))
+               (if (>= distance 0)
+                   (let ((val (f26+ (grid (f26+ distance (f26+ (f26- threshold phase) compensation)))
+                                    phase)))
+                     (if (< val 0) phase val))
+                   (let ((val (f26- (f26-neg (grid (f26- (f26+ (f26- threshold phase) compensation)
+                                                         distance)))
+                                    phase)))
+                     (if (> val 0) (f26-neg phase) val)))))))
+      (t
+       (let* ((sign (if (>= distance 0) 1 -1))
+              (val (if (>= distance 0)
+                       (f26+ distance compensation)
+                       (f26+ (f26-neg distance) compensation)))
+              (res
+                (ecase mode
+                  (:to-grid        (logand (f26+ val 32) -64))
+                  (:to-half-grid   (f26+ (f26-floor val) 32))
+                  (:to-double-grid (logand (f26+ val 16) -32))
+                  (:down-to-grid   (f26-floor val))
+                  (:up-to-grid     (f26-ceil val))))
+              (clamped (max 0 res)))
+         (if (> sign 0) clamped (f26-neg clamped)))))))
 
 (defun set-super-round (rs selector14-p grid-period-byte)
   "Configure RS for SROUND (SELECTOR14-P = nil) or S45ROUND (SELECTOR14-P = t)."

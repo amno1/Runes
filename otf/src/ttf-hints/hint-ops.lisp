@@ -141,32 +141,38 @@
          (y2 (if orig-p (aref (zone-orig-y zone2) p2) (aref (zone-cur-y zone2) p2)))
          (dx (f26- x1 x2))
          (dy (f26- y1 y2)))
-    (multiple-value-bind (ux uy) (normalize-f2dot14 dx dy)
-      (if perp-p
-          (values (- uy) ux)
-          (values ux uy)))))
+    (if (and (zerop dx) (zerop dy))
+        ;; Two points at one place: the vector is the x axis, even for the
+        ;; perpendicular variants (confirmed by Greg Hitchcock, in FreeType).
+        (values #x4000 0)
+        (multiple-value-bind (ux uy) (normalize-f2dot14 dx dy)
+          (if perp-p
+              (values (- uy) ux)
+              (values ux uy))))))
 
 (defun op-vtl (eng op)
   (declare (tt-engine eng))
   (let* ((s (eng-stack eng))
-         (p1 (vs-pop s))
-         (p2 (vs-pop s))
+         ;; As FreeType: the point on top of the stack is in ZP2, the one
+         ;; below in ZP1, and the vector goes from the first to the second.
+         (top (vs-pop s))
+         (below (vs-pop s))
          (perp-p (logbitp 0 op))
          (gs (eng-gs eng))
          (z1 (eng-zp1 eng))
          (z2 (eng-zp2 eng)))
     (cond
       ((<= #x06 op #x07)
-       (multiple-value-bind (ux uy) (line-vector-f2dot14 z1 p1 z2 p2 nil perp-p)
+       (multiple-value-bind (ux uy) (line-vector-f2dot14 z1 below z2 top nil perp-p)
          (setf (gs-proj-x gs) ux (gs-proj-y gs) uy
                (gs-dual-x gs) ux (gs-dual-y gs) uy)))
       ((<= #x08 op #x09)
-       (multiple-value-bind (ux uy) (line-vector-f2dot14 z1 p1 z2 p2 nil perp-p)
+       (multiple-value-bind (ux uy) (line-vector-f2dot14 z1 below z2 top nil perp-p)
          (setf (gs-free-x gs) ux (gs-free-y gs) uy)))
       (t
-       (multiple-value-bind (ox oy) (line-vector-f2dot14 z1 p1 z2 p2 t perp-p)
+       (multiple-value-bind (ox oy) (line-vector-f2dot14 z1 below z2 top t perp-p)
          (setf (gs-dual-x gs) ox (gs-dual-y gs) oy))
-       (multiple-value-bind (cx cy) (line-vector-f2dot14 z1 p1 z2 p2 nil perp-p)
+       (multiple-value-bind (cx cy) (line-vector-f2dot14 z1 below z2 top nil perp-p)
          (setf (gs-proj-x gs) cx (gs-proj-y gs) cy))))))
 
 ;;; ============================================================================
@@ -676,10 +682,12 @@ between two touched points comes from the unscaled coordinates."
          (#x25 (vs-copy-index s (vs-pop s)))
          (#x26 (vs-move-index s (vs-pop s)))
          (#x27
-          (let* ((p1 (vs-pop s)) (p2 (vs-pop s))
+          ;; P2, on top of the stack, is in ZP0; P1 below it is in ZP1.
+          (let* ((p2 (vs-pop s)) (p1 (vs-pop s))
                  (z1-id (gs-zp1 gs)) (z0-id (gs-zp0 gs))
                  (z1 (eng-zone eng z1-id)) (z0 (eng-zone eng z0-id))
-                 (dist (ash (zone-project-cur-diff gs z0 p2 z1 p1) -1)))
+                 ;; Half of it, truncated towards zero as in C.
+                 (dist (truncate (zone-project-cur-diff gs z0 p2 z1 p1) 2)))
             (move-zone-point gs z1 z1-id p1 dist :touch t)
             (move-zone-point gs z0 z0-id p2 (f26-neg dist) :touch t)))
          (#x28 nil)
@@ -759,9 +767,14 @@ between two touched points comes from the unscaled coordinates."
          ((#x49 #x4A)
           (let* ((p1 (vs-pop s)) (p2 (vs-pop s))
                  (z0 (eng-zp0 eng)) (z1 (eng-zp1 eng)))
-            (vs-push s (if (= op #x49)
-                           (zone-project-cur-diff gs z0 p2 z1 p1)
-                           (zone-dual-project-orig-diff gs z0 p2 z1 p1)))))
+            (vs-push s (cond
+                         ((= op #x49) (zone-project-cur-diff gs z0 p2 z1 p1))
+                         ;; MD[0]: out of the twilight zone the original
+                         ;; distance is that of the unscaled outline, scaled.
+                         ((or (zerop (gs-zp0 gs)) (zerop (gs-zp1 gs)))
+                          (zone-dual-project-orig-diff gs z0 p2 z1 p1))
+                         (t (mul-fix (zone-dual-project-unscaled gs z0 p2 z1 p1)
+                                     (eng-unscaled-scale eng)))))))
          (#x4B (vs-push s (eng-ppem eng)))
          (#x4C (vs-push s (eng-point-size eng)))
          (#x4D (setf (gs-auto-flip gs) t))
