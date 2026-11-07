@@ -302,8 +302,12 @@
             (eng-glyph-base eng) start)
       (select-program eng prog-id start end)
       (loop while (< (eng-pc eng) (eng-end eng))
-            do (when (> (incf executed) +max-instructions+)
-                 (hint-fail 'tt-hint-limit-exceeded "Exceeded maximum instruction count"))
+            ;; The limit is for programs that never end, which this finds as
+            ;; well when it looks once in 1024 instructions (late by up to that
+            ;; many).
+            do (when (zerop (logand (incf executed) 1023))
+                 (when (> executed +max-instructions+)
+                   (hint-fail 'tt-hint-limit-exceeded "Exceeded maximum instruction count")))
                (let ((op (fetch-u8 eng)))
                  (dispatch-instruction eng op)
                  (loop while (and (>= (eng-pc eng) (eng-end eng))

@@ -191,6 +191,16 @@ least recently used going first, and an evicted size hints as before."
                                    0 4))))
       (setf zpb-ttf::*max-hinting-sizes* limit))))
 
+(defun check-endless-program-stops ()
+  "A program that jumps back to its start for ever is stopped by the instruction
+limit, after about as many instructions as it, and with its condition."
+  (let ((engine (runes/otf/tt-hint:make-tt-engine))
+        ;; PUSHW[0] -3, JMPR: back to the PUSHW.
+        (program (coerce '(#xB8 #xFF #xFD #x1C) '(simple-array (unsigned-byte 8) (*)))))
+    (setf (svref (runes/otf/tt-hint::eng-programs engine) 2) program)
+    (handler-case (progn (runes/otf/tt-hint:run-program engine 2) nil)
+      (runes/otf/tt-hint::tt-hint-limit-exceeded () t))))
+
 (defun check-bad-glyph-index (loader)
   "A glyph index past the font's glyphs is an error, not a read past the table."
   (let ((count (zpb-ttf:glyph-count loader)))
@@ -248,6 +258,8 @@ least recently used going first, and an evicted size hints as before."
         (if dejavu
             (compare "DejaVu Sans" dejavu "DejaVuSans")
             (format t "  [SKIP] DejaVu Sans is not installed.~%"))))
+    (check "an endless TrueType program is stopped by the instruction limit"
+           (check-endless-program-stops))
     (format t "~%Results: ~D tests run, ~D failures.~%"
             runes/otf/charstring-test::*count* runes/otf/charstring-test::*failures*)
     (unless (zerop runes/otf/charstring-test::*failures*)
