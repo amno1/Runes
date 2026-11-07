@@ -153,6 +153,8 @@
               (runes/otf/tt-hint::copy-graphics-state (runes/otf/tt-hint::eng-gs eng)))
         (replace (runes/otf/tt-hint::eng-default-cvt eng) (runes/otf/tt-hint::eng-cvt eng))
         (replace (runes/otf/tt-hint::eng-default-storage eng) (runes/otf/tt-hint::eng-storage eng))
+        ;; What fpgm and prep wrote is the snapshot: the engine starts clean.
+        (setf (runes/otf/tt-hint::eng-tables-dirty eng) nil)
         (runes/otf/tt-hint:copy-zone-into (runes/otf/tt-hint::eng-default-twilight eng)
                                           (runes/otf/tt-hint::eng-twilight eng))
         eng))))
@@ -321,8 +323,10 @@ BYTES on ENG's already-populated glyph zone."
               (runes/otf/tt-hint::eng-gs eng) default-gs)))
     ;; Restore post-prep CVT and Storage snapshots (in case a previous glyph
     ;; executed WCVTP/WCVTF/WS in its glyph program, as Skrifa does).
-    (replace (runes/otf/tt-hint::eng-cvt eng) (runes/otf/tt-hint::eng-default-cvt eng))
-    (replace (runes/otf/tt-hint::eng-storage eng) (runes/otf/tt-hint::eng-default-storage eng))
+    (when (runes/otf/tt-hint::eng-tables-dirty eng)
+      (replace (runes/otf/tt-hint::eng-cvt eng) (runes/otf/tt-hint::eng-default-cvt eng))
+      (replace (runes/otf/tt-hint::eng-storage eng) (runes/otf/tt-hint::eng-default-storage eng))
+      (setf (runes/otf/tt-hint::eng-tables-dirty eng) nil))
     (when (and (> end start)
                (not (logbitp 0 (runes/otf/tt-hint::gs-instruct-control gs))))
       (setf (svref (runes/otf/tt-hint::eng-programs eng) 2) bytes)

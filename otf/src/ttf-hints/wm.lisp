@@ -162,6 +162,9 @@
   ;; is used by one thread at a time) and the offsets of 'glyf' and 'loca'.
   ;; Where the glyph program starts in its byte array, which is the font's.
   (glyph-base 0 :type fixnum)
+  ;; Set when a program writes the CVT or the storage; the glyph scaler
+  ;; restores the post-prep copies before the next glyph only if it is.
+  (tables-dirty nil :type boolean)
   (scratch nil)
   (tables nil)
   (rotated-p nil :type boolean)

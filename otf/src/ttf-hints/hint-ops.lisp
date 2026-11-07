@@ -742,12 +742,14 @@ between two touched points comes from the unscaled coordinates."
          (#x41 (push-words eng (fetch-u8 eng)))
          (#x42
           (let* ((val (vs-pop s)) (idx (vs-pop s)) (store (eng-storage eng)))
+            (setf (eng-tables-dirty eng) t)
             (when (< -1 idx (length store)) (setf (aref store idx) val))))
          (#x43
           (let ((idx (vs-pop s)) (store (eng-storage eng)))
             (vs-push s (if (< -1 idx (length store)) (aref store idx) 0))))
          (#x44
           (let* ((val (vs-pop s)) (idx (vs-pop s)) (cvt (eng-cvt eng)))
+            (setf (eng-tables-dirty eng) t)
             (when (< -1 idx (length cvt)) (setf (aref cvt idx) val))))
          (#x45 (vs-push s (read-cvt-val eng (vs-pop s))))
          ((#x46 #x47)
@@ -810,6 +812,7 @@ between two touched points comes from the unscaled coordinates."
          (#x67 (vs-push s (f26-ceil (vs-pop s))))
          (#x70
           (let* ((val (vs-pop s)) (idx (vs-pop s)) (cvt (eng-cvt eng)))
+            (setf (eng-tables-dirty eng) t)
             (when (< -1 idx (length cvt))
               (setf (aref cvt idx) (mul-fix val (eng-cvt-scale eng))))))
          (#x71 (op-deltap eng 16))

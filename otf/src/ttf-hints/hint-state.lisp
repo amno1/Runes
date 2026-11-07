@@ -89,7 +89,7 @@
   "FreeType's FT_MulFix (16.16)."
   (declare (s32 a b) (optimize (speed 3) (safety 0)))
   (let ((ab (* a b)))
-    (s32 (ash (+ ab #x8000 (if (minusp ab) -1 0)) -16))))
+    (s32 (ash (+ ab #x8000 (ash ab -63)) -16))))
 
 (defun div-fix (a b)
   (declare (s32 a b) (optimize (speed 3) (safety 0)))
@@ -98,7 +98,7 @@
 (defun round-shift-14 (ab)
   "Sign-preserving rounded right shift by 14 for F2Dot14 products."
   (declare (fixnum ab) (optimize (speed 3) (safety 0)))
-  (s32 (ash (+ ab #x2000 (if (minusp ab) -1 0)) -14)))
+  (s32 (ash (+ ab #x2000 (ash ab -63)) -14)))
 
 (defun mul-f2dot14 (a b)
   (declare (s32 a b) (optimize (speed 3) (safety 0)))
