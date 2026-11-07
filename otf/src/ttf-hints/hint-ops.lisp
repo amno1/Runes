@@ -11,7 +11,7 @@
 (declaim (inline read-cvt-val apply-min-distance decode-delta-arg)
          (ftype (function (tt-engine fixnum) s32) read-cvt-val)
          (ftype (function (graphics-state s32 s32) s32) apply-min-distance)
-         (ftype (function (graphics-state fixnum fixnum fixnum) (or null s32))
+         (ftype (function (graphics-state fixnum s32 (integer 0 32)) (or null s32))
                 decode-delta-arg)
          (ftype (function (tt-engine (signed-byte 32)) t) do-jump))
 
@@ -22,8 +22,9 @@
 ;;; One bounds check for the whole run of operands, then raw reads with the
 ;;; program counter in a local, written back once.
 (defmacro define-push (name width)
+  (declare (type (integer 1 2) width))
   `(defun ,name (eng count)
-     (declare (tt-engine eng) (fixnum count) (optimize (speed 3) (safety 0)))
+     (declare (tt-engine eng) (type (integer 0 255) count) (optimize (speed 3) (safety 0)))
      (let* ((s (eng-stack eng))
             (top (vs-top s))
             (arr (vs-values s))
@@ -147,7 +148,11 @@
       (setf (gs-free-x gs) #x4000 (gs-free-y gs) 0))
   (update-projection-state gs))
 
+(declaim (ftype (function (tt-zone fixnum tt-zone fixnum t t) (values s32 s32 &optional))
+                line-vector-f2dot14))
+
 (defun line-vector-f2dot14 (zone1 p1 zone2 p2 orig-p perp-p)
+  (declare (tt-zone zone1 zone2) (fixnum p1 p2))
   (zone-check-point zone1 p1)
   (zone-check-point zone2 p2)
   (let* ((x1 (if orig-p (aref (zone-orig-x zone1) p1) (aref (zone-cur-x zone1) p1)))
@@ -161,12 +166,13 @@
         ;; perpendicular variants (confirmed by Greg Hitchcock, in FreeType).
         (values #x4000 0)
         (multiple-value-bind (ux uy) (normalize-f2dot14 dx dy)
+          (declare (type s32 ux uy))
           (if perp-p
               (values (- uy) ux)
               (values ux uy))))))
 
 (defun op-vtl (eng op)
-  (declare (tt-engine eng))
+  (declare (tt-engine eng) (type (unsigned-byte 8) op))
   (let* ((s (eng-stack eng))
          ;; As FreeType: the point on top of the stack is in ZP2, the one
          ;; below in ZP1, and the vector goes from the first to the second.
@@ -347,7 +353,11 @@ Matches FreeType Ins_MIRP / Skrifa point.rs."
     (when set-rp0-p
       (setf (gs-rp0 gs) pt))))
 
+(declaim (ftype (function (tt-engine t) (values s32 tt-zone fixnum &optional))
+                compute-ref-displacement))
+
 (defun compute-ref-displacement (eng use-rp1-p)
+  (declare (tt-engine eng))
   (let* ((gs (eng-gs eng))
          (z-id (if use-rp1-p (gs-zp0 gs) (gs-zp1 gs)))
          (zone (eng-zone eng z-id))
@@ -601,7 +611,7 @@ between two touched points comes from the unscaled coordinates."
 ;;; ============================================================================
 
 (defun decode-delta-arg (gs ppem arg band-offset)
-  (declare (graphics-state gs) (fixnum ppem arg band-offset))
+  (declare (graphics-state gs) (fixnum ppem) (s32 arg) (type (integer 0 32) band-offset))
   (let ((target-ppem (+ (gs-delta-base gs) band-offset (ldb (byte 4 4) arg))))
     (when (= target-ppem ppem)
       (let* ((mag-code (ldb (byte 4 0) arg))
@@ -655,6 +665,7 @@ between two touched points comes from the unscaled coordinates."
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun opcode-range (low high)
     "The opcodes LOW to HIGH, for the keys of a CASE clause."
+    (declare (type (integer 0 255) low high))
     (loop for op from low to high collect op)))
 
 (defun dispatch-instruction (eng op)
