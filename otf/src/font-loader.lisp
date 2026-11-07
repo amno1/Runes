@@ -149,6 +149,9 @@ them, 0 where the table is too short for it."
    (offset :initarg :offset :reader offset)
    (size :initarg :size :reader size)))
 
+;; A table directory record has 32-bit offset and length fields.
+(declaim (ftype (function (t) (values (unsigned-byte 32) &optional)) offset size))
+
 (defmethod print-object ((object table-info) stream)
   (print-unreadable-object (object stream :type t)
     (format stream "~S" (name object))))
