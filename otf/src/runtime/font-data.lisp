@@ -4,6 +4,8 @@
 
 (in-package #:runes/otf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defmacro define-constant (name value &optional doc)
   "Define a constant using alexandria:define-constant with :test 'equal."
   `(alexandria:define-constant ,name ,value :test 'equal ,@(when doc (list :documentation doc))))
@@ -51,7 +53,9 @@ single-float.")
 non-negative integers, such as sizes computed from untrusted counts."
   (declare (type font-data fd)
            (type unsigned-byte pos size)
-           (optimize (speed 3) (safety 1)))
+           (optimize (speed 3) (safety 1))
+           ;; POS and SIZE can be bignums from untrusted count*element-size products.
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((len (font-data-length fd)))
     (and (<= pos len) (<= size (- len pos)))))
 
@@ -69,8 +73,9 @@ non-negative integers, such as sizes computed from untrusted counts."
        (make-font-data copy)))
     ((or (pathnamep source) (stringp source))
      (with-open-file (stream source :direction :input :element-type '(unsigned-byte 8))
-       (let* ((len (file-length stream))
-              (buf (make-array len :element-type '(unsigned-byte 8))))
+       (let* ((len (or (file-length stream)
+                       (error 'font-error :message "Cannot determine length of font stream")))
+              (buf (make-array (the fixnum len) :element-type '(unsigned-byte 8))))
          (read-sequence buf stream)
          (make-font-data buf))))
     (t
@@ -189,7 +194,9 @@ non-negative integers, such as sizes computed from untrusted counts."
 
 (defun font-data-read-long-date-time (fd pos)
   "Read 64-bit integer representing seconds since 1904-01-01 GMT."
-  (declare (type font-data fd) (type (unsigned-byte 32) pos))
+  ;; A 64-bit unsigned value may exceed a fixnum and box into a bignum.
+  (declare (type font-data fd) (type (unsigned-byte 32) pos)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
   (let ((hi (font-data-read-u32 fd pos))
         (lo (font-data-read-u32 fd (+ pos 4))))
     (logior (ash hi 32) lo)))
