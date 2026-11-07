@@ -32,16 +32,18 @@
 
 (in-package :zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defgeneric bounding-box (object))
 
 (macrolet ((bbox-accessor (name index)
              `(progn
                 (defgeneric ,name (object)
                   (:method (object)
-                    (aref (bounding-box object) ,index)))
+                    (aref (the simple-vector (bounding-box object)) ,index)))
                 (defgeneric (setf ,name) (new-value object)
                   (:method (new-value object)
-                    (setf (aref (bounding-box object) ,index) new-value))))))
+                    (setf (aref (the simple-vector (bounding-box object)) ,index) new-value))))))
   (bbox-accessor xmin 0)
   (bbox-accessor ymin 1)
   (bbox-accessor xmax 2)
