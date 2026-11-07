@@ -102,4 +102,19 @@
    #:bad-magic
    #:unsupported-version
    #:unsupported-format
-   #:unsupported-value))
+   #:unsupported-value
+   ;; hinted outlines and advances
+   #:hinted-contours
+   #:hinted-cubic-contours
+   #:hinted-advance-width
+   #:hint-outline-26dot6
+   #:hint-outline-26dot6-into
+   #:outline-26dot6
+   #:make-outline-26dot6
+   #:o26-xs
+   #:o26-ys
+   #:o26-on-curve
+   #:o26-ends
+   #:o26-phantom
+   #:o26-n
+   #:o26-n-ends))
