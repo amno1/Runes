@@ -39,6 +39,12 @@ number of glyphs with a bearing, the table's long ones included."
    (gvar-cache :initform nil :accessor %gvar-cache)
    ;; LOADER-GVAR-COORDS of the instance, once it has been worked out (or :UNSET)
    (gvar-coords-cache :initform :unset :accessor %gvar-coords-cache)
+   ;; The instance's normalized coordinates as raw 2.14 numbers, a simple vector,
+   ;; as the item variation stores are blended with them (or :UNSET)
+   (blend-coords-cache :initform :unset :accessor %blend-coords-cache)
+   ;; Where 'HVAR' and 'VVAR' have their stores and index maps: a list of
+   ;; (TAG . POSITIONS), once worked out (see METRICS-POSITIONS)
+   (metrics-positions-cache :initform nil :accessor %metrics-positions-cache)
    ;; What the glyph loaders read from 'glyf' and 'loca', found on first use.
    (outline-tables :initform nil :accessor %outline-tables)
    (font-data :initarg :font-data :accessor font-data)

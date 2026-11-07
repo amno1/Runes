@@ -255,7 +255,8 @@ the change keep their old outlines; find them again.")
   "Set LOADER's instance and drop everything that depends on it."
   (setf (user-coordinates loader) user-coordinates
         (normalized-coordinates loader) normalized-coordinates
-        (%gvar-coords-cache loader) :unset)
+        (%gvar-coords-cache loader) :unset
+        (%blend-coords-cache loader) :unset)
   ;; Outlines, bounding boxes and subfonts depend on the instance.
   (when (glyph-cache loader)
     (fill (the simple-vector (glyph-cache loader)) nil))
@@ -263,61 +264,151 @@ the change keep their old outlines; find them again.")
   ;; Kerning varies too ('GPOS' with GDEF deltas).
   (clrhash (gpos-kerning-cache loader)))
 
-(defun metrics-delta (loader tag reader store-reader map-reader gid &key direct)
-  "Change at the loader's instance, in font units, of a metric of GID from
-the HVAR or VVAR table TAG, read with READER. MAP-READER gives the offset of
-the metric's DeltaSetIndexMap. Without a map, GID indexes the store directly
-when DIRECT is true, as for advances; otherwise the result is NIL, since the
-font does not vary that metric through this table."
-  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
-  (let ((coords (normalized-coordinates loader))
-        (info (table-info tag loader)))
-    (if (or (null coords) (null info))
-        (and direct 0)
-        (let* ((fd (font-data loader))
-               (table (funcall reader fd (offset info) (size info)))
-               (store (funcall store-reader table))
-               (map-offset (funcall map-reader table)))
-          (if (or (null map-offset) (zerop map-offset))
-              (if direct (store-delta store 0 gid coords) nil)
-              (multiple-value-bind (outer inner)
-                  (delta-set-index (+ (offset info) map-offset) fd gid)
-                (store-delta store outer inner coords)))))))
+(defstruct (metrics-positions (:conc-name mp-))
+  "Where an 'HVAR' or 'VVAR' table has its item variation store and its two
+delta-set index maps (the advance's, then the side bearing's), as positions in
+the font data; NIL for what it does not have."
+  (store nil :type (or null (unsigned-byte 32)))
+  (advance-map nil :type (or null (unsigned-byte 32)))
+  (bearing-map nil :type (or null (unsigned-byte 32))))
 
-(defun store-delta (store outer inner coords)
-  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
-  (if (or (null store) (> inner #xFFFF))
-      0
-      ;; Round the 16.16 delta to an integer as FreeType does.
-      (ash (+ (runes/otf/charstring:item-variation-delta store outer inner coords) #x8000) -16)))
+(declaim (sb-ext:freeze-type metrics-positions))
+
+(defun metrics-positions (loader tag)
+  "The METRICS-POSITIONS of the table TAG (\"HVAR\" or \"VVAR\") of LOADER, or NIL
+if the font has none.  Found once: the table does not change with the instance."
+  (let ((cached (assoc tag (%metrics-positions-cache loader) :test #'string=)))
+    (if cached
+        (cdr cached)
+        (let* ((info (table-info tag loader))
+               (positions
+                 (when info
+                   (let ((fd (font-data loader)) (table (offset info)))
+                     (flet ((field (at)
+                              ;; Offsets in the table are from its start; 0 is none.
+                              (let ((off (runes/otf:font-data-read-u32 fd (+ table at))))
+                                (and (plusp off) (+ table off)))))
+                       (make-metrics-positions :store (field 4)
+                                               :advance-map (field 8)
+                                               :bearing-map (field 12)))))))
+          (push (cons tag positions) (%metrics-positions-cache loader))
+          positions))))
+
+(defun blend-coordinates (loader)
+  "The normalized coordinates of LOADER's instance as raw 2.14 numbers in a
+simple vector, or NIL for the default instance.  Worked out once for an
+instance (SET-INSTANCE forgets it)."
+  (let ((cache (%blend-coords-cache loader)))
+    (if (eq cache :unset)
+        (setf (%blend-coords-cache loader)
+              (let ((coords (normalized-coordinates loader)))
+                (and coords
+                     (map 'simple-vector #'runes/otf/charstring::f2dot14-from-real coords))))
+        cache)))
+
+(defun item-variation-delta-at (fd store outer inner coords)
+  "The change of item (OUTER, INNER) of the item variation store at position
+STORE of FD, at COORDS (a vector of raw 2.14 numbers), in 16.16 units without
+rounding: the same as RUNES/OTF/CHARSTRING:ITEM-VARIATION-DELTA, with the store
+read where it lies.  0 for an item the store does not have."
+  (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) store)
+           (type (unsigned-byte 32) outer inner) (type simple-vector coords))
+  (flet ((u16 (pos) (runes/otf:font-data-read-u16 fd pos))
+         (u32 (pos) (runes/otf:font-data-read-u32 fd pos)))
+    (declare (inline u16 u32))
+    (if (or (zerop (length coords))
+            (and (= outer #xFFFF) (= inner #xFFFF))
+            (>= outer (u16 (+ store 6))))
+        0
+        (let ((data-offset (u32 (+ store 8 (* 4 outer))))
+              (region-offset (u32 (+ store 2))))
+          (if (or (zerop data-offset) (zerop region-offset)
+                  (>= inner (u16 (+ store data-offset))))
+              0
+              (let* ((data (+ store data-offset))
+                     (regions (+ store region-offset))
+                     (axis-count (u16 regions))
+                     (region-count (u16 (+ regions 2)))
+                     (first-region (+ regions 4))
+                     (word-delta-count (u16 (+ data 2)))
+                     (words (logand #x7FFF word-delta-count))
+                     (long-p (logbitp 15 word-delta-count))
+                     (count (u16 (+ data 4)))
+                     (wide (if long-p 4 2))
+                     (narrow (if long-p 2 1))
+                     (row-size (if long-p
+                                   (+ (* 4 words) (* 2 (- count words)))
+                                   (+ (* 2 words) (- count words))))
+                     (row (+ data 6 (* 2 count) (* inner row-size)))
+                     (sum 0))
+                (declare (type (unsigned-byte 16) axis-count region-count word-delta-count
+                               words count)
+                         (type integer sum))
+                (dotimes (i count sum)
+                  (let* ((pos (+ row (if (< i words)
+                                         (* i wide)
+                                         (+ (* words wide) (* (- i words) narrow)))))
+                         (delta (if (< i words)
+                                    (if long-p
+                                        (runes/otf:font-data-read-i32 fd pos)
+                                        (runes/otf:font-data-read-i16 fd pos))
+                                    (if long-p
+                                        (runes/otf:font-data-read-i16 fd pos)
+                                        (runes/otf:font-data-read-i8 fd pos))))
+                         (region-index (u16 (+ data 6 (* 2 i)))))
+                    (unless (< region-index region-count)
+                      (runes/otf/charstring::fail 'runes/otf/charstring::charstring-malformed
+                                                  (format nil "region ~D out of range" region-index)))
+                    ;; A zero delta contributes nothing at any location.
+                    (unless (zerop delta)
+                      (incf sum (* delta
+                                   (runes/otf/charstring::region-scalar
+                                    fd (+ first-region (* region-index axis-count 6))
+                                    axis-count coords))))))))))))
+
+(defun metrics-delta (loader tag map-accessor gid &key direct)
+  "Change at the loader's instance, in font units, of a metric of GID from
+the HVAR or VVAR table TAG.  MAP-ACCESSOR (MP-ADVANCE-MAP or MP-BEARING-MAP)
+gives the position of the metric's DeltaSetIndexMap.  Without a map, GID
+indexes the store directly when DIRECT is true, as for advances; otherwise the
+result is NIL, since the font does not vary that metric through this table."
+  (declare (type (unsigned-byte 32) gid) (type function map-accessor))
+  (let ((coords (blend-coordinates loader))
+        (positions (metrics-positions loader tag)))
+    (if (or (null coords) (null positions))
+        (and direct 0)
+        (let ((fd (font-data loader))
+              (store (mp-store positions))
+              (map-position (funcall map-accessor positions)))
+          (flet ((round-delta (sum)
+                   ;; Round the 16.16 delta to an integer as FreeType does.
+                   (ash (+ sum #x8000) -16)))
+            (if (null map-position)
+                (if direct
+                    (if (or (null store) (> gid #xFFFF))
+                        0
+                        (round-delta (item-variation-delta-at fd store 0 gid coords)))
+                    nil)
+                (multiple-value-bind (outer inner) (delta-set-index map-position fd gid)
+                  (if (or (null store) (> inner #xFFFF))
+                      0
+                      (round-delta (item-variation-delta-at fd store outer inner coords))))))))))
 
 (defun advance-width-delta (loader gid)
   "Change of GID's advance width at the loader's instance, from 'HVAR'."
-  (metrics-delta loader "HVAR" #'runes/otf:read-hvar
-                 #'runes/otf:hvar-item-variation-store-offset
-                 #'runes/otf:hvar-advance-width-mapping-offset-offset
-                 gid :direct t))
+  (metrics-delta loader "HVAR" #'mp-advance-map gid :direct t))
 
 (defun lsb-delta (loader gid)
   "Change of GID's left side bearing from the 'HVAR' LSB mapping, or NIL."
-  (metrics-delta loader "HVAR" #'runes/otf:read-hvar
-                 #'runes/otf:hvar-item-variation-store-offset
-                 #'runes/otf:hvar-lsb-mapping-offset-offset
-                 gid))
+  (metrics-delta loader "HVAR" #'mp-bearing-map gid))
 
 (defun advance-height-delta (loader gid)
   "Change of GID's advance height at the loader's instance, from 'VVAR'."
-  (metrics-delta loader "VVAR" #'runes/otf:read-vvar
-                 #'runes/otf:vvar-item-variation-store-offset
-                 #'runes/otf:vvar-advance-height-mapping-offset-offset
-                 gid :direct t))
+  (metrics-delta loader "VVAR" #'mp-advance-map gid :direct t))
 
 (defun tsb-delta (loader gid)
   "Change of GID's top side bearing from the 'VVAR' TSB mapping, or NIL."
-  (metrics-delta loader "VVAR" #'runes/otf:read-vvar
-                 #'runes/otf:vvar-item-variation-store-offset
-                 #'runes/otf:vvar-tsb-mapping-offset-offset
-                 gid))
+  (metrics-delta loader "VVAR" #'mp-bearing-map gid))
 
 (defun delta-set-index (pos fd index)
   "Outer and inner delta-set index for INDEX from the DeltaSetIndexMap at POS."
