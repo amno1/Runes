@@ -19,20 +19,33 @@
 ;;; 1. Push Instructions
 ;;; ============================================================================
 
-(defmacro define-push (name fetch)
+;;; One bounds check for the whole run of operands, then raw reads with the
+;;; program counter in a local, written back once.
+(defmacro define-push (name width)
   `(defun ,name (eng count)
      (declare (tt-engine eng) (fixnum count) (optimize (speed 3) (safety 0)))
      (let* ((s (eng-stack eng))
             (top (vs-top s))
-            (arr (vs-values s)))
+            (arr (vs-values s))
+            (pc (eng-pc eng))
+            (bytes (eng-bytes eng)))
+       (declare (fixnum top pc))
        (when (> (+ top count) (length arr))
          (hint-fail 'tt-hint-stack-overflow "TrueType value stack overflow"))
+       (when (> (+ pc (* ,width count)) (eng-end eng))
+         (hint-fail 'tt-hint-invalid-opcode "Bytecode stream ended unexpectedly"))
        (dotimes (i count)
-         (setf (aref arr (+ top i)) (,fetch eng)))
-       (setf (vs-top s) (+ top count)))))
+         (setf (aref arr (+ top i))
+               ,(if (= width 1)
+                    '(aref bytes (+ pc i))
+                    '(let ((u (logior (ash (aref bytes (+ pc (* 2 i))) 8)
+                                      (aref bytes (+ pc (* 2 i) 1)))))
+                      (if (logbitp 15 u) (- u #x10000) u)))))
+       (setf (eng-pc eng) (+ pc (* ,width count))
+             (vs-top s) (+ top count)))))
 
-(define-push push-bytes fetch-u8)
-(define-push push-words fetch-i16)
+(define-push push-bytes 1)
+(define-push push-words 2)
 
 ;;; ============================================================================
 ;;; 2. Function & Control Flow Instructions
