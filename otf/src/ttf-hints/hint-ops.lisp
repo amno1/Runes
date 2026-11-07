@@ -534,7 +534,8 @@ between two touched points comes from the unscaled coordinates."
       (loop for i of-type fixnum from start to end
             when (logtest (aref flags i) touch-mask)
               do (cond ((< prev 0) (setf first i))
-                       (t (interp-range (1+ prev) i prev i)))
+                       ;; Touched points next to each other have none between.
+                       ((< (1+ prev) i) (interp-range (1+ prev) i prev i)))
                  (setf prev i))
       (cond
         ((< prev 0))
