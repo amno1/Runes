@@ -172,7 +172,8 @@ arithmetic), so that the result agrees with its to the last bit."
   (phase 0 :type s32)
   (period 64 :type s32))
 
-(declaim (ftype (function (round-state s32 s32) s32) round-according-to-state-general))
+(declaim (ftype (function (round-state s32 s32) s32) round-according-to-state
+                round-according-to-state-general))
 
 (declaim (inline round-according-to-state))
 (defun round-according-to-state (rs distance compensation)
@@ -418,6 +419,7 @@ enough."
 ;; Nothing subtypes these: say so, and a type test is one comparison.
 (declaim (sb-ext:freeze-type round-state tt-zone graphics-state))
 
+(declaim (ftype (function (graphics-state) graphics-state) update-projection-state))
 (defun update-projection-state (gs)
   "Recompute the cached axis and FDOTP of the graphics state GS after one of
 its vectors changed.  The rules are FreeType's Compute_Funcs and the clamp of
@@ -445,6 +447,8 @@ a too small FDOTP."
           (gs-fdotp gs) (if (< (abs raw) #x400) #x4000 raw))
     gs))
 
+(declaim (ftype (function (graphics-state graphics-state) graphics-state)
+                reset-graphics-state-per-glyph))
 (defun reset-graphics-state-per-glyph (gs default-gs)
   (declare (graphics-state gs default-gs))
   (let ((source (if (logbitp 1 (gs-instruct-control default-gs))
@@ -487,9 +491,3 @@ a too small FDOTP."
               (rs-period rs) (rs-period from)))
       (setf (gs-slots-dirty gs) nil))
     gs))
-
-;;; Function types, for callers in the files after this one.
-(declaim (ftype (function (round-state s32 s32) s32) round-according-to-state)
-         (ftype (function (graphics-state) graphics-state) update-projection-state)
-         (ftype (function (graphics-state graphics-state) graphics-state)
-                reset-graphics-state-per-glyph))
