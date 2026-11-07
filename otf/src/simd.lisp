@@ -247,3 +247,32 @@ coordinates."
            `((setf (sb-simd-avx:u8.16-aref ,flags ,j)
                    (sb-simd-avx:u8.16-and fbytes (sb-simd-avx:u8.16-broadcast 1)))))
        nil)))
+
+(defun copy-points-out (xs ys on cx cy zf n x-shift)
+  "XS[i] = CX[i] - X-SHIFT (wrapping in 32 bits), YS[i] = CY[i] and ON[i] = the
+low bit of ZF[i], for i below N: the points of a hinted glyph out of the zone
+into an outline.  Sixteen at a time with AVX-512, if the processor has it."
+  (declare (type i32-array xs ys cx cy)
+           (type (simple-array (unsigned-byte 8) (*)) on zf)
+           (type (signed-byte 32) x-shift) (fixnum n)
+           (optimize (speed 3) (safety 0)))
+  (let ((i 0))
+    (declare (fixnum i))
+    #+zpb-avx512-decode
+    (when (and **avx512-decode** (>= n 16))
+      (let ((shift (sb-simd-avx512f:s32.16-broadcast x-shift))
+            (one (sb-simd-avx:u8.16-broadcast 1)))
+        (loop while (<= (+ i 16) n)
+              do (setf (sb-simd-avx512f:s32.16-aref xs i)
+                       (sb-simd-avx512f:s32.16- (sb-simd-avx512f:s32.16-aref cx i) shift)
+                       (sb-simd-avx512f:s32.16-aref ys i)
+                       (sb-simd-avx512f:s32.16-aref cy i)
+                       (sb-simd-avx:u8.16-aref on i)
+                       (sb-simd-avx:u8.16-and (sb-simd-avx:u8.16-aref zf i) one))
+                 (incf i 16))))
+    (loop while (< i n)
+          do (setf (aref xs i) (sb-c::mask-signed-field 32 (- (aref cx i) x-shift))
+                   (aref ys i) (aref cy i)
+                   (aref on i) (logand (aref zf i) 1))
+             (incf i))
+    nil))
