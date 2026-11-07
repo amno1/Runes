@@ -154,7 +154,7 @@ FreeType's FT_MulFix, for i below N.  With AVX-512 the 32x32 to 64 bit products
 of eight points are made by one instruction, and the sixteen results put
 together again."
   (declare (type i32-array out1 out2 source) (type (signed-byte 32) factor)
-           (type (integer 0 #.array-dimension-limit) n start)
+           (type (integer 0 #.array-dimension-limit) n)
            (optimize (speed 3) (safety 0)))
   (let ((i 0))
     (declare (type (integer 0 #.array-dimension-limit) i))
