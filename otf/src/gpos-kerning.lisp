@@ -23,6 +23,8 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (deftype table-position () '(unsigned-byte 32))
 (deftype glyph-index () '(unsigned-byte 16))
 
@@ -71,8 +73,8 @@ subtables, in lookup order, their positions; NIL when there are none."
       (loop with gpos of-type table-position = (offset info)
             with end of-type table-position = (+ gpos (size info))
             with lookup-list of-type table-position = (+ gpos (gpos-u16 fd (+ gpos 8)))
-            for index in (kern-lookup-indices fd (+ gpos (gpos-u16 fd (+ gpos 6))))
-            for subtables = (when (< index (gpos-u16 fd lookup-list))
+            for index of-type (unsigned-byte 16) in (kern-lookup-indices fd (+ gpos (gpos-u16 fd (+ gpos 6))))
+            for subtables = (when (< index (the (unsigned-byte 16) (gpos-u16 fd lookup-list)))
                               (pair-pos-subtables
                                fd (+ lookup-list (gpos-u16 fd (+ lookup-list 2 (* 2 index)))) end))
             when subtables
@@ -187,10 +189,12 @@ follows XPlacement and YPlacement, when those are present."
   "The delta, in font units, of the VariationIndex table at TABLE at
 VARIATION, (store . coordinates): 16.16 rounded with halves up, as HarfBuzz
 does, and kept within 32 bits whatever the store holds."
-  (declare (type runes/otf:font-data fd) (type table-position table) (type cons variation))
-  (let ((delta (runes/otf/charstring:item-variation-delta
-                (car variation) (gpos-u16 fd table) (gpos-u16 fd (+ table 2)) (cdr variation))))
-    (max #x-80000000 (min #x7FFFFFFF (floor (+ delta #x8000) 65536)))))
+  (declare (type runes/otf:font-data fd) (type table-position table) (type cons variation)
+           (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (let ((delta (the (signed-byte 32)
+                    (runes/otf/charstring:item-variation-delta
+                     (car variation) (gpos-u16 fd table) (gpos-u16 fd (+ table 2)) (cdr variation)))))
+    (max #x-80000000 (min #x7FFFFFFF (the integer (floor (+ delta #x8000) 65536))))))
 
 (defun x-advance-delta (fd pos format base variation)
   "The change at VARIATION, (store . coordinates) or NIL, of the XAdvance of
