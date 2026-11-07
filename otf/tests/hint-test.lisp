@@ -257,6 +257,24 @@ instance again gives the first outlines, a different one other outlines."
     (let* ((first (outlines 400)) (other (outlines 800)) (again (outlines 400)))
       (and (equalp first again) (not (equalp first other))))))
 
+(defun check-cff-hinted-contours (path)
+  "A CFF font gives the hinted contours and advances of its glyphs, at integer
+and fractional sizes: every glyph of the first 80 loads, and the ones with an
+outline have points."
+  (let ((loader (zpb-ttf:open-font-loader path)) (with-points 0) (ok t))
+    (unwind-protect
+         (dolist (ppem (list 12 12.5 25/2 16.25d0))
+           (dotimes (g (min 80 (zpb-ttf:glyph-count loader)))
+             (let ((glyph (zpb-ttf:index-glyph g loader)))
+               (handler-case
+                   (let ((contours (zpb-ttf:hinted-contours glyph ppem)))
+                     (zpb-ttf:hinted-advance-width glyph ppem)
+                     (zpb-ttf:hinted-cubic-contours glyph ppem)
+                     (when (plusp (length contours)) (incf with-points)))
+                 (error () (setf ok nil))))))
+      (zpb-ttf:close-font-loader loader))
+    (and ok (plusp with-points))))
+
 (defun check-bad-glyph-index (loader)
   "A glyph index past the font's glyphs is an error, not a read past the table."
   (let ((count (zpb-ttf:glyph-count loader)))
@@ -300,6 +318,10 @@ instance again gives the first outlines, a different one other outlines."
       (compare "LiberationSans-Regular"
                (merge-pathnames "fonts/LiberationSans-Regular.ttf" *tests-dir*)
                "LiberationSans")
+      (check "CFF hinted contours load (Cantarell-VF, integer and fractional sizes)"
+             (check-cff-hinted-contours (merge-pathnames "fonts/Cantarell-VF.otf" *tests-dir*)))
+      (check "CFF hinted contours load (Noto Sans JP subset)"
+             (check-cff-hinted-contours (merge-pathnames "fonts/NotoSansJP-VF.subset.otf" *tests-dir*)))
       (let ((adwaita (find-if #'probe-file *adwaita-candidates*)))
         (if adwaita
             (let ((loader (zpb-ttf:open-font-loader adwaita)))
