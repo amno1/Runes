@@ -11,8 +11,7 @@
    #:tt-zone #:make-tt-zone #:ensure-zone-capacity #:copy-zone-into
    #:zone-unscaled-x #:zone-unscaled-y
    #:zone-orig-x #:zone-orig-y #:zone-cur-x #:zone-cur-y
-   #:zone-flags #:zone-contours #:zone-base #:zone-contour-base
-   #:zone-n-points #:zone-n-glyph-points #:zone-n-contours
+   #:zone-flags #:zone-contours #:zone-n-points #:zone-n-glyph-points #:zone-n-contours
    #:+point-on-curve+ #:+point-touched-x+ #:+point-touched-y+ #:+point-touched+
    ;; Graphics State & Engine
    #:graphics-state #:make-graphics-state #:reset-graphics-state-per-glyph
@@ -295,50 +294,30 @@ ROUND-ACCORDING-TO-STATE-GENERAL."
   (cur-y      (make-array 0 :element-type 's32) :type (simple-array s32 (*)))
   (flags      (make-array 0 :element-type '(unsigned-byte 8)) :type (simple-array (unsigned-byte 8) (*)))
   (contours   (make-array 0 :element-type '(unsigned-byte 16)) :type (simple-array (unsigned-byte 16) (*)))
-  ;; Active counts and base offsets for the current glyph or component
-  ;; (n-points includes the 4 phantom points; n-glyph-points excludes them so
-  ;; SHZ never depends on magic -4 subtraction).
-  (base 0 :type fixnum)
-  (contour-base 0 :type fixnum)
+  ;; Active counts for the current glyph (n-points includes the 4 phantom points;
+  ;; n-glyph-points excludes them so SHZ never depends on magic -4 subtraction).
   (n-points 0 :type fixnum)
   (n-glyph-points 0 :type fixnum)
   (n-contours 0 :type fixnum))
 
 (declaim (inline ensure-zone-capacity))
-(defun ensure-zone-capacity (zone needed-points needed-contours
-                             &key (n-glyph-points needed-points) (base 0) (contour-base 0))
-  "Ensure ZONE's underlying arrays can hold BASE + NEEDED-POINTS and
-CONTOUR-BASE + NEEDED-CONTOURS, reusing existing buffers in place when large
-enough."
-  (declare (tt-zone zone) (fixnum needed-points needed-contours n-glyph-points base contour-base))
-  (let ((total-points (+ base needed-points))
-        (total-contours (+ contour-base needed-contours)))
-    (declare (fixnum total-points total-contours))
-    (when (> total-points (length (zone-cur-x zone)))
-      (let ((cap (max total-points (* 2 (length (zone-cur-x zone))) 64)))
-        (macrolet ((grow (slot elem)
-                     `(let ((old (,slot zone))
-                            (new (make-array cap :element-type ',elem :initial-element 0)))
-                        (when (plusp base)
-                          (replace new old :end2 (min base (length old))))
-                        (setf (,slot zone) new))))
-          (grow zone-unscaled-x s32)
-          (grow zone-unscaled-y s32)
-          (grow zone-orig-x s32)
-          (grow zone-orig-y s32)
-          (grow zone-cur-x s32)
-          (grow zone-cur-y s32)
-          (grow zone-flags (unsigned-byte 8)))))
-    (when (> total-contours (length (zone-contours zone)))
-      (let* ((old (zone-contours zone))
-             (cap (max total-contours (* 2 (length old)) 16))
-             (new (make-array cap :element-type '(unsigned-byte 16) :initial-element 0)))
-        (when (plusp contour-base)
-          (replace new old :end2 (min contour-base (length old))))
-        (setf (zone-contours zone) new))))
-  (setf (zone-base zone) base
-        (zone-contour-base zone) contour-base
-        (zone-n-points zone) needed-points
+(defun ensure-zone-capacity (zone needed-points needed-contours &key (n-glyph-points needed-points))
+  "Ensure ZONE's underlying arrays can hold NEEDED-POINTS and NEEDED-CONTOURS,
+reusing existing buffers in place when large enough."
+  (declare (tt-zone zone) (fixnum needed-points needed-contours n-glyph-points))
+  (when (> needed-points (length (zone-cur-x zone)))
+    (let ((cap (max needed-points (* 2 (length (zone-cur-x zone))) 64)))
+      (setf (zone-unscaled-x zone) (make-array cap :element-type 's32 :initial-element 0)
+            (zone-unscaled-y zone) (make-array cap :element-type 's32 :initial-element 0)
+            (zone-orig-x zone)     (make-array cap :element-type 's32 :initial-element 0)
+            (zone-orig-y zone)     (make-array cap :element-type 's32 :initial-element 0)
+            (zone-cur-x zone)      (make-array cap :element-type 's32 :initial-element 0)
+            (zone-cur-y zone)      (make-array cap :element-type 's32 :initial-element 0)
+            (zone-flags zone)      (make-array cap :element-type '(unsigned-byte 8) :initial-element 0))))
+  (when (> needed-contours (length (zone-contours zone)))
+    (let ((cap (max needed-contours (* 2 (length (zone-contours zone))) 16)))
+      (setf (zone-contours zone) (make-array cap :element-type '(unsigned-byte 16) :initial-element 0))))
+  (setf (zone-n-points zone) needed-points
         (zone-n-glyph-points zone) n-glyph-points
         (zone-n-contours zone) needed-contours)
   zone)
