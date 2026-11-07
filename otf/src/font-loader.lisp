@@ -10,6 +10,8 @@
    (outlines-kind :initform nil :accessor %outlines-kind)
    ;; (TABLE-INFO . GVAR) once GVAR-GLYPH-DATA has read the header, or :NONE.
    (gvar-cache :initform nil :accessor %gvar-cache)
+   ;; What the glyph loaders read from 'glyf' and 'loca', found on first use.
+   (outline-tables :initform nil :accessor %outline-tables)
    (font-data :initarg :font-data :accessor font-data)
    (input-stream :initarg :input-stream :initform nil :accessor input-stream)
    (table-count :initarg :table-count :initform 0 :reader table-count)

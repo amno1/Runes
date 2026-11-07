@@ -24,6 +24,16 @@
 
 (declaim (sb-ext:freeze-type outline-points))
 
+(defun grow-fill-pointer (vector count)
+  "Make room in the growable VECTOR for COUNT more elements and move its fill
+pointer past them; their values are left to the caller."
+  (declare (type growable-vector vector) (fixnum count))
+  (let ((new (+ (fill-pointer vector) count)))
+    (when (> new (array-dimension vector 0))
+      (adjust-array vector (max new (* 2 (array-dimension vector 0)))))
+    (setf (fill-pointer vector) new)
+    vector))
+
 (defun loader-gvar-coords (loader)
   "The instance as raw 2.14 coordinates when 'gvar' applies to it, else NIL."
   (let ((coords (normalized-coordinates loader)))
@@ -167,9 +177,10 @@ PHANTOM, as a vector."
                               :actual-value gid
                               :expected-values '("a glyph that does not contain itself")))
   (multiple-value-bind (g-off len) (glyph-loca-info loader gid)
-    (let ((glyf (table-info "glyf" loader))
-          (fd (font-data loader)))
-      (if (or (zerop len) (null glyf))
+    (let* ((tables (loader-outline-tables loader))
+           (glyf-offset (ot-glyf-offset tables))
+           (fd (ot-fd tables)))
+      (if (or (zerop len) (null glyf-offset))
           ;; An empty glyph: only its metrics can vary.
           (let ((phantom (phantom-points loader gid 0 0))
                 (data (and coords (gvar-glyph-data loader gid))))
@@ -182,7 +193,7 @@ PHANTOM, as a vector."
                         (vector (aref moved 0) (aref moved 1) (aref phantom 2) (aref phantom 3)))
                       phantom))
                 phantom))
-          (let* ((pos (+ (offset glyf) g-off))
+          (let* ((pos (+ glyf-offset g-off))
                  (contour-count (runes/otf:font-data-read-i16 fd pos))
                  (phantom (phantom-points loader gid
                                           (runes/otf:font-data-read-i16 fd (+ pos 2))
@@ -198,21 +209,39 @@ PHANTOM, as a vector."
            (data (and coords (gvar-glyph-data loader gid))))
       (when data
         ;; Deltas cover the points and the phantom points.
-        (let ((all-x (concatenate 'vector xs (map 'vector #'car phantom)))
-              (all-y (concatenate 'vector ys (map 'vector #'cdr phantom))))
-          (multiple-value-bind (dx dy) (simple-glyph-deltas data coords all-x all-y (coerce ends 'list))
+        (let ((all-x (make-array (+ n 4)))
+              (all-y (make-array (+ n 4))))
+          (replace all-x xs)
+          (replace all-y ys)
+          (dotimes (k 4)
+            (setf (svref all-x (+ n k)) (car (svref phantom k))
+                  (svref all-y (+ n k)) (cdr (svref phantom k))))
+          (multiple-value-bind (dx dy) (simple-glyph-deltas data coords all-x all-y ends)
             (when dx
               (dotimes (i n)
                 (setf (aref xs i) (+ (aref xs i) (fixed-round (aref dx i)))
                       (aref ys i) (+ (aref ys i) (fixed-round (aref dy i)))))
               (setf phantom (add-phantom-deltas phantom dx dy n))))))
       (let ((base (fill-pointer (op-xs out))))
-        (dotimes (i n)
-          (vector-push-extend (aref xs i) (op-xs out))
-          (vector-push-extend (aref ys i) (op-ys out))
-          (vector-push-extend (aref on i) (op-on out)))
-        (loop for end across ends
-              do (vector-push-extend (+ base end) (op-ends out))))
+        (declare (fixnum base))
+        (grow-fill-pointer (op-xs out) n)
+        (grow-fill-pointer (op-ys out) n)
+        (grow-fill-pointer (op-on out) n)
+        (sb-kernel:with-array-data ((oxs (op-xs out)) (xs0) (xe))
+          (declare (ignore xe) (simple-vector oxs) (fixnum xs0))
+          (sb-kernel:with-array-data ((oys (op-ys out)) (ys0) (ye))
+            (declare (ignore ye) (simple-vector oys) (fixnum ys0))
+            (sb-kernel:with-array-data ((oon (op-on out)) (on0) (oe))
+              (declare (ignore oe) (simple-vector oon) (fixnum on0))
+              (dotimes (i n)
+                (setf (svref oxs (+ xs0 base i)) (svref xs i)
+                      (svref oys (+ ys0 base i)) (svref ys i)
+                      (svref oon (+ on0 base i)) (svref on i))))))
+        (let ((ends-out (op-ends out)))
+          (let ((first (fill-pointer ends-out)))
+            (grow-fill-pointer ends-out (length ends))
+            (dotimes (c (length ends))
+              (setf (aref ends-out (+ first c)) (+ base (the fixnum (svref ends c))))))))
       phantom)))
 
 (defun component-fields (fd pos)
@@ -333,16 +362,24 @@ or the distance that moves its point ARG2 onto the glyph's point ARG1."
     (values out phantom)))
 
 (defun outline-points->contours (out)
-  (let ((xs (op-xs out)) (ys (op-ys out)) (on (op-on out))
+  (let ((ends (op-ends out))
         (start 0))
     (declare (fixnum start))
-    (map 'vector
-         (lambda (end)
-           (declare (fixnum end))
-           (let ((contour (make-array (max 0 (- (1+ end) start)))))
-             (loop for i of-type fixnum from start to end
-                   for j of-type fixnum from 0
-                   do (setf (svref contour j) (make-control-point (aref xs i) (aref ys i) (aref on i))))
-             (setf start (1+ end))
-             contour))
-         (op-ends out))))
+    (sb-kernel:with-array-data ((xs (op-xs out)) (xs0) (xe))
+      (declare (ignore xe) (simple-vector xs) (fixnum xs0))
+      (sb-kernel:with-array-data ((ys (op-ys out)) (ys0) (ye))
+        (declare (ignore ye) (simple-vector ys) (fixnum ys0))
+        (sb-kernel:with-array-data ((on (op-on out)) (on0) (oe))
+          (declare (ignore oe) (simple-vector on) (fixnum on0))
+          (let ((contours (make-array (length ends))))
+            (dotimes (c (length ends) contours)
+              (let* ((end (aref ends c))
+                     (contour (make-array (max 0 (- (1+ end) start)))))
+                (declare (fixnum end))
+                (loop for i of-type fixnum from start to end
+                      for j of-type fixnum from 0
+                      do (setf (svref contour j)
+                               (make-control-point (svref xs (+ xs0 i)) (svref ys (+ ys0 i))
+                                                   (svref on (+ on0 i)))))
+                (setf start (1+ end))
+                (setf (svref contours c) contour)))))))))

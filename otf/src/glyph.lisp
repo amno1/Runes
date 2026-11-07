@@ -317,17 +317,35 @@ no TrueType glyph variations."
 
 ;;; Zero-copy TrueType contour extraction
 
+(defstruct (outline-tables (:conc-name ot-))
+  "Where the glyph loaders find the glyphs: the loader's accessors are generic
+functions and a table lookup hashes a string, which is too much for each glyph."
+  (fd nil :type runes/otf:font-data)
+  (glyf-offset nil :type (or null (unsigned-byte 32)))
+  (loca-offset nil :type (or null (unsigned-byte 32)))
+  (short-p nil :type boolean))
+
+(declaim (sb-ext:freeze-type outline-tables))
+
+(defun loader-outline-tables (loader)
+  (or (%outline-tables loader)
+      (setf (%outline-tables loader)
+            (let ((glyf (table-info "glyf" loader))
+                  (loca (table-info "loca" loader)))
+              (make-outline-tables :fd (font-data loader)
+                                   :glyf-offset (and glyf (offset glyf))
+                                   :loca-offset (and loca (offset loca))
+                                   :short-p (eql (loca-offset-format loader) :short))))))
+
 (defun glyph-loca-info (loader gid)
   "Offset and length of glyph GID's data in 'glyf', from 'loca'."
   (declare (type (unsigned-byte 32) gid))
-  (let ((loca (table-info "loca" loader)))
-    (if (null loca)
+  (let* ((tables (loader-outline-tables loader))
+         (loc-off (ot-loca-offset tables)))
+    (if (null loc-off)
         (values 0 0)
-        (let ((fd (font-data loader))
-              (loc-off (offset loca))
-              (is-short (eql (loca-offset-format loader) :short)))
-          (declare (type runes/otf:font-data fd) (type (unsigned-byte 32) loc-off))
-          (if is-short
+        (let ((fd (ot-fd tables)))
+          (if (ot-short-p tables)
               (let ((off1 (* (runes/otf:font-data-read-u16 fd (+ loc-off (* gid 2))) 2))
                     (off2 (* (runes/otf:font-data-read-u16 fd (+ loc-off (* (1+ gid) 2))) 2)))
                 (values off1 (- off2 off1)))
