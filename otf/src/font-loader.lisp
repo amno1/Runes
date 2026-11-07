@@ -6,6 +6,10 @@
 
 (defclass font-loader ()
   ((tables :initform (make-hash-table :test 'equal) :reader tables)
+   ;; :GLYF or :CFF once CFF-OUTLINES-P has looked, as it does for every glyph.
+   (outlines-kind :initform nil :accessor %outlines-kind)
+   ;; (TABLE-INFO . GVAR) once GVAR-GLYPH-DATA has read the header, or :NONE.
+   (gvar-cache :initform nil :accessor %gvar-cache)
    (font-data :initarg :font-data :accessor font-data)
    (input-stream :initarg :input-stream :initform nil :accessor input-stream)
    (table-count :initarg :table-count :initform 0 :reader table-count)

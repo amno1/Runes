@@ -16,6 +16,7 @@
   (y nil)
   (on-curve-p nil :read-only t))
 
+(declaim (inline bounded-aref))
 (defun bounded-aref (vector index)
   "Return the element at INDEX, or the last element if INDEX is past the end."
   (declare (type (or null simple-vector) vector) (fixnum index))

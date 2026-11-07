@@ -21,7 +21,12 @@ quadratic curves CONTOURS approximates it with.")
 
 (defun cff-outlines-p (loader)
   "True if LOADER's glyph outlines come from CFF or CFF2 charstrings."
-  (and (null (table-info "glyf" loader)) (cff-table-info loader) t))
+  (let ((kind (%outlines-kind loader)))
+    (if kind
+        (eq kind :cff)
+        (let ((cff (and (null (table-info "glyf" loader)) (cff-table-info loader) t)))
+          (setf (%outlines-kind loader) (if cff :cff :glyf))
+          cff))))
 
 (defun loader-cff-font (loader)
   (or (%cff-font loader)

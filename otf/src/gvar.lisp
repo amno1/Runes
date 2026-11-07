@@ -12,12 +12,28 @@
 
 (in-package #:zpb-ttf)
 
-(declaim (inline f+ f- f* f/ fixed-from-int fixed-round))
-(defun f+ (a b) (runes/otf/charstring::fixed+ a b))
-(defun f- (a b) (runes/otf/charstring::fixed- a b))
-(defun f* (a b) (runes/otf/charstring::fixed* a b))
+(deftype fixed-array ()
+  "16.16 values, each wrapped to 32 bits as Rust's i32 does."
+  '(simple-array (signed-byte 32) (*)))
+
+;; The charstring package's fixed-point operations, inline and typed: the
+;; same results.
+(declaim (inline wrap32 f+ f- f* f/ fixed-from-int fixed-round))
+(defun wrap32 (x)
+  (declare (integer x))
+  (sb-c::mask-signed-field 32 (ldb (byte 32 0) x)))
+(defun f+ (a b) (declare (type (signed-byte 32) a b)) (wrap32 (+ a b)))
+(defun f- (a b) (declare (type (signed-byte 32) a b)) (wrap32 (- a b)))
+(defun f* (a b)
+  "Rounded like FreeType's FT_MulFix."
+  (declare (type (signed-byte 32) a b))
+  (let ((ab (* a b)))
+    (wrap32 (ash (+ ab #x8000 (ash ab -63)) -16))))
 (defun f/ (a b) (runes/otf/charstring::fixed/ a b))
-(defun fixed-from-int (i) (runes/otf/charstring:fixed-from-int i))
+(defun fixed-from-int (i)
+  "Shifted, wrapping like Rust's i << 16."
+  (declare (integer i))
+  (wrap32 (ash (ldb (byte 16 0) i) 16)))
 (defun fixed-round (f) (ash (+ f #x8000) -16))
 
 (define-condition gvar-data-error (error) ()
@@ -61,10 +77,17 @@
 
 (defun gvar-glyph-data (loader gid)
   "The variation data for GID, or NIL if the glyph has none."
-  (let ((info (table-info "gvar" loader)))
-    (when info
-      (let* ((fd (font-data loader))
-             (gvar (runes/otf:read-gvar fd (offset info) (size info))))
+  (let ((cache (or (%gvar-cache loader)
+                   (setf (%gvar-cache loader)
+                         (let ((info (table-info "gvar" loader)))
+                           (if info
+                               (cons info (runes/otf:read-gvar (font-data loader)
+                                                               (offset info) (size info)))
+                               :none))))))
+    (unless (eq cache :none)
+      (let* ((info (car cache))
+             (fd (font-data loader))
+             (gvar (cdr cache)))
         (when (< gid (runes/otf:gvar-glyph-count gvar))
           (flet ((data-position (i)
                    (+ (offset info)
@@ -106,22 +129,25 @@
                                  #x7FFF)))))
     (if (zerop count)
         :all
-        (loop with last = 0
-              with seen = 0
-              with points = (make-array count :fill-pointer 0)
-              while (< seen count)
-              ;; One run: a control byte, then RUN values.  Whole runs are
-              ;; consumed, even one that runs past the count.
-              do (loop with control = (gc-u8 c)
-                       with size = (if (logbitp 7 control) 2 1)
-                       with run = (1+ (logand control #x7F))
-                       for i below run
-                       for v = (gc-int c size nil)
-                       when (< (fill-pointer points) count)
-                         do (setf last (ldb (byte 16 0) (+ last v)))
-                            (vector-push last points)
-                       finally (incf seen run))
-              finally (return points)))))
+        (let ((points (make-array count :element-type '(unsigned-byte 16)))
+              (filled 0)
+              (last 0)
+              (seen 0))
+          (declare (fixnum filled seen) (type (unsigned-byte 16) last))
+          ;; One run: a control byte, then RUN values.  Whole runs are
+          ;; consumed, even one that runs past the count.
+          (loop while (< seen count)
+                do (let* ((control (gc-u8 c))
+                          (size (if (logbitp 7 control) 2 1))
+                          (run (1+ (logand control #x7F))))
+                     (dotimes (i run)
+                       (let ((v (gc-int c size nil)))
+                         (when (< filled count)
+                           (setf last (ldb (byte 16 0) (+ last v)))
+                           (setf (aref points filled) last)
+                           (incf filled))))
+                     (incf seen run)))
+          points))))
 
 (declaim (inline read-delta-run read-run-value scaled-delta add-scaled-delta))
 
@@ -147,6 +173,28 @@ byte width (0 for a run of zeros).  Runs are always read whole."
                 (dotimes (,i ,run)
                   (let ((,value (read-run-value ,c ,width)))
                     ,@body))))))
+
+(defmacro do-dense-deltas ((index delta) c count &body body)
+  "Run BODY for each INDEX below COUNT with its DELTA, read at cursor C; runs
+must fit exactly.  READ-DENSE without the closure."
+  `(let ((cur 0))
+     (declare (fixnum cur))
+     (do-delta-runs (,delta width) ,c (< cur ,count)
+       (when (>= cur ,count) (gvar-fail))   ; a run past COUNT
+       (let ((,index cur)) ,@body)
+       (incf cur))))
+
+(defmacro do-sparse-deltas ((point delta) c points count &body body)
+  "Run BODY for each of the COUNT POINTS with its DELTA, read at cursor C, as
+READ-SPARSE does but without the closure."
+  `(let ((cur 0))
+     (declare (fixnum cur))
+     (do-delta-runs (,delta width) ,c (< cur ,count)
+       (cond ((< cur (length ,points))
+              (let ((,point (aref ,points cur))) ,@body))
+             ;; A zero run needs a point for every value.
+             ((zerop width) (gvar-fail)))
+       (incf cur))))
 
 (defun read-dense (c count fn)
   "Call FN with each index below COUNT and its delta; runs must fit exactly."
@@ -232,23 +280,32 @@ intermediate region as (start . end) or NIL, and the position after it."
 (defun map-active-tuples (data coords fn)
   "Call FN with (scalar points data-cursor) for each tuple that applies at
 COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
-  ;; The headers come one after another, and so do the tuples' data.
-  (loop for i below (glyph-var-data-tuple-count data)
-        for header = (glyph-var-data-headers data) then next-header
-        for (size index peak intermediate next-header)
-          = (multiple-value-list (read-tuple-header data header))
-        for start = (glyph-var-data-serialized data) then end
-        for end = (+ start size)
-        ;; Tuple data past the end of the glyph's data ends the iteration.
-        until (> end (glyph-var-data-serialized-end data))
-        do (let ((scalar (and peak (gvar-tuple-scalar peak intermediate coords))))
-             (when scalar
-               (let ((c (make-gvar-cursor :fd (glyph-var-data-fd data) :pos start :end end)))
-                 (funcall fn scalar
-                          (if (logbitp 13 index)
-                              (read-packed-points c)
-                              (or (glyph-var-data-shared-points data) (gvar-fail)))
-                          c))))))
+  (declare (function fn))
+  ;; The headers come one after another, and so do the tuples' data.  One
+  ;; cursor does for all of them: FN is done with it when it returns.
+  (let ((cursor (make-gvar-cursor :fd (glyph-var-data-fd data)))
+        (header (glyph-var-data-headers data))
+        (start (glyph-var-data-serialized data)))
+    (declare (fixnum header start))
+    (dotimes (i (glyph-var-data-tuple-count data))
+      (multiple-value-bind (size index peak intermediate next-header)
+          (read-tuple-header data header)
+        (declare (fixnum size index next-header))
+        (let ((end (+ start size)))
+          ;; Tuple data past the end of the glyph's data ends the iteration.
+          (when (> end (glyph-var-data-serialized-end data))
+            (return))
+          (let ((scalar (and peak (gvar-tuple-scalar peak intermediate coords))))
+            (when scalar
+              (setf (gc-pos cursor) start
+                    (gc-end cursor) end)
+              (funcall fn scalar
+                       (if (logbitp 13 index)
+                           (read-packed-points cursor)
+                           (or (glyph-var-data-shared-points data) (gvar-fail)))
+                       cursor)))
+          (setf header next-header
+                start end))))))
 
 (defun scaled-delta (delta scalar)
   (declare (type (signed-byte 32) delta scalar))
@@ -260,23 +317,24 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
 
 (defun interpolate-untouched (xs ys out-x out-y touched start end)
   "Infer deltas for the untouched points of the contour START..END (IUP)."
-  (declare (simple-vector xs ys out-x out-y touched) (fixnum start end))
+  (declare (type fixed-array xs ys out-x out-y) (simple-bit-vector touched)
+           (fixnum start end))
   (labels ((interp-coord (in out from to ref1 ref2)
              ;; Points FROM below TO, between references REF1 and REF2 along
              ;; the contour, in one coordinate: IN the original values, OUT
              ;; the moved ones, all 16.16.
-             (declare (simple-vector in out) (fixnum from to ref1 ref2))
-             (loop with swap = (> (svref in ref1) (svref in ref2))
-                   with in1 of-type (signed-byte 32) = (svref in (if swap ref2 ref1))
-                   with in2 of-type (signed-byte 32) = (svref in (if swap ref1 ref2))
-                   with out1 of-type (signed-byte 32) = (svref out (if swap ref2 ref1))
-                   with out2 of-type (signed-byte 32) = (svref out (if swap ref1 ref2))
+             (declare (type fixed-array in out) (fixnum from to ref1 ref2))
+             (loop with swap = (> (aref in ref1) (aref in ref2))
+                   with in1 of-type (signed-byte 32) = (aref in (if swap ref2 ref1))
+                   with in2 of-type (signed-byte 32) = (aref in (if swap ref1 ref2))
+                   with out1 of-type (signed-byte 32) = (aref out (if swap ref2 ref1))
+                   with out2 of-type (signed-byte 32) = (aref out (if swap ref1 ref2))
                    with scale of-type (signed-byte 32) = (if (/= in1 in2) (f/ (f- out2 out1) (f- in2 in1)) 0)
                    ;; References sharing a coordinate but moved apart leave
                    ;; the points alone: an empty range.
                    with stop = (if (or (/= in1 in2) (= out1 out2)) to from)
                    for i of-type fixnum from from below stop
-                   for coord of-type (signed-byte 32) = (svref in i)
+                   for coord of-type (signed-byte 32) = (aref in i)
                    do (setf (aref out i)
                             (cond ((<= coord in1) (f+ coord (f- out1 in1)))
                                   ((>= coord in2) (f+ coord (f- out2 in2)))
@@ -284,7 +342,7 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
            (interp (from to ref1 ref2)
              (interp-coord xs out-x from to ref1 ref2)
              (interp-coord ys out-y from to ref1 ref2)))
-    (let ((refs (loop for i from start to end when (aref touched i) collect i)))
+    (let ((refs (loop for i from start to end when (= 1 (sbit touched i)) collect i)))
       (cond
         ((null refs))
         ;; A single reference carries the whole contour with it.
@@ -311,14 +369,23 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
   (declare (simple-vector vector) (fixnum i))
   (setf (aref vector i) (f+ (aref vector i) (scaled-delta delta scalar))))
 
+(declaim (inline add-fixed-delta))
+(defun add-fixed-delta (array i delta scalar)
+  "ARRAY's element I plus DELTA scaled by SCALAR, as ADD-SCALED-DELTA, for
+the typed arrays of the glyph path."
+  (declare (type fixed-array array) (fixnum i) (type (signed-byte 32) delta scalar))
+  (setf (aref array i) (f+ (aref array i) (scaled-delta delta scalar))))
+
 (defun add-dense-deltas (c scalar dx dy)
   "Add a tuple's deltas for every point, read at cursor C, to DX and DY."
+  (declare (gvar-cursor c) (type (signed-byte 32) scalar) (type fixed-array dx dy))
   (let ((n (length dx)))
-    (read-dense c n (lambda (i d) (add-scaled-delta dx i d scalar)))
-    (read-dense c n (lambda (i d) (add-scaled-delta dy i d scalar)))))
+    (do-dense-deltas (i d) c n (add-fixed-delta dx i d scalar))
+    (do-dense-deltas (i d) c n (add-fixed-delta dy i d scalar))))
 
 (defun interpolate-contours (fx fy out-x out-y touched ends)
   "Infer the deltas of the untouched points of every contour (IUP)."
+  (declare (type fixed-array fx fy out-x out-y) (simple-bit-vector touched))
   (loop with start = 0
         for end in ends
         ;; A contour ending before the previous one is skipped.
@@ -331,20 +398,22 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
   "Add a tuple's deltas for POINTS, read at cursor C, to DX and DY, with
 those of the other points inferred from them.  FX and FY are the points'
 16.16 coordinates."
-  (let ((n (length fx))
-        (out-x (copy-seq fx))
-        (out-y (copy-seq fy))
-        (touched (make-array (length fx) :initial-element nil)))
+  (declare (gvar-cursor c) (type (signed-byte 32) scalar)
+           (type (simple-array (unsigned-byte 16) (*)) points)
+           (type fixed-array fx fy dx dy))
+  (let* ((n (length fx))
+         (out-x (copy-seq fx))
+         (out-y (copy-seq fy))
+         (touched (make-array n :element-type 'bit :initial-element 0)))
+    (declare (type fixed-array out-x out-y))
     ;; Point numbers past the glyph's points are skipped.
-    (read-sparse c points (length points)
-                 (lambda (i d)
-                   (when (< i n)
-                     (add-scaled-delta out-x i d scalar)
-                     (setf (aref touched i) t))))
-    (read-sparse c points (length points)
-                 (lambda (i d)
-                   (when (< i n)
-                     (add-scaled-delta out-y i d scalar))))
+    (do-sparse-deltas (i d) c points (length points)
+      (when (< i n)
+        (add-fixed-delta out-x i d scalar)
+        (setf (sbit touched i) 1)))
+    (do-sparse-deltas (i d) c points (length points)
+      (when (< i n)
+        (add-fixed-delta out-y i d scalar)))
     (interpolate-contours fx fy out-x out-y touched ends)
     (dotimes (i n)
       (setf (aref dx i) (f+ (aref dx i) (f- (aref out-x i) (aref fx i)))
@@ -352,13 +421,17 @@ those of the other points inferred from them.  FX and FY are the points'
 
 (defun simple-glyph-deltas (data coords xs ys ends)
   "16.16 deltas for every point of a simple glyph, phantom points included,
-as two vectors; XS and YS are the font unit coordinates of all its points
+as two arrays; XS and YS are the font unit coordinates of all its points
 and ENDS its contour end points. NIL if the data is malformed."
+  (declare (simple-vector xs ys))
   (let* ((n (length xs))
-         (dx (make-array n :initial-element 0))
-         (dy (make-array n :initial-element 0))
-         (fx (map 'vector #'fixed-from-int xs))
-         (fy (map 'vector #'fixed-from-int ys)))
+         (dx (make-array n :element-type '(signed-byte 32) :initial-element 0))
+         (dy (make-array n :element-type '(signed-byte 32) :initial-element 0))
+         (fx (make-array n :element-type '(signed-byte 32)))
+         (fy (make-array n :element-type '(signed-byte 32))))
+    (dotimes (i n)
+      (setf (aref fx i) (fixed-from-int (svref xs i))
+            (aref fy i) (fixed-from-int (svref ys i))))
     (handler-case
         (progn
           (map-active-tuples data coords
@@ -387,14 +460,14 @@ and DY.  Positions past the components, or without a y delta, are skipped."
         for position in positions
         for i from 0
         when (and (< position (length dx)) (< (+ half i) (length deltas)))
-          do (add-scaled-delta dx position (aref deltas i) scalar)
-             (add-scaled-delta dy position (aref deltas (+ half i)) scalar)))
+          do (add-fixed-delta dx position (aref deltas i) scalar)
+             (add-fixed-delta dy position (aref deltas (+ half i)) scalar)))
 
 (defun composite-glyph-deltas (data coords count)
   "16.16 deltas for the COUNT components and phantom points of a composite
 glyph, as two vectors; NIL if the data is malformed."
-  (let ((dx (make-array count :initial-element 0))
-        (dy (make-array count :initial-element 0)))
+  (let ((dx (make-array count :element-type '(signed-byte 32) :initial-element 0))
+        (dy (make-array count :element-type '(signed-byte 32) :initial-element 0)))
     (handler-case
         (progn
           (map-active-tuples data coords

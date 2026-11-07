@@ -22,6 +22,8 @@
   ;; End point of each contour, as indices into the arrays above.
   (ends (make-array 8 :adjustable t :fill-pointer 0) :type growable-vector))
 
+(declaim (sb-ext:freeze-type outline-points))
+
 (defun loader-gvar-coords (loader)
   "The instance as raw 2.14 coordinates when 'gvar' applies to it, else NIL."
   (let ((coords (normalized-coordinates loader)))

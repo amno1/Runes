@@ -1,0 +1,88 @@
+;;;; hint_bench.lisp — TrueType hinting speed of runes/otf
+;;;; Copyright (C) 2026 Arthur Miller and contributors
+;;;; SPDX-License-Identifier: MIT
+
+;;; Prints one row per benchmark, "NAME OPERATIONS TIME ms", in the format
+;;; bench3x3.py reads.  An operation is one glyph hinted at one size, the
+;;; engine for that size already made and the glyph's data already in
+;;; memory, as FreeType's FT_Load_Glyph is timed in ft_hint_bench.c.
+
+(require :asdf)
+(ignore-errors (load "~/quicklisp/setup.lisp"))
+(let ((root (merge-pathnames "../../" (make-pathname :name nil :type nil :defaults *load-truename*))))
+  (push root asdf:*central-registry*)
+  (push (merge-pathnames "decompress/" root) asdf:*central-registry*))
+(asdf:load-system :zpb-ttf)
+
+(defparameter *fonts-dir*
+  (merge-pathnames "../tests/fonts/" (make-pathname :name nil :type nil :defaults *load-truename*)))
+
+(defparameter *dejavu*
+  (find-if #'probe-file '("/usr/share/fonts/TTF/DejaVuSans.ttf"
+                          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+                          "/usr/share/fonts/dejavu/DejaVuSans.ttf")))
+
+(defparameter *repetitions* 20)
+
+(defun now-ms ()
+  "The monotonic clock, in milliseconds, to the nanosecond."
+  (multiple-value-bind (seconds nanoseconds) (sb-unix:clock-gettime sb-unix:clock-monotonic)
+    (+ (* seconds 1000d0) (/ nanoseconds 1d6))))
+
+;; Each row allocates tens of megabytes (the outlines it returns).  A collection
+;; falling inside one row and not the next would show as a difference of the
+;; hinting, so a collection runs before each row and the nursery is large
+;; enough that none runs during it.
+(setf (sb-ext:bytes-consed-between-gcs) (* 512 1024 1024))
+
+(defun time-ms (thunk)
+  (sb-ext:gc :full t)
+  (let ((start (now-ms)))
+    (funcall thunk)
+    (- (now-ms) start)))
+
+(defun row (name operations ms)
+  (format t "~a ~d ~,3f ms~%" name operations ms))
+
+(defun bench-hint-outlines (name path ppem glyph-count)
+  (zpb-ttf:with-font-loader (loader path)
+    (let ((n (min glyph-count (zpb-ttf:glyph-count loader))))
+      ;; Warm up: the engine for the size, and the code paths.
+      (dotimes (g n) (zpb-ttf:hint-outline-26dot6 loader g ppem))
+      (row name (* n *repetitions*)
+           (time-ms (lambda ()
+                      (dotimes (r *repetitions*)
+                        (dotimes (g n)
+                          (zpb-ttf:hint-outline-26dot6 loader g ppem)))))))))
+
+(defun bench-hinted-contours (name path ppem glyph-count)
+  "What a renderer calls: the contours as control points."
+  (zpb-ttf:with-font-loader (loader path)
+    (let* ((n (min glyph-count (zpb-ttf:glyph-count loader)))
+           (glyphs (loop for g below n collect (zpb-ttf:index-glyph g loader))))
+      (dolist (g glyphs) (zpb-ttf:hinted-contours g ppem))
+      (row name (* n *repetitions*)
+           (time-ms (lambda ()
+                      (dotimes (r *repetitions*)
+                        (dolist (g glyphs) (zpb-ttf:hinted-contours g ppem)))))))))
+
+(defun bench-hinted-advances (name path ppem glyph-count)
+  (zpb-ttf:with-font-loader (loader path)
+    (let* ((n (min glyph-count (zpb-ttf:glyph-count loader)))
+           (glyphs (loop for g below n collect (zpb-ttf:index-glyph g loader))))
+      (dolist (g glyphs) (zpb-ttf:hinted-advance-width g ppem))
+      (row name (* n *repetitions*)
+           (time-ms (lambda ()
+                      (dotimes (r *repetitions*)
+                        (dolist (g glyphs) (zpb-ttf:hinted-advance-width g ppem)))))))))
+
+(let ((liberation (namestring (merge-pathnames "LiberationSans-Regular.ttf" *fonts-dir*))))
+  (when *dejavu*
+    (bench-hint-outlines "dejavu-9" *dejavu* 9 4000)
+    (bench-hint-outlines "dejavu-16" *dejavu* 16 4000)
+    (bench-hint-outlines "dejavu-32" *dejavu* 32 4000))
+  (bench-hint-outlines "liberation-12" liberation 12 2500)
+  ;; Rows with no FreeType counterpart: what a renderer asks for.
+  (when *dejavu*
+    (bench-hinted-contours "dejavu-16-contours" *dejavu* 16 4000)
+    (bench-hinted-advances "dejavu-16-advances" *dejavu* 16 4000)))

@@ -169,8 +169,9 @@
   (tables nil)
   (rotated-p nil :type boolean)
   (stretched-p nil :type boolean)
-  (axis-coords #() :type simple-vector)
-  (ops-executed 0 :type fixnum))
+  (axis-coords #() :type simple-vector))
+
+(declaim (sb-ext:freeze-type value-stack fn-def call-record tt-engine))
 
 (defun make-tt-engine (&key (max-stack 256) (max-storage 64) (max-fdefs 64)
                             (max-idefs 8) (max-twilight 32) (cvt-len 0))
@@ -292,15 +293,15 @@
   (declare (tt-engine eng) (type program-id prog-id) (fixnum start)
            (optimize (speed 3) (safety 1)))
   (let* ((bytes (svref (eng-programs eng) prog-id))
-         (end (or end (length bytes))))
-    (declare (fixnum end))
+         (end (or end (length bytes)))
+         (executed 0))
+    (declare (fixnum end executed))
     (when (> end start)
       (setf (eng-call-top eng) 0
-            (eng-ops-executed eng) 0
             (eng-glyph-base eng) start)
       (select-program eng prog-id start end)
       (loop while (< (eng-pc eng) (eng-end eng))
-            do (when (> (incf (eng-ops-executed eng)) +max-instructions+)
+            do (when (> (incf executed) +max-instructions+)
                  (hint-fail 'tt-hint-limit-exceeded "Exceeded maximum instruction count"))
                (let ((op (fetch-u8 eng)))
                  (dispatch-instruction eng op)

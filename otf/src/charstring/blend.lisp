@@ -19,12 +19,16 @@
 
 (defun fixed-mul-div (a b c)
   "A * B / C, rounded, like font-types' Fixed::mul_div (FreeType's FT_MulDiv)."
-  (declare (type (signed-byte 32) a b c))
-  (let* ((sign (if (oddp (count-if #'minusp (list a b c))) -1 1))
+  (declare (type (signed-byte 32) a b c) (optimize (speed 3)))
+  (let* ((negative (oddp (+ (if (minusp a) 1 0) (if (minusp b) 1 0) (if (minusp c) 1 0))))
+         ;; At most 2^62 + 2^30: 63 bits.
          (result (if (zerop c)
                      #x7FFFFFFF
-                     (floor (+ (* (abs a) (abs b)) (ash (abs c) -1)) (abs c)))))
-    (s32 (* sign (s32 result)))))
+                     (values (floor (the (unsigned-byte 63)
+                                         (+ (* (abs a) (abs b)) (ash (abs c) -1)))
+                                    (abs c))))))
+    (declare (type (unsigned-byte 63) result))
+    (s32 (if negative (- (s32 result)) (s32 result)))))
 
 (defun region-scalar (font-data region-pos axis-count coords)
   "Scalar of the VariationRegion at REGION-POS for COORDS, a vector of raw

@@ -171,6 +171,11 @@ arithmetic), so that the result agrees with its to the last bit."
   (declare (round-state rs) (s32 distance compensation) (optimize (speed 3) (safety 0)))
   (let ((mode (rs-mode rs)))
     (case mode
+      ;; The usual one first: as the general case below, without its dispatch.
+      (:to-grid
+       (if (>= distance 0)
+           (max 0 (logand (f26+ (f26+ distance compensation) 32) -64))
+           (f26-neg (max 0 (logand (f26+ (f26+ (f26-neg distance) compensation) 32) -64)))))
       (:off distance)
       ((:super :super-45)
        ;; FreeType's Round_Super and Round_Super_45: the period is a power of
@@ -325,6 +330,15 @@ reusing existing buffers in place when large enough."
   (dual-y 0      :type s32)
   (free-x #x4000 :type s32)
   (free-y 0      :type s32)
+  ;; What the three vectors come to, kept up to date by UPDATE-PROJECTION-STATE
+  ;; wherever one is set: 0 for the x axis, 1 for the y axis, 2 for any other;
+  ;; whether a move along the freedom vector is a move along an axis
+  ;; projected on itself; and the freedom vector dotted with the projection
+  ;; vector, FDOTP.  Moving a point reads them for each point.
+  (proj-axis 0 :type (integer 0 2))
+  (dual-axis 0 :type (integer 0 2))
+  (move-aligned t :type boolean)
+  (fdotp #x4000 :type s32)
   (rp0 0 :type fixnum)
   (rp1 0 :type fixnum)
   (rp2 0 :type fixnum)
@@ -347,6 +361,32 @@ reusing existing buffers in place when large enough."
   (did-iup-y nil :type boolean)
   (round-state (make-round-state) :type round-state))
 
+;; Nothing subtypes these: say so, and a type test is one comparison.
+(declaim (sb-ext:freeze-type round-state tt-zone graphics-state))
+
+(defun update-projection-state (gs)
+  "Recompute the cached axis and FDOTP of the graphics state GS after one of
+its vectors changed.  The rules are FreeType's Compute_Funcs and the clamp of
+a too small FDOTP."
+  (declare (graphics-state gs) (optimize (speed 3) (safety 0)))
+  (let* ((px (gs-proj-x gs)) (py (gs-proj-y gs))
+         (dx (gs-dual-x gs)) (dy (gs-dual-y gs))
+         (fx (gs-free-x gs)) (fy (gs-free-y gs))
+         (raw (cond ((= fx #x4000) px)
+                    ((= fy #x4000) py)
+                    (t (dot-f2dot14 fx fy px py)))))
+    (declare (s32 raw))
+    (setf (gs-proj-axis gs) (cond ((and (= px #x4000) (zerop py)) 0)
+                                  ((and (zerop px) (= py #x4000)) 1)
+                                  (t 2))
+          (gs-dual-axis gs) (cond ((and (= dx #x4000) (zerop dy)) 0)
+                                  ((and (zerop dx) (= dy #x4000)) 1)
+                                  (t 2))
+          (gs-move-aligned gs) (and (= raw #x4000) (or (= fx #x4000) (= fy #x4000)))
+          ;; At small sizes FDOTP can become too small and cause spikes.
+          (gs-fdotp gs) (if (< (abs raw) #x400) #x4000 raw))
+    gs))
+
 (defun reset-graphics-state-per-glyph (gs default-gs)
   (declare (graphics-state gs default-gs))
   (let ((source (if (logbitp 1 (gs-instruct-control default-gs))
@@ -357,6 +397,9 @@ reusing existing buffers in place when large enough."
     (setf (gs-proj-x gs) #x4000 (gs-proj-y gs) 0
           (gs-dual-x gs) #x4000 (gs-dual-y gs) 0
           (gs-free-x gs) #x4000 (gs-free-y gs) 0
+          ;; All three are the x axis: see UPDATE-PROJECTION-STATE.
+          (gs-proj-axis gs) 0 (gs-dual-axis gs) 0
+          (gs-move-aligned gs) t (gs-fdotp gs) #x4000
           (gs-rp0 gs) 0 (gs-rp1 gs) 0 (gs-rp2 gs) 0
           (gs-zp0 gs) 1 (gs-zp1 gs) 1 (gs-zp2 gs) 1
           (gs-loop gs) 1
@@ -372,10 +415,18 @@ reusing existing buffers in place when large enough."
           (gs-scan-type gs)              (gs-scan-type source)
           (gs-instruct-control gs)       (gs-instruct-control source)
           (gs-backward-compatibility gs) (gs-backward-compatibility source)
-          (gs-round-state gs)            (copy-structure (gs-round-state source)))
+          )
+    ;; The round state is copied into the one GS has, which no other state
+    ;; shares (see MAKE-TT-HINT-ENGINE), not into a new one.
+    (let ((rs (gs-round-state gs)) (from (gs-round-state source)))
+      (setf (rs-mode rs) (rs-mode from)
+            (rs-threshold rs) (rs-threshold from)
+            (rs-phase rs) (rs-phase from)
+            (rs-period rs) (rs-period from)))
     gs))
 
 ;;; Function types, for callers in the files after this one.
 (declaim (ftype (function (round-state s32 s32) s32) round-according-to-state)
+         (ftype (function (graphics-state) graphics-state) update-projection-state)
          (ftype (function (graphics-state graphics-state) graphics-state)
                 reset-graphics-state-per-glyph))
