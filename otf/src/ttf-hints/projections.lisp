@@ -10,11 +10,12 @@
 
 (declaim (ftype (function (graphics-state tt-zone fixnum) s32)
                 zone-project-cur zone-dual-project-orig)
+         (ftype (function (graphics-state tt-zone fixnum tt-zone fixnum &optional t) s32)
+                zone-project-cur-diff zone-dual-project-orig-diff)
          (ftype (function (graphics-state tt-zone fixnum tt-zone fixnum) s32)
-                zone-project-cur-diff zone-dual-project-orig-diff
                 zone-dual-project-unscaled)
          (ftype (function (graphics-state tt-zone (integer 0 1) fixnum s32
-                           &key (:touch t))
+                           t)
                           t)
                 move-zone-point))
 
@@ -55,23 +56,26 @@
   (zone-check-point zone pt)
   (dual-project-point gs (aref (zone-orig-x zone) pt) (aref (zone-orig-y zone) pt)))
 
-(defun zone-project-cur-diff (gs zone1 pt1 zone2 pt2)
+(defun zone-project-cur-diff (gs zone1 pt1 zone2 pt2 &optional (check t))
   "The distance from PT2 of ZONE2 to PT1 of ZONE1, current positions, along
 the projection vector: the difference projected, as FreeType and skrifa do,
-which rounds once, not the difference of two projected positions."
+which rounds once, not the difference of two projected positions.  With CHECK
+false the caller has checked the point indices."
   (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2))
-  (zone-check-point zone1 pt1)
-  (zone-check-point zone2 pt2)
+  (when check
+    (zone-check-point zone1 pt1)
+    (zone-check-point zone2 pt2))
   (project-point gs
                  (f26- (aref (zone-cur-x zone1) pt1) (aref (zone-cur-x zone2) pt2))
                  (f26- (aref (zone-cur-y zone1) pt1) (aref (zone-cur-y zone2) pt2))))
 
-(defun zone-dual-project-orig-diff (gs zone1 pt1 zone2 pt2)
+(defun zone-dual-project-orig-diff (gs zone1 pt1 zone2 pt2 &optional (check t))
   "As ZONE-PROJECT-CUR-DIFF, for the original positions and the dual
 projection vector."
   (declare (graphics-state gs) (tt-zone zone1 zone2) (fixnum pt1 pt2))
-  (zone-check-point zone1 pt1)
-  (zone-check-point zone2 pt2)
+  (when check
+    (zone-check-point zone1 pt1)
+    (zone-check-point zone2 pt2))
   (dual-project-point gs
                       (f26- (aref (zone-orig-x zone1) pt1) (aref (zone-orig-x zone2) pt2))
                       (f26- (aref (zone-orig-y zone1) pt1) (aref (zone-orig-y zone2) pt2))))
@@ -86,7 +90,7 @@ the dual projection vector."
                       (f26- (aref (zone-unscaled-x zone1) pt1) (aref (zone-unscaled-x zone2) pt2))
                       (f26- (aref (zone-unscaled-y zone1) pt1) (aref (zone-unscaled-y zone2) pt2))))
 
-(defun move-zone-point (gs zone zone-id pt distance &key (touch t))
+(defun move-zone-point (gs zone zone-id pt distance touch)
   "Move point PT in ZONE by DISTANCE along the Freedom Vector so its projection
 changes by DISTANCE.  As FreeType's Direct_Move and skrifa's move_point, in
 v40 backward compatibility mode x is never moved (except along a horizontal
@@ -99,23 +103,24 @@ projection vector) and y is not moved once IUP has run on both axes."
          (fy (gs-free-y gs))
          (axis-aligned (gs-move-aligned gs))
          (fdotp (gs-fdotp gs))
-         (bc (gs-backward-compatibility gs))
-         (post-iup (and bc (gs-did-iup-x gs) (gs-did-iup-y gs)))
-         (horizontal (zerop (gs-proj-y gs))))
+         (bc (gs-backward-compatibility gs)))
     (declare (s32 fdotp))
+    ;; What only some moves need is looked at only when they do.
     (flet ((delta (f)
              (declare (s32 f))
-             (if axis-aligned distance (mul-div distance f fdotp))))
-      (declare (inline delta))
+             (if axis-aligned distance (mul-div distance f fdotp)))
+           (horizontal-p () (zerop (gs-proj-y gs)))
+           (post-iup-p () (and bc (gs-did-iup-x gs) (gs-did-iup-y gs))))
+      (declare (inline delta horizontal-p post-iup-p))
       (when (not (zerop fx))
-        (when (or (not bc) (and horizontal (not axis-aligned)))
+        (when (or (not bc) (and (not axis-aligned) (horizontal-p)))
           (setf (aref (zone-cur-x zone) pt)
                 (f26+ (aref (zone-cur-x zone) pt) (delta fx))))
         (when touch
           (setf (aref (zone-flags zone) pt)
                 (logior (aref (zone-flags zone) pt) +point-touched-x+))))
       (when (not (zerop fy))
-        (when (or (not post-iup) (and horizontal (not axis-aligned)))
+        (when (or (not (post-iup-p)) (and (not axis-aligned) (horizontal-p)))
           (setf (aref (zone-cur-y zone) pt)
                 (f26+ (aref (zone-cur-y zone) pt) (delta fy))))
         (when touch

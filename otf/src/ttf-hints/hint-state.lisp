@@ -279,6 +279,7 @@ arithmetic), so that the result agrees with its to the last bit."
   (n-glyph-points 0 :type fixnum)
   (n-contours 0 :type fixnum))
 
+(declaim (inline ensure-zone-capacity))
 (defun ensure-zone-capacity (zone needed-points needed-contours &key (n-glyph-points needed-points))
   "Ensure ZONE's underlying arrays can hold NEEDED-POINTS and NEEDED-CONTOURS,
 reusing existing buffers in place when large enough."
