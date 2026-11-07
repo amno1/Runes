@@ -8,3 +8,4 @@ doc/runes.pdf
 
 # Built by otf/bench/run_comparison.sh with -march=native: not portable
 otf/bench/ft_hint_bench
+otf/bench/ft_open_bench
