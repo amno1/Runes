@@ -4,12 +4,22 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (defmethod print-object ((control-point control-point) stream)
   (print-unreadable-object (control-point stream :type t)
     (format stream "~D,~D~:[~;*~]"
             (x control-point) (y control-point) (on-curve-p control-point))))
 
 ;;; Contour iteration macros
+
+(declaim (inline contour-midpoint))
+(defun contour-midpoint (p0 p1)
+  ;; Control point coordinates may be integers, ratios or floats.
+  (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (make-control-point (/ (+ (x p0) (x p1)) 2)
+                      (/ (+ (y p0) (y p1)) 2)
+                      t))
 
 (defmacro do-contour-segments* ((p1 p2) contour &body body)
   (let ((length (gensym))
@@ -25,9 +35,11 @@
         (mid p1)
         (end p2))
     `(let* ((,i 1)
-            (,contour* ,contour)
+            (,contour* (the simple-vector ,contour))
             (,length (length ,contour*))
             ,stack ,next ,mid ,end)
+       (declare (type simple-vector ,contour*)
+                (type fixnum ,i ,length))
        (unless (zerop ,length)
          (unless (on-curve-p (aref ,contour* 0))
            (setf ,stack (aref ,contour* 0)))
@@ -35,9 +47,7 @@
                   (when (< ,i ,length)
                     (prog1 (aref ,contour* ,i) (incf ,i))))
                 (,midpoint (p0 p1)
-                  (make-control-point (/ (+ (x p0) (x p1)) 2)
-                                      (/ (+ (y p0) (y p1)) 2)
-                                      t)))
+                  (contour-midpoint p0 p1)))
            (tagbody
               ,loop
               (setf ,mid nil
@@ -71,15 +81,14 @@
               ,done-tag))))))
 
 (defun start-of-contour (contour)
+  (declare (type simple-vector contour))
   (let ((first (aref contour 0)))
-   (if (on-curve-p first)
-       first
-       (let ((last (aref contour (1- (length contour)))))
-         (if (on-curve-p last)
-             last
-             (make-control-point (/ (+ (x first) (x last)) 2)
-                                 (/ (+ (y first) (y last)) 2)
-                                 t))))))
+    (if (on-curve-p first)
+        first
+        (let ((last (aref contour (1- (length contour)))))
+          (if (on-curve-p last)
+              last
+              (contour-midpoint first last))))))
 
 (defmacro do-contour-segments ((p0 p1 p2) contour &body body)
   "A contour is made up of segments. A segment may be a straight line
@@ -88,7 +97,8 @@ start and end points of the segment. If the segment is a curve, set P1
 to the control point of the curve, otherwise set P1 to NIL."
   (let ((start p0)
         (contour* (gensym "CONTOUR")))
-    `(let ((,contour* ,contour))
+    `(let ((,contour* (the simple-vector ,contour)))
+       (declare (type simple-vector ,contour*))
        (when (plusp (length ,contour*))
          (let ((,start (start-of-contour ,contour*)))
            (do-contour-segments* (,p1 ,p2)
@@ -97,28 +107,44 @@ to the control point of the curve, otherwise set P1 to NIL."
              (setf ,start ,p2)))))))
 
 (defun explicit-contour-points (contour)
-  (let ((new-contour (make-array (length contour)
-                                 :adjustable t
-                                 :fill-pointer 0)))
-    (when (and (plusp (length contour))
-               (on-curve-p (aref contour 0)))
-      (vector-push-extend (aref contour 0) new-contour))
-    (do-contour-segments* (p1 p2)
-        contour
-      (when p1
-        (vector-push-extend p1 new-contour))
-      (unless (eql p2 (aref contour 0))
-        (vector-push-extend p2 new-contour)))
-    new-contour))
+  (declare (type simple-vector contour))
+  (let* ((len (length contour))
+         (buf (make-array (* 2 len)))
+         (out 0))
+    (declare (type simple-vector buf)
+             (type fixnum len out))
+    (flet ((emit (pt)
+             (when (>= out (length buf))
+               (let ((grown (make-array (max 4 (* 2 (length buf))))))
+                 (replace grown buf)
+                 (setf buf grown)))
+             (setf (aref buf out) pt)
+             (incf out)))
+      (when (and (plusp len)
+                 (on-curve-p (aref contour 0)))
+        (emit (aref contour 0)))
+      (do-contour-segments* (p1 p2)
+          contour
+        (when p1
+          (emit p1))
+        (unless (eql p2 (aref contour 0))
+          (emit p2)))
+      (subseq buf 0 out))))
 
 (defun explicit-contours (glyph)
-  (map 'vector #'explicit-contour-points (contours glyph)))
+  (let* ((cs (the simple-vector (contours glyph)))
+         (n (length cs))
+         (res (make-array n)))
+    (dotimes (i n res)
+      (setf (aref res i) (explicit-contour-points (aref cs i))))))
 
 (defparameter *empty-contours*
   (make-array 0 :element-type t))
+(declaim (type simple-vector *empty-contours*))
 
 (defparameter *empty-bounding-box*
-  (make-array 4 :initial-element 0 :element-type '(signed-byte 16)))
+  (vector 0 0 0 0))
+(declaim (type simple-vector *empty-bounding-box*))
 
 (defun empty-bounding-box ()
   (copy-seq *empty-bounding-box*))
@@ -167,17 +193,20 @@ to the control point of the curve, otherwise set P1 to NIL."
 
 ;;; Glyph metrics
 
+(declaim (ftype (function (glyph) (values (or null simple-vector) &optional))
+                varied-phantom-points))
 (defun varied-phantom-points (glyph)
   "GLYPH's phantom points at its loader's instance, or NIL when the font has
 no TrueType glyph variations."
   (when (table-info "gvar" (font-loader glyph))
     (contours glyph)
-    (%phantom-points glyph)))
+    (the (values (or null simple-vector) &optional) (%phantom-points glyph))))
 
 (defgeneric left-side-bearing (object)
   (:method ((glyph glyph))
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
     (let* ((loader (font-loader glyph))
-           (gid (font-index glyph))
+           (gid (the (values fixnum &optional) (font-index glyph)))
            (lsb (horizontal-bearing loader gid)))
       (if (null (normalized-coordinates loader))
           lsb
@@ -192,23 +221,28 @@ no TrueType glyph variations."
 
 (defgeneric advance-width (object)
   (:method ((glyph glyph))
-    (let ((loader (font-loader glyph)))
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+    (let ((loader (font-loader glyph))
+          (gid (the (values fixnum &optional) (font-index glyph))))
       (cond
         ((null (normalized-coordinates loader))
-         (horizontal-advance loader (font-index glyph)))
+         (horizontal-advance loader gid))
         ;; Without HVAR, a TrueType instance takes its advance from the
         ;; varied phantom points.
         ((and (table-info "gvar" loader) (not (table-info "HVAR" loader)))
          (let ((phantom (varied-phantom-points glyph)))
-           (- (car (aref phantom 1)) (car (aref phantom 0)))))
+           (if phantom
+               (- (car (aref phantom 1)) (car (aref phantom 0)))
+               (horizontal-advance loader gid))))
         (t
-         (+ (horizontal-advance loader (font-index glyph))
-            (advance-width-delta loader (font-index glyph))))))))
+         (+ (horizontal-advance loader gid)
+            (advance-width-delta loader gid)))))))
 
 (defgeneric top-side-bearing (object)
   (:method ((glyph glyph))
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
     (let ((loader (font-loader glyph))
-          (gid (font-index glyph)))
+          (gid (the (values fixnum &optional) (font-index glyph))))
       (if (vmtx-missing-p loader)
           (- (ascender loader) (ymax glyph))
           (let ((tsb (vertical-bearing loader gid)))
@@ -222,20 +256,24 @@ no TrueType glyph variations."
 
 (defgeneric advance-height (object)
   (:method ((glyph glyph))
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
     (let* ((loader (font-loader glyph))
-           (gid (font-index glyph))
+           (gid (the (values fixnum &optional) (font-index glyph)))
            (advance (vertical-advance loader gid)))
       (cond
         ((or (null (normalized-coordinates loader)) (vmtx-missing-p loader))
          advance)
         ((and (table-info "gvar" loader) (not (table-info "VVAR" loader)))
          (let ((phantom (varied-phantom-points glyph)))
-           (- (cdr (aref phantom 2)) (cdr (aref phantom 3)))))
+           (if phantom
+               (- (cdr (aref phantom 2)) (cdr (aref phantom 3)))
+               advance)))
         (t
          (+ advance (advance-height-delta loader gid)))))))
 
 (defgeneric right-side-bearing (object)
   (:method ((glyph glyph))
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
     (- (advance-width glyph)
        (- (+ (left-side-bearing glyph) (xmax glyph))
           (xmin glyph)))))
@@ -246,16 +284,16 @@ no TrueType glyph variations."
                            (font-loader font-loader))
   ;; From 'GPOS' when it has 'kern' lookups, as HarfBuzz does, else from
   ;; the 'kern' table.
-  (let ((key (logior (ash (font-index left-glyph) 16)
-                     (font-index right-glyph))))
+  (let* ((left-idx (the (values (unsigned-byte 16) &optional) (font-index left-glyph)))
+         (right-idx (the (values (unsigned-byte 16) &optional) (font-index right-glyph)))
+         (key (logior (ash left-idx 16) right-idx)))
     (if (gpos-kern-lookups font-loader)
         (let ((cache (gpos-kerning-cache font-loader)))
           (multiple-value-bind (value found) (gethash key cache)
             (if found
                 value
                 (setf (gethash key cache)
-                      (handler-case (gpos-kerning font-loader (font-index left-glyph)
-                                                  (font-index right-glyph))
+                      (handler-case (gpos-kerning font-loader left-idx right-idx)
                         ;; Unreadable data gives no kerning.
                         (runes/otf:font-error () 0))))))
         (gethash key (kerning-table font-loader) 0))))
@@ -276,16 +314,18 @@ no TrueType glyph variations."
 
 (defgeneric kerned-advance-width (object next)
   (:method ((object glyph) next)
+    (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
     (+ (advance-width object)
        (kerning-offset object next (font-loader object)))))
 
 (defgeneric contour-count (object)
   (:method (object)
-    (length (contours object))))
+    (length (the simple-vector (contours object)))))
 
 (defgeneric contour (object index)
   (:method (object index)
-    (aref (contours object) index)))
+    (declare (type fixnum index))
+    (aref (the simple-vector (contours object)) index)))
 
 (defmacro do-contours ((contour object &optional result) &body body)
   (let ((i (gensym))
@@ -297,17 +337,19 @@ no TrueType glyph variations."
 
 (defgeneric string-bounding-box (string loader &key kerning)
   (:method (string (loader font-loader) &key (kerning t))
+    (declare (type string string)
+             (sb-ext:muffle-conditions sb-ext:compiler-note))
     (if (zerop (length string))
         (empty-bounding-box)
         (let* ((g1 (find-glyph (char string 0) loader))
-               (bbox (copy-seq (bounding-box g1)))
+               (bbox (copy-seq (the simple-vector (bounding-box g1))))
                (x 0))
           (loop for i from 1 below (length string)
                 for g2 = (find-glyph (char string i) loader)
                 do (incf x (advance-width g1))
                    (when kerning
                      (incf x (kerning-offset g1 g2 loader)))
-                   (let ((gb (bounding-box g2)))
+                   (let ((gb (the simple-vector (bounding-box g2))))
                      (setf (xmin bbox) (min (xmin bbox) (+ x (xmin gb)))
                            (ymin bbox) (min (ymin bbox) (ymin gb))
                            (xmax bbox) (max (xmax bbox) (+ x (xmax gb)))
@@ -327,6 +369,7 @@ functions and a table lookup hashes a string, which is too much for each glyph."
 
 (declaim (sb-ext:freeze-type outline-tables))
 
+(declaim (ftype (function (t) (values outline-tables &optional)) loader-outline-tables))
 (defun loader-outline-tables (loader)
   (or (%outline-tables loader)
       (setf (%outline-tables loader)
@@ -337,9 +380,12 @@ functions and a table lookup hashes a string, which is too much for each glyph."
                                    :loca-offset (and loca (offset loca))
                                    :short-p (eql (loca-offset-format loader) :short))))))
 
+(declaim (ftype (function (t (unsigned-byte 16))
+                          (values (unsigned-byte 32) fixnum &optional))
+                glyph-loca-info))
 (defun glyph-loca-info (loader gid)
   "Offset and length of glyph GID's data in 'glyf', from 'loca'."
-  (declare (type (unsigned-byte 32) gid))
+  (declare (type (unsigned-byte 16) gid))
   (let* ((tables (loader-outline-tables loader))
          (loc-off (ot-loca-offset tables)))
     (if (null loc-off)
@@ -361,17 +407,18 @@ functions and a table lookup hashes a string, which is too much for each glyph."
     (return-from initialize-bounding-box
       (setf (bounding-box glyph) (contours-bounding-box (contours glyph)))))
   (let ((loader (font-loader glyph))
-        (gid (font-index glyph)))
+        (gid (the (values (unsigned-byte 16) &optional) (font-index glyph))))
     (multiple-value-bind (g-off len) (glyph-loca-info loader gid)
-      (if (or (zerop len) (null (table-info "glyf" loader)))
-          (setf (bounding-box glyph) (empty-bounding-box))
-          (let* ((fd (font-data loader))
-                 (pos (+ (offset (table-info "glyf" loader)) g-off))
-                 (xmin (runes/otf:font-data-read-i16 fd (+ pos 2)))
-                 (ymin (runes/otf:font-data-read-i16 fd (+ pos 4)))
-                 (xmax (runes/otf:font-data-read-i16 fd (+ pos 6)))
-                 (ymax (runes/otf:font-data-read-i16 fd (+ pos 8))))
-            (setf (bounding-box glyph) (vector xmin ymin xmax ymax)))))))
+      (let ((glyf-info (table-info "glyf" loader)))
+        (if (or (<= len 0) (null glyf-info))
+            (setf (bounding-box glyph) (empty-bounding-box))
+            (let* ((fd (font-data loader))
+                   (pos (the (unsigned-byte 32) (+ (offset glyf-info) g-off)))
+                   (xmin (runes/otf:font-data-read-i16 fd (+ pos 2)))
+                   (ymin (runes/otf:font-data-read-i16 fd (+ pos 4)))
+                   (xmax (runes/otf:font-data-read-i16 fd (+ pos 6)))
+                   (ymax (runes/otf:font-data-read-i16 fd (+ pos 8))))
+              (setf (bounding-box glyph) (vector xmin ymin xmax ymax))))))))
 
 (defmethod initialize-contours ((glyph glyph))
   (when (cff-outlines-p (font-loader glyph))
