@@ -12,6 +12,8 @@
 
 (in-package #:zpb-ttf)
 
+(declaim (optimize (speed 3) (safety 1) (debug 0)))
+
 (deftype fixed-array ()
   "16.16 values, each wrapped to 32 bits as Rust's i32 does."
   '(simple-array (signed-byte 32) (*)))
@@ -44,12 +46,16 @@ and OUT-Y of one tuple, which of them are TOUCHED, and the REFS of a contour."
   (declare (type (signed-byte 32) a b))
   (let ((ab (* a b)))
     (wrap32 (ash (+ ab #x8000 (ash ab -63)) -16))))
-(defun f/ (a b) (runes/otf/charstring::fixed/ a b))
+(defun f/ (a b)
+  (declare (type (signed-byte 32) a b))
+  (the (values (signed-byte 32) &optional) (runes/otf/charstring::fixed/ a b)))
 (defun fixed-from-int (i)
   "Shifted, wrapping like Rust's i << 16."
-  (declare (integer i))
+  (declare (type fixnum i))
   (wrap32 (ash (ldb (byte 16 0) i) 16)))
-(defun fixed-round (f) (ash (+ f #x8000) -16))
+(defun fixed-round (f)
+  (declare (type (signed-byte 32) f))
+  (ash (+ f #x8000) -16))
 
 (define-condition gvar-data-error (error) ()
   (:documentation "Malformed glyph variation data; the glyph gets no deltas."))
@@ -83,16 +89,20 @@ and OUT-Y of one tuple, which of them are TOUCHED, and the REFS of a contour."
 ;;; Glyph variation data (gvar.rs)
 
 (defstruct glyph-var-data
-  fd axis-count
-  shared-tuples shared-tuple-count       ; position and count of the shared tuple records
-  tuple-count
-  headers                                ; position of the first tuple variation header
-  serialized serialized-end              ; tuple data, after any shared point numbers
-  shared-points)                         ; :all, a vector of point numbers, or NIL
+  (fd nil :type runes/otf:font-data)
+  (axis-count 0 :type (unsigned-byte 16))
+  (shared-tuples 0 :type (unsigned-byte 32))
+  (shared-tuple-count 0 :type (unsigned-byte 16)) ; position and count of the shared tuple records
+  (tuple-count 0 :type (unsigned-byte 16))
+  (headers 0 :type (unsigned-byte 32))            ; position of the first tuple variation header
+  (serialized 0 :type (unsigned-byte 32))
+  (serialized-end 0 :type (unsigned-byte 32))     ; tuple data, after any shared point numbers
+  (shared-points nil :type (or null (eql :all) (simple-array (unsigned-byte 16) (*))))) ; :all, a vector of point numbers, or NIL
 
 (defun gvar-glyph-data (loader gid)
   "The variation data for GID, or NIL if the glyph has none.  What is read is
 kept for the glyph, as the font does not change."
+  (declare (type (unsigned-byte 16) gid))
   (let ((cache (or (%gvar-cache loader)
                    (setf (%gvar-cache loader)
                          (let ((info (table-info "gvar" loader)))
@@ -100,11 +110,12 @@ kept for the glyph, as the font does not change."
                                (let ((gvar (runes/otf:read-gvar (font-data loader)
                                                                 (offset info) (size info))))
                                  (vector info gvar
-                                         (make-array (runes/otf:gvar-glyph-count gvar)
+                                         (make-array (the (unsigned-byte 16) (runes/otf:gvar-glyph-count gvar))
                                                      :initial-element nil)))
                                :none))))))
     (unless (eq cache :none)
-      (let* ((info (svref cache 0))
+      (let* ((cache (the simple-vector cache))
+             (info (svref cache 0))
              (fd (font-data loader))
              (gvar (svref cache 1))
              (known (svref cache 2)))
@@ -114,9 +125,13 @@ kept for the glyph, as the font does not change."
             (cond
               ((null entry)
                (flet ((data-position (i)
-                        (+ (offset info)
-                           (runes/otf:gvar-glyph-variation-data-array-offset gvar)
-                           (runes/otf:gvar-glyph-variation-data-offset-ref gvar i))))
+                        (declare (type (unsigned-byte 32) i))
+                        (the (unsigned-byte 32)
+                             (+ (offset info)
+                                (the (unsigned-byte 32)
+                                     (runes/otf:gvar-glyph-variation-data-array-offset gvar))
+                                (the (unsigned-byte 32)
+                                     (runes/otf:gvar-glyph-variation-data-offset-ref gvar i))))))
                  (let* ((start (data-position gid))
                         (stop (data-position (1+ gid)))
                         (data (and (< start stop) (<= stop (+ (offset info) (size info)))
@@ -126,16 +141,23 @@ kept for the glyph, as the font does not change."
               ((eq entry :none) nil)
               (t entry))))))))
 
+(declaim (ftype (function (runes/otf:font-data t (unsigned-byte 32) (unsigned-byte 32))
+                          (values glyph-var-data &optional))
+                read-glyph-var-data))
 (defun read-glyph-var-data (fd gvar start stop)
   "The GlyphVariationData table from START to STOP of the 'gvar' table GVAR."
+  (declare (type runes/otf:font-data fd)
+           (type (unsigned-byte 32) start stop))
   (let* ((count (runes/otf:font-data-read-u16 fd start))
          (serialized (+ start (runes/otf:font-data-read-u16 fd (+ start 2))))
          (data (make-glyph-var-data
                 :fd fd
-                :axis-count (runes/otf:gvar-axis-count gvar)
-                :shared-tuples (+ (runes/otf::table-ref-offset gvar)
-                                  (runes/otf:gvar-shared-tuples-offset-offset gvar))
-                :shared-tuple-count (runes/otf:gvar-shared-tuple-count gvar)
+                :axis-count (the (unsigned-byte 16) (runes/otf:gvar-axis-count gvar))
+                :shared-tuples (the (unsigned-byte 32)
+                                    (+ (the (unsigned-byte 32) (runes/otf::table-ref-offset gvar))
+                                       (the (unsigned-byte 32)
+                                            (runes/otf:gvar-shared-tuples-offset-offset gvar))))
+                :shared-tuple-count (the (unsigned-byte 16) (runes/otf:gvar-shared-tuple-count gvar))
                 :tuple-count (logand count #x0FFF)
                 :headers (+ start 4)
                 :serialized serialized :serialized-end stop)))
@@ -148,8 +170,12 @@ kept for the glyph, as the font does not change."
 
 ;;; Packed point numbers and deltas (variations.rs)
 
+(declaim (ftype (function (gvar-cursor)
+                          (values (or (eql :all) (simple-array (unsigned-byte 16) (*))) &optional))
+                read-packed-points))
 (defun read-packed-points (c)
   "Point numbers at cursor C: :ALL, or a vector. C ends after them."
+  (declare (type gvar-cursor c))
   (let* ((b0 (gc-u8 c))
          (count (cond ((zerop b0) 0)
                       ((< b0 128) b0)
@@ -256,7 +282,9 @@ READ-SPARSE does but without the closure."
 
 (defun read-dense (c count fn)
   "Call FN with each index below COUNT and its delta; runs must fit exactly."
+  (declare (type gvar-cursor c) (type fixnum count) (type function fn))
   (let ((cur 0))
+    (declare (type fixnum cur))
     (do-delta-runs (delta width) c (< cur count)
       (when (>= cur count) (gvar-fail))   ; a run past COUNT
       (funcall fn cur delta)
@@ -264,7 +292,12 @@ READ-SPARSE does but without the closure."
 
 (defun read-sparse (c points count fn)
   "Call FN with each of the COUNT POINTS and its delta, as read_sparse_deltas does."
+  (declare (type gvar-cursor c)
+           (type (simple-array (unsigned-byte 16) (*)) points)
+           (type fixnum count)
+           (type function fn))
   (let ((cur 0))
+    (declare (type fixnum cur))
     (do-delta-runs (delta width) c (< cur count)
       (cond ((< cur (length points)) (funcall fn (aref points cur) delta))
             ;; A zero run needs a point for every value (see DO-SPARSE-DELTAS).
@@ -274,8 +307,14 @@ READ-SPARSE does but without the closure."
 
 ;;; Tuples
 
+(declaim (ftype (function (runes/otf:font-data (unsigned-byte 32) (unsigned-byte 16))
+                          (values simple-vector &optional))
+                read-tuple))
 (defun read-tuple (fd pos axis-count)
   "The AXIS-COUNT 2.14 values at POS, as a vector."
+  (declare (type runes/otf:font-data fd)
+           (type (unsigned-byte 32) pos)
+           (type (unsigned-byte 16) axis-count))
   (let ((tuple (make-array axis-count)))
     (dotimes (i axis-count tuple)
       (setf (svref tuple i) (runes/otf:font-data-read-i16 fd (+ pos (* 2 i)))))))
@@ -284,10 +323,14 @@ READ-SPARSE does but without the closure."
   "Scalar of a tuple at COORDS, or NIL when it does not apply (scalar_for).
 Each axis multiplies the scalar by how far COORDS lies towards its peak."
   (declare (simple-vector peak coords) (type (or null cons) intermediate))
-  (flet ((coord (i) (if (< i (length coords)) (svref coords i) 0))
+  (flet ((coord (i)
+           (declare (type fixnum i))
+           (if (< i (length coords)) (the (signed-byte 16) (svref coords i)) 0))
          (scale (scalar numerator denominator)
+           (declare (type (signed-byte 32) scalar numerator denominator))
            ;; From 2.14 to 16.16 for the division.
-           (runes/otf/charstring::fixed-mul-div scalar (ash numerator 2) (ash denominator 2))))
+           (the (signed-byte 32)
+                (runes/otf/charstring::fixed-mul-div scalar (ash numerator 2) (ash denominator 2)))))
     ;; Coordinates and tuples are 2.14 values; the scalar is 16.16.
     (loop with scalar of-type (signed-byte 32) = #x10000
           for i of-type fixnum below (length peak)
@@ -302,8 +345,8 @@ Each axis multiplies the scalar by how far COORDS lies towards its peak."
                     (setf scalar (scale scalar coord p))
                     (return nil)))
                (t
-                (let ((start (svref (car intermediate) i))
-                      (end (svref (cdr intermediate) i)))
+                (let ((start (svref (the simple-vector (car intermediate)) i))
+                      (end (svref (the simple-vector (cdr intermediate)) i)))
                   (declare (type (signed-byte 16) start end))
                   (cond
                     ;; An invalid region contributes a factor of one.
@@ -317,12 +360,14 @@ Each axis multiplies the scalar by how far COORDS lies towards its peak."
   "The tuple variation header at POS: its data size, its tuple index field,
 its peak tuple (NIL if it names a shared tuple that does not exist), its
 intermediate region as (start . end) or NIL, and the position after it."
+  (declare (type glyph-var-data data) (type (unsigned-byte 32) pos))
   (let* ((fd (glyph-var-data-fd data))
          (axis-count (glyph-var-data-axis-count data))
          (tuple-size (* 2 axis-count))
          (size (runes/otf:font-data-read-u16 fd pos))
          (index (runes/otf:font-data-read-u16 fd (+ pos 2)))
          (p (+ pos 4)))
+    (declare (type (unsigned-byte 32) p))
     (flet ((next-tuple ()
              (prog1 (read-tuple fd p axis-count) (incf p tuple-size))))
       (let* ((peak (if (logbitp 15 index)
@@ -336,12 +381,18 @@ intermediate region as (start . end) or NIL, and the position after it."
                              (cons (next-tuple) (next-tuple)))))
         (values size index peak intermediate p)))))
 
+(declaim (ftype (function (glyph-var-data (unsigned-byte 32) (unsigned-byte 16) simple-vector)
+                          (values (or null (signed-byte 32)) &optional))
+                header-scalar))
 (defun header-scalar (data pos index coords)
   "The scalar of the tuple whose header is at POS, with tuple index field
 INDEX, at COORDS, read straight from the font data: the same as
 GVAR-TUPLE-SCALAR on READ-TUPLE-HEADER's tuples, without making them.  NIL if
 the tuple does not apply, or names a shared tuple that does not exist."
-  (declare (type glyph-var-data data) (fixnum pos index) (simple-vector coords))
+  (declare (type glyph-var-data data)
+           (type (unsigned-byte 32) pos)
+           (type (unsigned-byte 16) index)
+           (simple-vector coords))
   (let* ((fd (glyph-var-data-fd data))
          (axis-count (glyph-var-data-axis-count data))
          (tuple-size (* 2 axis-count))
@@ -355,9 +406,13 @@ the tuple does not apply, or names a shared tuple that does not exist."
          (inter-end (and inter-start (+ inter-start tuple-size))))
     (declare (fixnum axis-count tuple-size))
     (when peak-pos
-      (flet ((coord (i) (if (< i (length coords)) (svref coords i) 0))
+      (flet ((coord (i)
+               (declare (type fixnum i))
+               (if (< i (length coords)) (the (signed-byte 16) (svref coords i)) 0))
              (scale (scalar numerator denominator)
-               (runes/otf/charstring::fixed-mul-div scalar (ash numerator 2) (ash denominator 2))))
+               (declare (type (signed-byte 32) scalar numerator denominator))
+               (the (signed-byte 32)
+                    (runes/otf/charstring::fixed-mul-div scalar (ash numerator 2) (ash denominator 2)))))
         (declare (inline coord scale))
         (loop with scalar of-type (signed-byte 32) = #x10000
               for i of-type fixnum below axis-count
@@ -392,12 +447,14 @@ COORDS; POINTS is :ALL or a vector, and the cursor is at the tuple's deltas."
          (header (glyph-var-data-headers data))
          (start (glyph-var-data-serialized data))
          (tuple-size (* 2 (glyph-var-data-axis-count data))))
-    (declare (fixnum header start tuple-size))
+    (declare (type (unsigned-byte 32) header start)
+             (type fixnum tuple-size))
     (dotimes (i (glyph-var-data-tuple-count data))
       (let* ((size (runes/otf:font-data-read-u16 fd header))
              (index (runes/otf:font-data-read-u16 fd (+ header 2)))
              (end (+ start size)))
-        (declare (fixnum size index end))
+        (declare (type (unsigned-byte 16) size index)
+                 (type (unsigned-byte 32) end))
         ;; Tuple data past the end of the glyph's data ends the iteration.
         (when (> end (glyph-var-data-serialized-end data))
           (return))
@@ -483,8 +540,8 @@ is a plain multiplication."
            (interp start first final first)))))))
 
 (defun add-scaled-delta (vector i delta scalar)
-  (declare (simple-vector vector) (fixnum i))
-  (setf (aref vector i) (f+ (aref vector i) (scaled-delta delta scalar))))
+  (declare (simple-vector vector) (fixnum i) (type (signed-byte 32) delta scalar))
+  (setf (aref vector i) (f+ (the (signed-byte 32) (aref vector i)) (scaled-delta delta scalar))))
 
 (declaim (inline add-fixed-delta))
 (defun add-fixed-delta (array i delta scalar)
@@ -593,15 +650,19 @@ if the data is malformed."
   "16.16 deltas for every point of a simple glyph, phantom points included,
 as two arrays; XS and YS are the font unit coordinates of all its points
 and ENDS (a list) its contour end points. NIL if the data is malformed."
-  (declare (simple-vector xs ys))
+  (declare (simple-vector xs ys) (type list ends))
   (let* ((n (length xs))
          (sc (gvar-scratch-for (make-gvar-scratch) n))
-         (ends (coerce ends '(simple-array (unsigned-byte 16) (*)))))
+         (n-ends (length ends))
+         (ends-vec (make-array n-ends :element-type '(unsigned-byte 16))))
+    (loop for e of-type (unsigned-byte 16) in ends
+          for i of-type fixnum from 0
+          do (setf (aref ends-vec i) e))
     (let ((fx (gs-fx sc)) (fy (gs-fy sc)))
       (dotimes (i n)
-        (setf (aref fx i) (fixed-from-int (svref xs i))
-              (aref fy i) (fixed-from-int (svref ys i)))))
-    (when (scratch-glyph-deltas data coords sc n ends (length ends))
+        (setf (aref fx i) (fixed-from-int (the fixnum (svref xs i)))
+              (aref fy i) (fixed-from-int (the fixnum (svref ys i))))))
+    (when (scratch-glyph-deltas data coords sc n ends-vec n-ends)
       ;; Exact-size arrays, as the callers expect.
       (values (subseq (gs-dx sc) 0 n) (subseq (gs-dy sc) 0 n)))))
 
@@ -632,9 +693,12 @@ deltas.  Positions past the components, or without a y delta, are skipped."
         (add-fixed-delta dx position (aref deltas i) scalar)
         (add-fixed-delta dy position (aref deltas (+ half i)) scalar)))))
 
+(declaim (ftype (function (gvar-cursor fixnum)
+                          (values fixed-array fixnum &optional))
+                read-n-deltas))
 (defun read-n-deltas (c limit)
   "Up to LIMIT deltas from C, fewer if the data ends: an array, and how many."
-  (declare (fixnum limit))
+  (declare (type gvar-cursor c) (fixnum limit))
   (let ((out (make-array limit :element-type '(signed-byte 32)))
         (n 0))
     (declare (fixnum n))
@@ -646,8 +710,12 @@ deltas.  Positions past the components, or without a y delta, are skipped."
       (gvar-data-error () nil))
     (values out n)))
 
+(declaim (ftype (function (gvar-cursor)
+                          (values fixed-array fixnum &optional))
+                read-all-deltas))
 (defun read-all-deltas (c)
   "Every delta from C to the end of its data: an array, and how many."
+  (declare (type gvar-cursor c))
   (let ((out (make-array 32 :element-type '(signed-byte 32)))
         (n 0))
     (declare (type fixed-array out) (fixnum n))
@@ -665,6 +733,7 @@ deltas.  Positions past the components, or without a y delta, are skipped."
 (defun composite-glyph-deltas (data coords count)
   "16.16 deltas for the COUNT components and phantom points of a composite
 glyph, as two vectors; NIL if the data is malformed."
+  (declare (type glyph-var-data data) (type simple-vector coords) (type fixnum count))
   (let ((dx (make-array count :element-type '(signed-byte 32) :initial-element 0))
         (dy (make-array count :element-type '(signed-byte 32) :initial-element 0)))
     (handler-case
@@ -672,6 +741,9 @@ glyph, as two vectors; NIL if the data is malformed."
           (map-active-tuples
            data coords
            (lambda (scalar points c)
+             (declare (type (signed-byte 32) scalar)
+                      (type (or (eql :all) (simple-array (unsigned-byte 16) (*))) points)
+                      (type gvar-cursor c))
              (if (eq points :all)
                  ;; Every delta in the data, half of them x and half y.
                  (multiple-value-bind (all n) (read-all-deltas c)
