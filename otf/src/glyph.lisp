@@ -178,7 +178,7 @@ no TrueType glyph variations."
   (:method ((glyph glyph))
     (let* ((loader (font-loader glyph))
            (gid (font-index glyph))
-           (lsb (bounded-aref (left-side-bearings loader) gid)))
+           (lsb (horizontal-bearing loader gid)))
       (if (null (normalized-coordinates loader))
           lsb
           (let ((delta (lsb-delta loader gid))
@@ -195,14 +195,14 @@ no TrueType glyph variations."
     (let ((loader (font-loader glyph)))
       (cond
         ((null (normalized-coordinates loader))
-         (bounded-aref (advance-widths loader) (font-index glyph)))
+         (horizontal-advance loader (font-index glyph)))
         ;; Without HVAR, a TrueType instance takes its advance from the
         ;; varied phantom points.
         ((and (table-info "gvar" loader) (not (table-info "HVAR" loader)))
          (let ((phantom (varied-phantom-points glyph)))
            (- (car (aref phantom 1)) (car (aref phantom 0)))))
         (t
-         (+ (bounded-aref (advance-widths loader) (font-index glyph))
+         (+ (horizontal-advance loader (font-index glyph))
             (advance-width-delta loader (font-index glyph))))))))
 
 (defgeneric top-side-bearing (object)
@@ -211,7 +211,7 @@ no TrueType glyph variations."
           (gid (font-index glyph)))
       (if (vmtx-missing-p loader)
           (- (ascender loader) (ymax glyph))
-          (let ((tsb (bounded-aref (top-side-bearings loader) gid)))
+          (let ((tsb (vertical-bearing loader gid)))
             (if (null (normalized-coordinates loader))
                 tsb
                 (let ((delta (tsb-delta loader gid))
@@ -224,7 +224,7 @@ no TrueType glyph variations."
   (:method ((glyph glyph))
     (let* ((loader (font-loader glyph))
            (gid (font-index glyph))
-           (advance (bounded-aref (advance-heights loader) gid)))
+           (advance (vertical-advance loader gid)))
       (cond
         ((or (null (normalized-coordinates loader)) (vmtx-missing-p loader))
          advance)

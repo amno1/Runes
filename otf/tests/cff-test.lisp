@@ -169,7 +169,7 @@ width matches 'hmtx', and the number of on-path points outside 'head'."
              (sink (make-instance 'point-sink))
              (width (cff-draw-glyph font subfont gid sink coords)))
         (incf commands (commands sink))
-        (when (and width (= (/ width 65536) (zpb-ttf::bounded-aref (zpb-ttf::advance-widths loader) gid)))
+        (when (and width (= (/ width 65536) (zpb-ttf::horizontal-advance loader gid)))
           (incf widths-ok))
         (dolist (p (points sink))
           (unless (and (<= (aref bbox 0) (/ (car p) 65536) (aref bbox 2))

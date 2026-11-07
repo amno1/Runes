@@ -111,16 +111,16 @@ whose contour count is at POS - 10, as four vectors."
 
 (defun phantom-array (loader gid x-min y-max)
   "The four phantom points of GID, in font units, from its metrics."
-  (let* ((lsb (bounded-aref (left-side-bearings loader) gid))
-         (advance (bounded-aref (advance-widths loader) gid))
+  (let* ((lsb (horizontal-bearing loader gid))
+         (advance (horizontal-advance loader gid))
          (ascent (slot-value loader 'ascender))
          (descent (slot-value loader 'descender))
          (result (make-array 8 :element-type '(signed-byte 32))))
     (multiple-value-bind (tsb vadvance)
         (if (vmtx-missing-p loader)
             (values (- ascent y-max) (- ascent descent))
-            (values (bounded-aref (top-side-bearings loader) gid)
-                    (bounded-aref (advance-heights loader) gid)))
+            (values (vertical-bearing loader gid)
+                    (vertical-advance loader gid)))
       (let ((pp1x (- x-min lsb)))
         (setf (aref result 0) pp1x
               (aref result 1) 0

@@ -4,6 +4,18 @@
 
 (in-package #:zpb-ttf)
 
+(defstruct (long-metrics (:conc-name lm-))
+  "An 'hmtx' or 'vmtx' table, read where it lies: LONG-COUNT (advance, bearing)
+pairs at OFFSET of FD, then bare bearings; SIZE bytes in all.  COUNT is the
+number of glyphs with a bearing, the table's long ones included."
+  (fd nil :type runes/otf:font-data)
+  (offset 0 :type (unsigned-byte 32))
+  (size 0 :type (unsigned-byte 32))
+  (long-count 0 :type (unsigned-byte 16))
+  (count 0 :type (unsigned-byte 32)))
+
+(declaim (sb-ext:freeze-type long-metrics))
+
 (defclass font-loader ()
   ((tables :initform (make-hash-table :test 'equal) :reader tables)
    ;; :GLYF or :CFF once CFF-OUTLINES-P has looked, as it does for every glyph.
@@ -34,17 +46,17 @@
    (descender :accessor descender :initform 0)
    (line-gap :accessor line-gap :initform 0)
    (max-width :accessor max-width :initform 0)
-   ;; from 'hmtx' table
-   (advance-widths :accessor advance-widths :initform (vector))
-   (left-side-bearings :accessor left-side-bearings :initform (vector))
+   ;; from 'hmtx' table: where it is, not a copy of it (see HORIZONTAL-ADVANCE)
+   (hmetrics :accessor hmetrics :initform nil)
    ;; from 'vhea' table
    (vhea-missing-p :initform nil :accessor vhea-missing-p)
    (vascender :accessor vascender :initform 0)
    (vdescender :accessor vdescender :initform 0)
    ;; from 'vhea' and 'vmtx' tables
    (vmtx-missing-p :initform nil :accessor vmtx-missing-p)
-   (advance-heights :accessor advance-heights :initform (vector))
-   (top-side-bearings :accessor top-side-bearings :initform (vector))
+   (vmetrics :accessor vmetrics :initform nil)
+   ;; The advance height of every glyph when there is no 'vmtx'.
+   (missing-advance-height :accessor missing-advance-height :initform 0)
    ;; from 'kern' table
    (kerning-table :initform (make-hash-table) :accessor kerning-table)
    ;; from 'GPOS': the 'kern' lookups, found on first use, and the kerning
@@ -71,6 +83,61 @@
    ;; TTC info
    (collection-font-count :reader collection-font-count :initform nil :initarg :collection-font-count)
    (collection-font-index :reader collection-font-index :initform nil :initarg :collection-font-index)))
+
+(declaim (inline long-metrics-advance long-metrics-bearing))
+
+;; The reads need no check of their own: MAKE-LONG-METRICS-AT has seen that the
+;; whole table is in the font data, and every position below is inside it.
+(defun long-metrics-advance (metrics gid)
+  "The advance of glyph GID in METRICS (a LONG-METRICS or NIL); the last
+glyph's for one past the table's, 0 if the table has none."
+  (declare (type (or null long-metrics) metrics) (fixnum gid) (optimize (speed 3) (safety 0)))
+  (if (or (null metrics) (zerop (lm-long-count metrics)))
+      0
+      (let* ((fd (lm-fd metrics))
+             (bytes (runes/otf:font-data-bytes fd))
+             (pos (+ (runes/otf:font-data-offset fd) (lm-offset metrics)
+                     (* 4 (the fixnum (min (1- (lm-long-count metrics)) (max 0 gid)))))))
+        (declare (type (simple-array (unsigned-byte 8) (*)) bytes) (fixnum pos))
+        (logior (ash (aref bytes pos) 8) (aref bytes (1+ pos))))))
+
+(defun long-metrics-bearing (metrics gid)
+  "The bearing of glyph GID in METRICS; that of the last glyph for one past
+them, 0 where the table is too short for it."
+  (declare (type (or null long-metrics) metrics) (fixnum gid) (optimize (speed 3) (safety 0)))
+  (if (or (null metrics) (zerop (lm-count metrics)))
+      0
+      (let* ((i (min (1- (lm-count metrics)) (max 0 gid)))
+             (long (lm-long-count metrics))
+             (offset (lm-offset metrics))
+             (rel (if (< i long)
+                      (+ (* 4 i) 2)
+                      (+ (* 4 long) (* 2 (- i long))))))
+        (declare (fixnum i rel))
+        (if (<= (+ rel 2) (lm-size metrics))
+            (let* ((fd (lm-fd metrics))
+                   (bytes (runes/otf:font-data-bytes fd))
+                   (pos (+ (runes/otf:font-data-offset fd) offset rel))
+                   (u (logior (ash (aref bytes pos) 8) (aref bytes (1+ pos)))))
+              (declare (type (simple-array (unsigned-byte 8) (*)) bytes) (fixnum pos))
+              (if (logbitp 15 u) (- u 65536) u))
+            0))))
+
+(declaim (inline horizontal-advance horizontal-bearing vertical-advance vertical-bearing))
+
+(defun horizontal-advance (loader gid)
+  (long-metrics-advance (hmetrics loader) gid))
+
+(defun horizontal-bearing (loader gid)
+  (long-metrics-bearing (hmetrics loader) gid))
+
+(defun vertical-advance (loader gid)
+  (if (vmtx-missing-p loader)
+      (missing-advance-height loader)
+      (long-metrics-advance (vmetrics loader) gid)))
+
+(defun vertical-bearing (loader gid)
+  (long-metrics-bearing (vmetrics loader) gid))
 
 (defclass table-info ()
   ((name :initarg :name :reader name)

@@ -190,25 +190,19 @@ format 12 subtable or, without one, the first Unicode format 4 subtable."
         (4 (setup-cmap4-lookup loader fd sub-off table-end))
         (t (setf (cmap-lookup-fn loader) (constantly 0)))))))
 
-(defun read-long-metrics (data offset size long-count glyph-count)
-  "Read an hmtx/vmtx style table: LONG-COUNT (advance, bearing) pairs
-followed by bare bearings for the remaining glyphs. Return a vector of
-advances and a vector of GLYPH-COUNT bearings."
+(defun make-long-metrics-at (data offset size long-count glyph-count)
+  "The 'hmtx' or 'vmtx' style table at OFFSET, SIZE bytes: LONG-COUNT (advance,
+bearing) pairs followed by bare bearings, for GLYPH-COUNT glyphs.  Nothing is
+read: the table is looked in where it is."
   (declare (type runes/otf:font-data data) (type (unsigned-byte 32) offset size)
            (type (unsigned-byte 16) long-count glyph-count))
-  (let* ((long-count (min long-count (floor size 4)))
-         (advances (make-array long-count))
-         (bearings (make-array (max glyph-count long-count) :initial-element 0))
-         (trailing-end (+ offset size)))
-    (dotimes (i long-count)
-      (let ((pos (+ offset (* i 4))))
-        (setf (aref advances i) (runes/otf:font-data-read-u16 data pos)
-              (aref bearings i) (runes/otf:font-data-read-i16 data (+ pos 2)))))
-    (loop for i from long-count below glyph-count
-          for pos = (+ offset (* long-count 4) (* (- i long-count) 2))
-          while (<= (+ pos 2) trailing-end)
-          do (setf (aref bearings i) (runes/otf:font-data-read-i16 data pos)))
-    (values advances bearings)))
+  ;; Every read of the table is inside it, then inside the font data.
+  (unless (<= (+ offset size) (runes/otf:font-data-length data))
+    (error 'runes/otf:font-out-of-bounds-error :pos offset :size size
+                                               :length (runes/otf:font-data-length data)))
+  (let ((long-count (min long-count (floor size 4))))
+    (make-long-metrics :fd data :offset offset :size size :long-count long-count
+                       :count (max glyph-count long-count))))
 
 (defun read-kerning-format-0 (loader body kend)
   "Format 0: an ordered list of (left, right, value) pairs at BODY."
@@ -355,11 +349,9 @@ TABLE-INFO and VIEW to the table read with READER."
           (line-gap loader) (runes/otf:hhea-line-gap hhea)
           (max-width loader) (runes/otf:hhea-advance-width-max hhea))
     (with-table (hmtx hmtx-info) ("hmtx" loader runes/otf:read-hmtx)
-      (multiple-value-bind (widths lsbs)
-          (read-long-metrics (font-data loader) (offset hmtx-info) (size hmtx-info)
-                             (runes/otf:hhea-number-of-h-metrics hhea) (glyph-count loader))
-        (setf (advance-widths loader) widths
-              (left-side-bearings loader) lsbs)))))
+      (setf (hmetrics loader)
+            (make-long-metrics-at (font-data loader) (offset hmtx-info) (size hmtx-info)
+                                  (runes/otf:hhea-number-of-h-metrics hhea) (glyph-count loader))))))
 
 (defun load-vertical-metrics (loader)
   "'vhea' and 'vmtx' or, without both, vertical metrics made up from the
@@ -372,17 +364,16 @@ horizontal ones."
           (runes/otf:read-vmtx data (offset vmtx-info) (size vmtx-info))
           (setf (vascender loader) (runes/otf:vhea-ascender vhea)
                 (vdescender loader) (runes/otf:vhea-descender vhea))
-          (multiple-value-bind (heights tsbs)
-              (read-long-metrics data (offset vmtx-info) (size vmtx-info)
-                                 (runes/otf:vhea-number-of-long-ver-metrics vhea) (glyph-count loader))
-            (setf (advance-heights loader) heights
-                  (top-side-bearings loader) tsbs)))
+          (setf (vmetrics loader)
+                (make-long-metrics-at data (offset vmtx-info) (size vmtx-info)
+                                      (runes/otf:vhea-number-of-long-ver-metrics vhea)
+                                      (glyph-count loader))))
         (let ((dx (/ (max-width loader) 2)))
           (setf (vhea-missing-p loader) t
                 (vmtx-missing-p loader) t
                 (vascender loader) dx
                 (vdescender loader) (- dx)
-                (advance-heights loader) (vector (- (ascender loader) (descender loader))))))))
+                (missing-advance-height loader) (- (ascender loader) (descender loader)))))))
 
 (defun load-post (loader)
   (with-table (post info) ("post" loader runes/otf:read-post)
