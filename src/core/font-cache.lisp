@@ -41,12 +41,16 @@
    or every font of a collection.  The file is read, and a WOFF or WOFF2
    file decoded, once for all of them.  A font in a collection is cached
    as (PATHNAME . INDEX), any other as PATHNAME.  A font already cached
-   from a file of a better format (see FORMAT-RANK) is kept."
-  (flet ((add (font source)
+   from a file of a better format (see FORMAT-RANK) is kept.  Returns the
+   (FAMILY SUBFAMILY) of each font the file has, in order, or NIL if it has
+   none that can be read."
+  (let ((added '()))
+   (flet ((add (font source)
            ;; A font without a family or subfamily name cannot be asked for
            (let ((family (zpb-ttf:family-name font))
                  (subfamily (zpb-ttf:subfamily-name font)))
              (when (and family subfamily)
+               (push (list family subfamily) added)
                (let* ((subfamilies (or (gethash family cache)
                                        (setf (gethash family cache)
                                              (make-hash-table :test 'equal))))
@@ -69,7 +73,8 @@
             (handler-case
                 (zpb-ttf:with-font-loader (font data :collection-index i)
                   (add font (cons pathname i)))
-              (error () nil))))))))
+              (error () nil)))))))
+    (nreverse added)))
 
 (defun %sfnt-data (pathname)
   "The font data of PATHNAME, a WOFF or WOFF2 file decoded to an sfnt."
