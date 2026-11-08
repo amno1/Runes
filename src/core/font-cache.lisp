@@ -129,8 +129,10 @@
     cache))
 
 (defun get-font-families ()
-  "Returns cached font families."
+  "Returns cached font families, finding the fonts first if that has not been done."
   (declare (special *font-cache*))
+  (unless (plusp (hash-table-count *font-cache*))
+    (cache-fonts))
   (let ((result (list)))
     (bt:with-recursive-lock-held (*font-cache-lock*)
       (maphash (lambda (key value)
@@ -142,6 +144,8 @@
 (defun get-font-subfamilies (font-family)
   "Returns font subfamilies for current FONT-FAMILY. For e.g. regular, italic, bold, etc."
   (declare (special *font-cache*))
+  (unless (plusp (hash-table-count *font-cache*))
+    (cache-fonts))
   (let ((result (list)))
     (bt:with-recursive-lock-held (*font-cache-lock*)
      (maphash (lambda (family value)
