@@ -81,6 +81,8 @@
    #:variation-axes
    #:variation-coordinates
    #:variation-metric-delta
+   #:table-position
+   #:variation-delta
    #:do-contours
    #:explicit-contour-points
    #:do-contour-segments

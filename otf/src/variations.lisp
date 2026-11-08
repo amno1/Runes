@@ -488,3 +488,29 @@ default instance or when the font does not vary the metric.")
 ;; Without 'vhea' these are made up from the horizontal metrics.
 (define-varied-metric vascender "vasc" (not (vhea-missing-p loader)))
 (define-varied-metric vdescender "vdsc" (not (vhea-missing-p loader)))
+
+;;; For code that reads tables of its own, as a renderer reads 'COLR'
+
+(defun table-position (loader tag)
+  "Where the table TAG (a string such as \"COLR\") of LOADER's font is:
+(VALUES FONT-DATA POSITION SIZE), to be read with FONT-DATA-READ-U16 and the
+others; NIL when the font has no such table."
+  (let ((info (table-info tag loader)))
+    (when info
+      (values (font-data loader) (offset info) (size info)))))
+
+(defun variation-delta (loader store index &optional map)
+  "The change, at LOADER's instance, of the item INDEX of the item variation
+store at position STORE of its font data, in 16.16 fixed point without rounding;
+0 at the default instance.  INDEX is an outer index shifted 16 bits left and an
+inner one, or goes through the DeltaSetIndexMap at position MAP, when there is
+one."
+  (let ((coords (blend-coordinates loader)))
+    (if (or (null coords) (zerop store))
+        0
+        (let ((fd (font-data loader)))
+          (multiple-value-bind (outer inner)
+              (if (and map (plusp map))
+                  (delta-set-index map fd index)
+                  (values (ash index -16) (ldb (byte 16 0) index)))
+            (item-variation-delta-at fd store outer inner coords))))))
