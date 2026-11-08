@@ -19,6 +19,7 @@
    #:font-foreground
    #:font-overwrite-gcontext
    #:font-antialias
+   #:font-variations
    #:font-equal
    #:check-valid-font-families
    #:flush-font-caches

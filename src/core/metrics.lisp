@@ -48,6 +48,21 @@
              *font-loader-cache*)
     (clrhash *font-loader-cache*)))
 
+(defvar *loader-variations* (make-hash-table :test 'eq :weakness :key)
+  "Loader -> the variation list (a FONT-VARIATIONS value) it is set to.  Used
+   with *FONT-LOADER-LOCK* held.")
+
+(defun apply-font-variations (loader font)
+  "Set LOADER, a font's loader, to the instance FONT's variations name, if it
+   is not set to it.  Setting drops the loader's cached glyphs, so fonts that
+   share a file and differ in variations make it work harder."
+  (let ((want (font-variations font)))
+    (unless (eq want (gethash loader *loader-variations*))
+      ;; A font that does not vary has no instances to set.
+      (handler-case (setf (zpb-ttf:variation-coordinates loader) want)
+        (error () nil))
+      (setf (gethash loader *loader-variations*) want))))
+
 (defmacro with-font-loader ((loader font) &body body)
   "Run BODY with LOADER bound to FONT's cached ZPB-TTF loader, opening it
    the first time, holding *FONT-LOADER-LOCK*."
@@ -60,6 +75,7 @@
            (unless ,exists-p
              (setf ,loader (setf (gethash ,source *font-loader-cache*)
                                  (open-font-source ,source))))
+           (apply-font-variations ,loader ,font)
            ,@body)))))
 
 (defun open-font-source (source)

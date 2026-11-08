@@ -50,6 +50,13 @@
                   :initform t
                   :accessor font-antialias
                   :documentation "Antialias text string.")
+   (variations :initarg :variations
+               :initform nil
+               :accessor font-variations
+               :documentation "For a variable font, an alist of axis tag (such as
+               \"wght\") to value: the instance of the font that this font is.  The
+               font's loader is set to it whenever the font enters it, by
+               WITH-FONT-LOADER.  The list is replaced, not changed.")
    (units/em  :initform nil
               :documentation "The font file's units per em, read on first use
               by FONT-UNITS->PIXELS-X and -Y, and forgotten when the font's
@@ -160,6 +167,9 @@
 (defmethod (setf font-antialias) :after (value (font font))
   (flush-font-caches font))
 
+(defmethod (setf font-variations) :after (value (font font))
+  (flush-font-caches font))
+
 (defgeneric font-equal (font1 font2)
   (:documentation "Returns t if two font objects are equal, else returns nil.")
   (:method ((font1 font) (font2 font))
@@ -174,7 +184,8 @@
          (equal (font-background font1) (font-background font2))
          (equal (font-foreground font1) (font-foreground font2))
          (eql (font-overwrite-gcontext font1) (font-overwrite-gcontext font2))
-         (eql (font-antialias font1) (font-antialias font2)))))
+         (eql (font-antialias font1) (font-antialias font2))
+         (equal (font-variations font1) (font-variations font2)))))
 
 (defmethod print-object ((instance font) stream)
   "Pretty printing font object"
