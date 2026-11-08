@@ -24,6 +24,8 @@
   "Hashmap for caching font families, subfamilies and files.  Guarded by
    *FONT-CACHE-LOCK*.")
 
+(defvar *coverage-index*)     ; see FAMILIES-WITH-CHARACTER
+
 (defvar *font-cache-lock* (bt:make-recursive-lock "truetype font cache")
   "Guards *FONT-CACHE*, so that CACHE-FONTS in one thread does not run
    into another thread scanning or reading it.")
@@ -103,7 +105,8 @@
    other threads go on finding fonts in the old table meanwhile."
   (let ((cache (%scan-font-dirs)))
     (bt:with-recursive-lock-held (*font-cache-lock*)
-      (setf *font-cache* cache))))
+      (setf *font-cache* cache
+            *coverage-index* nil))))
 
 (defun %scan-font-dirs ()
   (let ((cache (make-hash-table :test 'equal)))
@@ -147,3 +150,75 @@
                    (nreverse result))))
              *font-cache*))
     (nreverse result)))
+
+;;; Which families have a character.  A renderer that has to find a font for a
+;;; character the font it was given lacks asks here, as it would ask fontconfig:
+;;; the characters of every installed font are read once, from the fonts' cmaps,
+;;; and kept as ranges.
+
+(defvar *coverage-index* nil
+  "NIL, or a vector of (FAMILY . RANGES), RANGES a sorted vector of START, END
+   pairs of the characters of the family's first face; only fonts with outlines.
+   Replaced as a whole.  Forgotten when the fonts are cached again.")
+(defvar *coverage-index-lock* (bt:make-lock "font coverage index"))
+
+(defun %source-ranges (source)
+  "The characters of the font at SOURCE as a vector of START END pairs, sorted;
+   NIL for a font without outlines, or that cannot be read."
+  (let ((loader (ignore-errors (open-font-source source))))
+    (when loader
+      (unwind-protect
+           (ignore-errors
+            (let ((fn (zpb-ttf::cmap-mappings-fn loader))
+                  (codes '()))
+              (when (and fn
+                         (or (zpb-ttf::table-info "glyf" loader)
+                             (zpb-ttf::table-info "CFF " loader)
+                             (zpb-ttf::table-info "CFF2" loader)))
+                (funcall fn (lambda (cp gid) (when (plusp gid) (push cp codes))))
+                (let ((sorted (sort (coerce codes 'vector) #'<))
+                      (ranges '()))
+                  (loop for c across sorted
+                        do (if (and ranges (<= c (1+ (cdar ranges))))
+                               (setf (cdar ranges) (max c (cdar ranges)))
+                               (push (cons c c) ranges)))
+                  (when ranges
+                    (let ((v (make-array (* 2 (length ranges)) :element-type '(unsigned-byte 32))))
+                      (loop for (a . b) in (nreverse ranges) for i from 0 by 2
+                            do (setf (aref v i) a (aref v (1+ i)) b))
+                      v))))))
+        (ignore-errors (zpb-ttf:close-font-loader loader))))))
+
+(defun %build-coverage-index ()
+  (let ((index '()))
+    (dolist (family (sort (get-font-families) #'string<))
+      (let* ((subfamilies (bt:with-recursive-lock-held (*font-cache-lock*) (gethash family *font-cache*)))
+             (source (and subfamilies
+                          (or (gethash "Regular" subfamilies)
+                              (gethash "Book" subfamilies)
+                              (loop for v being the hash-values of subfamilies return v))))
+             (ranges (and source (%source-ranges source))))
+        (when ranges (push (cons family ranges) index))))
+    (coerce (nreverse index) 'vector)))
+
+(defun %ranges-have-p (ranges code)
+  (declare (type (simple-array (unsigned-byte 32) (*)) ranges) (type fixnum code))
+  (let ((lo 0) (hi (1- (ash (length ranges) -1))))
+    (declare (type fixnum lo hi))
+    (loop while (<= lo hi)
+          do (let* ((mid (ash (+ lo hi) -1)))
+               (cond ((< code (aref ranges (* 2 mid))) (setf hi (1- mid)))
+                     ((> code (aref ranges (1+ (* 2 mid)))) (setf lo (1+ mid)))
+                     (t (return-from %ranges-have-p t)))))
+    nil))
+
+(defun families-with-character (code)
+  "The installed families, in alphabetical order, whose first face has the
+   character with the code CODE and draws it with outlines.  The first call reads
+   the cmaps of all the fonts, which takes a moment."
+  (let ((index (or *coverage-index*
+                   (bt:with-lock-held (*coverage-index-lock*)
+                     (or *coverage-index*
+                         (setf *coverage-index* (%build-coverage-index)))))))
+    (loop for (family . ranges) across index
+          when (%ranges-have-p ranges code) collect family)))

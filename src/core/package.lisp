@@ -33,6 +33,7 @@
    #:cache-fonts
    #:get-font-families
    #:get-font-subfamilies
+   #:families-with-character
 
    ;; Metrics
    #:target-dpi
