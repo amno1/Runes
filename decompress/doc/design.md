@@ -32,10 +32,12 @@ status, and the Lisp loop finishes that command.
 literal/length tables (font data has many literal codes longer than 8 bits),
 table entries that carry a match's base and extra-bit count (no second lookup),
 up to three literals per refill, and the next root lookup issued before the
-refill so their loads overlap. From libdeflate: a length entry's bit count
-includes its extra bits, so one shift consumes both, and the decode tables are
-built by doubling the root (no strided stores and no bit-reversal pass), in
-place, in arrays reused across blocks and streams. The loop contains no calls
+refill so their loads overlap. From libdeflate: its entry layout (the low byte
+of an entry is the count of bits its code and extra bits take, usable directly
+as a shift count; flags in the high bits; the same for distances), so one
+shift consumes code and extra bits, and the decode tables are built by doubling
+the root (no strided stores and no bit-reversal pass), in place, in arrays
+reused across blocks and streams. The loop contains no calls
 (errors leave it and are signalled afterwards), so SBCL keeps more of its state
 in registers. With AVX-512 (sb-simd-512), the loop runs as one VOP
 (`inflate-vop.lisp`, BMI2 shifts) while at least 16 input bytes remain and the

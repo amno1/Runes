@@ -1384,3 +1384,146 @@ cost was not the sort itself. The likely cause is the change's side
 effects on the surrounding code, as with the rejections in §6, but I haven't
 measured. The test would be the mask sort behind a run-time switch with
 everything else (arrays, padding) the same.
+
+## 21. Deflate, fourth round: libdeflate's entry layout
+
+Sections 17 and 18 describe the entries as they were (`sym<<5 | nbits`, a
+match flag, link at `nbits >= 16`); this section replaces them. What was not
+yet libdeflate's was the way an entry is *used*, so the question was where the
+rest of the gap came from. The instruments were `perf stat` on synthetic
+streams that isolate one path each, and a libdeflate 1.26 built with debug
+info (same speed as the distribution's) so that `perf annotate` maps its loop
+to `decompress_template.h` lines. A `sb-sprof` profile first showed that
+nothing outside the loop matters on large streams (the symbol loop is 90-94%
+of the time on Meslo and src8m, table setup 3% and 2%; on Source Code Pro the
+loop is 67% and table setup 25%, close to libdeflate's own 77% / 22% split).
+
+**Where the loop differed.** Counters per output byte, ours (the §17 VOP) /
+libdeflate, on streams of only literals and of fixed-length matches:
+
+| Stream        | Instructions | Cycles      |
+|---------------|--------------|-------------|
+| literals      | 20.2 / 15.1  | 8.82 / 7.51 |
+| matches of 6  | 13.2 / 11.1  | 3.16 / 2.57 |
+| matches of 12 | 7.1 / 5.8    | 2.00 / 1.52 |
+
+(Matches of 24 bytes and longer measured the allocation of the output
+vector more than the decoder, and varied 2-3x between runs of the same code.)
+A literal cost 5 instructions more, a short match 13-18 more. Reading the VOP
+against libdeflate's annotated loop: an entry's bit count had to be masked out
+(`mov; and 31`) before use, a subtable link was found by comparing that count
+with 16, a literal by comparing the symbol with 256, and a length took 11
+instructions to unpack, against about 5.
+
+**The layout.** libdeflate's: the low byte of an entry is what its code (and
+its extra bits) takes from the bit buffer, with bit 5 clear, so `SHRX` can
+use the entry itself as the count (it only looks at the low 6 bits) and `BZHI`
+as the mask width (low 8 bits):
+
+| Entry     | Layout                                                     |
+|-----------|------------------------------------------------------------|
+| literal   | `#x80000000 \| byte<<16 \| code length`                    |
+| length    | `base<<16 \| code length<<8 \| (code length + extra bits)`  |
+| distance  | the same (§18 tried it alone and gained nothing; with the rest of the layout it shortens the distance step) |
+| subtable  | `#xC000 \| offset<<16 \| subtable bits<<8 \| root bits`     |
+| end code  | `#xA000 \| code length`                                     |
+| invalid   | `#x8000`                                                   |
+
+The flags are in bits 31 (literal), 15 (anything not a plain match: link, end
+code, invalid), 14 (link) and 13 (end code), so one `test` sorts an entry.
+The bit count is decremented by the whole entry, not the masked count, and
+only its low byte is meaningful afterwards (the refill and the VOP's exits
+mask it, `cmp :byte` compares it); BZHI takes the extra bits straight from the
+buffer saved before the shift, and the code length at bit 8 is the shift that
+skips the code. The literal path of the VOP is now `lookup (3), test+branch
+(2), shrx, sub, mov, shr, store, inc`: 11 instructions where it was 15, and
+the dependency chain loses the mask (`mov e; and 31` between the table load
+and the shift).
+
+`build-deflate-table` makes the entries directly (`combine-entry`; the code
+length code keeps its own format), the Lisp loop in `inflate-block` reads the
+same entries, and the VOP's decode steps got shorter (its subtable paths are out of line
+as before).
+
+**Instructions and cycles per byte**, same streams, the §17 VOP / this one:
+
+| Stream        | Instructions | Cycles      |
+|---------------|--------------|-------------|
+| literals      | 20.15 / 17.69 | 8.01 / 8.01 |
+| matches of 6  | 13.25 / 10.95 | 3.25 / 2.99 |
+| matches of 12 | 7.10 / 5.93   | 1.98 / 1.39 |
+
+Instructions fell 12-17%. Literal cycles did not move: the literal path is
+bound by its dependency chain (load, shift, mask, load), and removing the mask
+should have shortened it by one cycle of about eight, which is not visible.
+What is left is probably the refill's `or` into the bit buffer on that chain,
+which I have not tested. Short matches gained 8-30%.
+
+**Result** (`tests/bench/3x3.lisp`, MB/s, 3 sets of 3 runs, median of the set
+bests; the ratio column is new / §17 VOP):
+
+| Stream              | §17 VOP | Entries | libdeflate / libbrotli | Ratio | vs C  |
+|---------------------|---------|---------|------------------------|-------|-------|
+| Red Hat WOFF        | 466     | 494     | 495                    | 1.06  | 1.00× |
+| Source Code Pro WOFF| 411     | 433     | 436                    | 1.05  | 0.99× |
+| Meslo TTF z9        | 613     | 646     | 718                    | 1.05  | 0.90× |
+| SBCL source z6      | 1299    | 1398    | 1561                   | 1.08  | 0.90× |
+| Brotli Meslo / Tangut / src8m q9 (not touched) | | | | 1.01 / 1.02 / 1.00 | 1.15 / 1.21 / 1.28× |
+
+The spread of the three set bests is 1.8-2.7% on the zlib rows, so the gains
+are real; the Brotli rows, which do not use these tables, are the control. The
+fonts gained as much as the large streams, probably because the builder's
+per-entry work is simpler than `combine-length` was (not measured on its own). A first version that converted the old
+entries into the new layout before each VOP call ran the fonts 7% and 15% slower
+and the large streams 4-7% faster: the conversion was the whole difference, so
+the entries have to come out of the builder.
+
+1. The remaining gap to libdeflate on large streams (10%) is not in the table
+   builder or the copy any more. What I have not tried: the refill's place on
+   the literal chain, and the 40-byte copy libdeflate uses for any match with
+   `dist >= 8` (the VOP copies 24).
+2. A bug worth recording: a first version marked "this map value has a base and
+   extra bits" in bit 30, and distance bases from 16385 up (codes 28 and 29)
+   have a base of at least 2^14, whose `<<16` sets bit 30. Flipping the marker
+   cleared a bit of the base. The test suite caught it (82 failures, all long
+   distances); the marker is bit 14 now, which no base or other map value uses.
+
+## 22. Freeing R12 (`unpin-nil`)
+
+Sections 6 and 18 say the loops compete for about 12 registers. R12 is one SBCL
+reserves for NIL and the card table, so a compiler change was tried to make it
+an ordinary register in selected functions: `(declare (sb-ext:unpin-nil))`
+(branch `sbcl-unpin-nil` of SBCL). The function must not
+need NIL in R12: NIL and the other static constants come from the constant
+pool, each full call sets R12 to NIL first, and a function that needs R12 for
+anything else (allocation, write barriers, non-local exits) is compiled as
+before, with a compiler note at `(speed 3)`.
+
+The Lisp loops were compiled with it (`inflate-block`, and Brotli's
+`command-loop` after making it call-free apart from `dictionary-word`; the
+VOPs allocate their own registers and were not changed). The generated code
+did use R12 (`inflate-block` 45 references and 39 stack references against 65
+before) and the results stayed correct (all decompress tests, 8000 corrupt
+streams against libz and libbrotli included). Speed:
+
+| Stream             | Pinned | R12 free | Ratio |
+|--------------------|--------|----------|-------|
+| Red Hat WOFF       | 439    | 443      | 1.01  |
+| Source Code Pro    | 377    | 376      | 1.00  |
+| Meslo TTF z9       | 555    | 566      | 1.02  |
+| SBCL source z6     | 1109   | 1145     | 1.03  |
+| Brotli Meslo / Tangut / src8m q9 | | | 0.96 / 0.94 / 0.96 |
+
+The Brotli numbers include source changes needed to make `command-loop`
+eligible (the literal slices built by the caller, errors reported through two
+variables); with those changes and no `unpin-nil`, the same streams measured
+1.01 / 1.05 / 0.98 of the unmodified code, so the Brotli differences are those
+changes and not the register. Synthetic loops with 14 live accumulators, and
+Adler-32, CRC-32 and an LZ77 match finder, gave the same answer: no measurable
+difference. So on this machine (Zen 5) one more register does not make these
+loops faster, which agrees with §6 and the mov-retarget experiment: stack
+traffic here costs little, and the time is in instruction count and in
+dependency chains.
+
+The feature is correct and falls back safely, so it stays available. It was
+not adopted for any decoder.
