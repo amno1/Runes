@@ -34,43 +34,45 @@
     (dotimes (i 30 a)
       (setf (aref a i) (logior (ash (svref base i) 5) (svref extra i))))))
 
-;;; What the decode tables hold per symbol (BUILD-DEFLATE-TABLE's MAP):
-;;; literals and the end code themselves; for length and distance codes
-;;; +MATCH-FLAG+ with their base and extra-bit count, so a match needs no
-;;; second lookup.  As in libdeflate, a length entry's bit count includes the
-;;; extra bits, so one shift consumes both; the decoder reads the extra bits
-;;; from the bit buffer as it was before that shift.  (Done for distances
-;;; too, it measured 1-4% slower.)  Unused symbols map to +INVALID-SYMBOL+
-;;; (below +MATCH-FLAG+, so one comparison rejects them).
-(defconstant +match-flag+ #x100000)
-(defconstant +invalid-symbol+ 1023
-  "Symbol of decode-table entries that no valid stream can reach.")
+;;; Decode table entries, as libdeflate's (u32, built by BUILD-DEFLATE-TABLE):
+;;;   literal   #x80000000 | byte<<16 | code length
+;;;   length    base<<16 | code length<<8 | (code length + extra bits)
+;;;   distance  base<<16 | code length<<8 | (code length + extra bits)
+;;;   subtable  #xC000 | offset<<16 | subtable bits<<8 | root bits
+;;;   end code  #xA000 | code length
+;;;   invalid   #x8000
+;;; The low byte is what the entry's code (and extra bits) takes from the bit
+;;; buffer, and bit 5 of it is clear, so a shift by the entry itself is a shift
+;;; by that count (SHRX and BZHI only look at the low bits of their count).
+;;; The extra bits are in the buffer as it was before the entry's shift, above
+;;; the code (the code length is at bit 8).  The code-length code (read before
+;;; the other two) keeps sym<<5 | length entries.
+(defconstant +length-class+ #x4000
+  "Marks a map value that has a base and an extra-bit count (a bit that
+neither a base, which starts at bit 16, nor the other map values use).")
 
 (defglobal-table +literal-map+ u32vec
-  (let ((m (make-array 288 :element-type '(unsigned-byte 32) :initial-element +invalid-symbol+)))
-    (dotimes (i 257) (setf (aref m i) i))
-    ;; lengths: extra bits at 16, the base at 4; the decode table adds the
-    ;; code's length below the base and the extra bits to its bit count
-    ;; (COMBINE-LENGTH), so one shift consumes code and extra bits
+  (let ((m (make-array 288 :element-type '(unsigned-byte 32) :initial-element #x8000)))
+    (dotimes (i 256) (setf (aref m i) (logior #x80000000 (ash i 16))))
+    (setf (aref m 256) #xA000)
     (dotimes (i 29 m)
       (let ((e (aref +length-tab+ i)))
-        (setf (aref m (+ 257 i)) (logior +match-flag+ (ash (logand e 31) 16) (ash (ash e -5) 4)))))))
-
-(declaim (inline combine-length))
-(defun combine-length (v l)
-  "Literal/length table entry for map value V, code length L: for a length,
-L goes in V's low 4 bits (to find the extra bits below the code) and the
-entry's bit count covers the extra bits too (at most 10 + 5 < 16)."
-  (declare (type (unsigned-byte 27) v) (type (integer 0 15) l))
-  (if (>= v +match-flag+)
-      (logior (ash (logior v l) 5) (+ l (ldb (byte 3 16) v)))
-      (logior (ash v 5) l)))
+        (setf (aref m (+ 257 i))
+              (logior +length-class+ (ash (ash e -5) 16) (logand e 31)))))))
 
 (defglobal-table +distance-map+ u32vec
-  (let ((m (make-array 32 :element-type '(unsigned-byte 32) :initial-element +invalid-symbol+)))
+  (let ((m (make-array 32 :element-type '(unsigned-byte 32) :initial-element #x8000)))
     (dotimes (i 30 m)
       (let ((e (aref +distance-tab+ i)))
-        (setf (aref m i) (logior +match-flag+ (ash (ash e -5) 4) (logand e 31)))))))
+        (setf (aref m i) (logior +length-class+ (ash (ash e -5) 16) (logand e 31)))))))
+
+(declaim (inline combine-entry))
+(defun combine-entry (v l)
+  "Table entry for map value V, code length L."
+  (declare (type (unsigned-byte 32) v) (type (integer 0 15) l))
+  (if (logtest v +length-class+)
+      (+ (logxor v +length-class+) (* l 257))
+      (+ v l)))
 
 ;;; Order of the code length code's lengths.
 (defglobal-table +deflate-cl-order+ u8vec
@@ -181,8 +183,8 @@ length."
                          (l ,l))
                     (incf i)
                     (case kind
-                      (:literal (combine-length (aref +literal-map+ s) l))
-                      (:distance (logior (ash (aref +distance-map+ s) 5) l))
+                      (:literal (combine-entry (aref +literal-map+ s) l))
+                      (:distance (combine-entry (aref +distance-map+ s) l))
                       (t (logior (ash s 5) l)))))
                (next-codeword (mask)
                  ;; the next canonical codeword, bit-reversed: set the
@@ -223,7 +225,7 @@ length."
                       (setf used (+ (ash used 1) (aref count (+ root-bits sbits)))))
              (setf prefix (logand codeword rmask)
                    sstart end
-                   (aref scratch prefix) (logior (ash sstart 5) (+ 16 sbits))
+                   (aref scratch prefix) (logior #xC000 (ash sstart 16) (ash sbits 8) root-bits)
                    end (+ sstart (ash 1 sbits)))))
          (loop for j of-type fixnum from (+ sstart (ash codeword (- root-bits))) below end
                  by (ash 1 (- len root-bits))
@@ -290,16 +292,13 @@ Built in place in TAB (see BUILD-DEFLATE-TABLE); returns TAB."
       ((or (and (= m 1) (= (aref lens (+ start first)) 1) (not (eq kind :code-length)))
            (and (= m 0) (eq kind :distance)))
        (progn
-         (fill tab (logior (ash +invalid-symbol+ 5) 1) :end (ash 1 root-bits))
+         (fill tab #x8000 :end (ash 1 root-bits))
          (when (= m 1)
-           (let ((v (case kind
-                      (:literal (aref +literal-map+ first))
-                      (:distance (aref +distance-map+ first))
-                      (t first))))
+           (let ((v (if (eq kind :literal)
+                        (aref +literal-map+ first)
+                        (aref +distance-map+ first))))
              (loop for j from 0 below (ash 1 root-bits) by 2
-                   do (setf (aref tab j) (if (eq kind :literal)
-                                             (combine-length v 1)
-                                             (logior (ash v 5) 1))))))
+                   do (setf (aref tab j) (combine-entry v 1)))))
          tab))
       (t (err "incomplete prefix code")))))
 
@@ -471,25 +470,25 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
       (declare (inline err))
     (sb-sys:with-pinned-objects (buf)
       (let ((bs (sb-sys:vector-sap buf)))
-        (let ((sym 0) (saved 0))
-          (declare (type index sym) (type (unsigned-byte 64) saved))
-          ;; SAVED is VAL before the symbol's last shift: a length entry's
-          ;; shift also drops its extra bits, which are read from SAVED
+        (let ((e 0) (saved 0))
+          (declare (type (unsigned-byte 32) e) (type (unsigned-byte 64) saved))
+          ;; SAVED is VAL before the entry's shift: a length entry's shift
+          ;; also drops its extra bits, which are read from SAVED
           (macrolet ((finish-symbol (entry)
-                       `(let ((%e ,entry))
-                          (declare (type (unsigned-byte 32) %e))
-                          (when (>= (logand %e 31) 16)
-                            (br-drop #.+lit-root-bits+)
-                            (setf %e (aref ltab (+ (ash %e -5) (low-bits val (- (logand %e 31) 16))))))
+                       `(progn
+                          (setf e ,entry)
+                          (when (logtest e #x4000)      ; a subtable link
+                            (br-drop (logand e 255))
+                            (setf e (aref ltab (+ (ash e -16)
+                                                  (low-bits val (ldb (byte 6 8) e))))))
                           (setf saved val)
-                          (br-drop (logand %e 31))
-                          (setf sym (ash %e -5))))
+                          (br-drop (logand e 255))))
                      (next-symbol ()
                        `(finish-symbol (aref ltab (ldb (byte #.+lit-root-bits+ 0) val))))
                      (literal-or-leave ()
                        ;; store a literal, or go handle the end code / a match
-                       `(if (< sym 256)
-                            (progn (setf (sb-sys:sap-ref-8 bs fp) sym)
+                       `(if (logtest e #x80000000)
+                            (progn (setf (sb-sys:sap-ref-8 bs fp) (ldb (byte 8 16) e))
                                    (incf fp))
                             (go other))))
             (tagbody
@@ -516,32 +515,39 @@ loop stops before a symbol whenever fewer than 258 bytes + slack are left)."
                ;; bytes (the output slack covers them).  The first symbol's
                ;; root entry is looked up before the refill (>= 10 bits are
                ;; always left here), so the refill's load overlaps it.
-               (let ((e (aref ltab (ldb (byte #.+lit-root-bits+ 0) val))))
+               (let ((root (aref ltab (ldb (byte #.+lit-root-bits+ 0) val))))
                  (br-refill)
-                 (finish-symbol e))
+                 (finish-symbol root))
                (literal-or-leave)
                (next-symbol) (literal-or-leave)
                (next-symbol) (literal-or-leave)
                (go top)
              other
-               (when (= sym 256) (go done))
+               (when (logtest e #x8000)         ; the end code, or invalid
+                 (if (logtest e #x2000)
+                     (go done)
+                     (err "invalid length code")))
                ;; a match needs up to 28 more bits (15 distance code, 13
                ;; distance extra; the length's extra bits are consumed
                ;; already), and the next iteration's early root lookup 10
                ;; after that
                (br-need 38)
-               ;; length entries hold +MATCH-FLAG+ | extra bits<<16 | base<<4
-               ;; | code length
-               (check-error (< sym +match-flag+) "invalid length code")
-               (let ((len (+ (ldb (byte 9 4) sym)
-                             (low-bits (ash saved (- (logand sym 15)))
-                                       (ldb (byte 3 16) sym))))
-                     (d (br-sym dtab (progn))))
-                 (declare (type index len d))
-                 (check-error (< d +match-flag+) "invalid distance code")
-                 (let ((dist (+ (ldb (byte 15 4) d) (ldb (byte (logand d 15) 0) val))))
+               (let* ((len (+ (ash e -16)
+                              (ash (low-bits saved (logand e 255))
+                                   (- (ldb (byte 4 8) e)))))
+                      (d (aref dtab (ldb (byte 8 0) val))))
+                 (declare (type index len) (type (unsigned-byte 32) d))
+                 (when (logtest d #x8000)       ; a subtable link, or invalid
+                   (unless (logtest d #x4000) (err "invalid distance code"))
+                   (br-drop 8)
+                   (setf d (aref dtab (+ (ash d -16) (low-bits val (ldb (byte 6 8) d)))))
+                   (when (logtest d #x8000) (err "invalid distance code")))
+                 (let* ((dsaved val)
+                        (dtotal (logand d 255))
+                        (dist (+ (ash d -16)
+                                 (ash (low-bits dsaved dtotal) (- (ldb (byte 4 8) d))))))
                    (declare (type index dist))
-                   (br-drop (logand d 15))
+                   (br-drop dtotal)
                    (check-error (> dist fp) "distance too far back")
                    (copy-match bs fp dist len)))
                (go top)
