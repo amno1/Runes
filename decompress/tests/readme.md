@@ -8,3 +8,24 @@ in that script for your system.
 The test files in vectors/ are copied from brotli-pure (inspect/vectors/): 11
 inputs (.raw), each compressed with the reference Brotli encoder at quality 5
 and 11 and window sizes 10 and 22 (.br).
+
+Note 3x3 test:
+
+The seven columns are case, pinned, unpinned, C, unp/pin, unp/C and spread%. So your 3rd, 4th and 5th are unpinned, C and unp/pin.
+
+pinned (2nd): MB/s of decoded output from the tree in PINNED_DIR, which defaults to the tree you run from. It is the median over 3 sets of each set’s best of 3 runs.
+unpinned (3rd): the same measurement for the tree you pass as the argument. The name is a leftover from the R12 experiment. Read it as “the second tree”.
+C (4th): libdeflate for the zlib rows, libbrotlidec for the Brotli rows, called through sb-alien in the same harness.
+unp/pin (5th): unpinned divided by pinned. Above 1.00 means the second tree is faster, and below 1.00 means it is slower.
+unp/C (6th): unpinned divided by C. For example, 0.91× on meslo.z9 means you decode at 91% of libdeflate’s speed, and 1.21× on Tangut means you are 21% faster than libbrotli.
+spread% (7th): this is the noise gauge. For each of the three decoders it takes the three set bests, finds the largest minus the smallest, and divides by their median. The column shows the largest of those three percentages. A ratio is only meaningful if it is clearly bigger than the spread. Yours are 0.2–1.0%, so the measurement is very steady.
+
+
+case                             pinned    unpinned  C         unp/pin   unp/C     spread% 
+zlib  RedHatText.woff                311.0     329.0     331.3     1.06x     0.99x      0.2
+zlib  SourceCodePro.woff             273.9     288.7     289.7     1.05x     1.00x      0.2
+zlib  meslo.z9                       411.4     431.9     477.5     1.05x     0.90x      0.3
+zlib  src8m.z6                       879.0     949.1    1046.6     1.08x     0.91x      0.5
+brotli Meslo.br                      216.4     216.1     188.0     1.00x     1.15x      1.1
+brotli Tangut.br                     283.5     282.9     233.8     1.00x     1.21x      0.9
+brotli src8m.q9                      758.6     758.6     592.5     1.00x     1.28x      1.3
